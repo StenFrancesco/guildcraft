@@ -431,7 +431,7 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     second.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
     local forbidden = function() error("browser interaction must remain local and read-only") end
     for _, name in ipairs({
-        "InspectUnit", "NotifyInspect", "RequestCompleteSnapshot", "CaptureAndStoreLocalPlayer",
+        "InspectUnit", "NotifyInspect", "CanInspect", "RequestCompleteSnapshot", "CaptureAndStoreLocalPlayer",
         "CapturePlayerGearSnapshot", "SaveCompleteCharacterRecord", "UpdateConfirmedCharacterSlot",
         "ApplyReceivedCharacterSlot", "SaveReceivedCompleteCharacterRecord", "SendAddonMessage",
         "PublishConfirmedSlot", "SendGuildSyncMessage",
@@ -440,11 +440,19 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     end
     local api = makeBrowserAPI()
     api.NotifyInspect = forbidden
+    api.InspectUnit = forbidden
+    api.CanInspect = forbidden
+    api.GetInventoryItemID = forbidden
+    api.GetInventoryItemLink = forbidden
     api.SendAddonMessage = forbidden
     local before = first.gear.slots.HEAD.itemID
     local frame = GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { first, second }))
 
-    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    frame.searchBox:SetText("beatrice")
+    T.assertEqual(#frame.filteredEntries, 1)
+    T.assertEqual(frame.filteredEntries[1].key, "Beatrice-ArgentDawn")
+
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
 
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
     T.assertEqual(first.gear.slots.HEAD.itemID, before)
@@ -469,11 +477,16 @@ end)
 
 T.test("snapshot slash command can explicitly request exactly one named character", function()
     local GGM = loadUI()
-    local requestedSync, requestedTarget
+    local requestedSync, requestedTarget, requestCount, browserCount
+    requestCount, browserCount = 0, 0
     local api = { SlashCmdList = {} }
     local sync = { marker = "sync" }
     GGM.guildSync = sync
+    GGM.ShowGuildGearBrowserWindow = function()
+        browserCount = browserCount + 1
+    end
     GGM.RequestCompleteSnapshot = function(activeSync, target)
+        requestCount = requestCount + 1
         requestedSync, requestedTarget = activeSync, target
         return true, nil
     end
@@ -486,6 +499,8 @@ T.test("snapshot slash command can explicitly request exactly one named characte
     T.assertEqual(requestedTarget.name, "Alice")
     T.assertEqual(requestedTarget.realm, "Silvermoon")
     T.assertNil(requestedTarget.guid)
+    T.assertEqual(requestCount, 1)
+    T.assertEqual(browserCount, 0)
     T.assertNil(GGM.lastSyncError)
 end)
 
