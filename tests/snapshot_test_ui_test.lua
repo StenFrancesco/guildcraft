@@ -388,8 +388,11 @@ T.test("guild gear browser rows show name and realm and selecting renders saved 
 
     T.assertEqual(frame.listRows[1].label.text, "Alice - Silvermoon")
     T.assertEqual(frame.listRows[2].label.text, "Beatrice - ArgentDawn")
-    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
+    T.assertEqual(frame.selectedEntry.key, "Alice-Silvermoon")
+    T.assertEqual(frame.characterLine.text, "Alice")
 
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
     T.assertEqual(frame.characterLine.text, "Beatrice")
     T.assertEqual(frame.realmLine.text, "ArgentDawn")

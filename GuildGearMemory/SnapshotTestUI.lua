@@ -257,8 +257,9 @@ local function updateBrowserList(frame, api)
         if row.label.SetTextColor then
             if row.selected then row.label:SetTextColor(1, 0.82, 0) else row.label:SetTextColor(1, 1, 1) end
         end
+        local selectedRow = row
         row:SetScript("OnClick", function()
-            frame.selectedEntry = row.entry
+            frame.selectedEntry = selectedRow.entry
             updateBrowserList(frame, api)
             renderBrowserDetail(frame, frame.selectedEntry, api)
         end)

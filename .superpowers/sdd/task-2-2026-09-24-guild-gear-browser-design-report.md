@@ -28,3 +28,8 @@ Browser entries are constructed from validated local SavedVariables records. Sea
 
 - `GuildGearMemory/SnapshotTestUI.lua`
 - `tests/snapshot_test_ui_test.lua`
+## Follow-up review fix
+
+- Bound each row click handler to an iteration-local row reference, preventing WoW Lua 5.1 loop-variable closure behavior from redirecting clicks to the final row.
+- Expanded interaction coverage to click both the first row and a later row and verify each selected identity.
+- Lua tests remain unavailable and were not run, per instruction. `git diff --check` is the static whitespace check for this follow-up.
