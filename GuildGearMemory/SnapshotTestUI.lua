@@ -27,6 +27,14 @@ for group, keys in pairs(slotColumns) do
     for order, key in ipairs(keys) do GGM.BROWSER_SLOT_LAYOUT[key] = { group = group, order = order } end
 end
 
+local slotDisplayNames = {
+    HEAD = "Head", NECK = "Neck", SHOULDER = "Shoulder", BACK = "Back", CHEST = "Chest",
+    SHIRT = "Shirt", TABARD = "Tabard", WRIST = "Wrist", HANDS = "Hands", WAIST = "Waist",
+    LEGS = "Legs", FEET = "Feet", FINGER_1 = "Ring 1", FINGER_2 = "Ring 2",
+    TRINKET_1 = "Trinket 1", TRINKET_2 = "Trinket 2", MAIN_HAND = "Main hand",
+    OFF_HAND = "Off hand", RANGED = "Ranged",
+}
+
 local function hasValidBrowserIdentity(record, key)
     return type(key) == "string"
         and type(record) == "table"
@@ -124,12 +132,13 @@ local function hasValidBrowserDetailRecord(record)
     if record.complete == true then
         return record.gear.complete == true and GGM.ValidateCompleteSnapshot(record.gear) == true
     end
-    if record.complete ~= false or record.completeness ~= "incomplete" or record.gear.complete ~= false then return false end
-    for key, value in pairs(record.gear.slots) do
-        local valid = GGM.ValidateGearSlotValue(key, value)
-        if not valid then return false end
-    end
-    return true
+    if record.complete ~= false or record.completeness ~= "incomplete" or record.gear.complete ~= false
+        or type(GGM.GetCharacterRecord) ~= "function" then return false end
+    local validated = GGM.GetCharacterRecord({
+        schemaVersion = GGM.SCHEMA_VERSION,
+        characters = { [record.identity.key] = record },
+    }, record.identity.key)
+    return validated == record
 end
 
 function GGM.BuildGuildGearBrowserDetail(record, api)
@@ -145,6 +154,7 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         local icon = slotTexture
         if not unavailable and not empty then icon = getItemIcon(api, savedSlot.itemID) or slotTexture end
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
+        local displayName = slotDisplayNames[trackedSlot.key]
         local itemID, itemLink, inventorySlotID
         if savedSlot then itemID, itemLink, inventorySlotID = savedSlot.itemID, savedSlot.itemLink, savedSlot.inventorySlotID end
         table.insert(slots, {
@@ -154,7 +164,9 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
             itemLink = itemLink,
             empty = empty,
             unavailable = unavailable,
-            valueText = unavailable and "Unavailable" or nil,
+            valueText = unavailable and "No data" or nil,
+            displayName = displayName,
+            statusText = unavailable and "No data" or (empty and "Empty" or nil),
             slotTexture = slotTexture,
             icon = icon,
             layoutGroup = layout.group,
@@ -174,7 +186,9 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         realm = record.identity.realm,
         capturedAtText = capturedAtText,
         complete = record.complete == true,
-        completenessText = record.complete == true and "Complete" or "Incomplete",
+        refreshNeeded = record.refreshNeeded == true,
+        completenessText = record.complete == true and "Complete"
+            or (record.refreshNeeded == true and "Refresh needed" or "Incomplete"),
         slots = slots,
     }
 end
@@ -243,7 +257,8 @@ local function renderBrowserDetail(frame, entry, api)
         button.icon:SetTexture(slot.icon)
         button.icon:SetDesaturated(slot.empty or slot.unavailable)
         button.icon:SetAlpha(slot.unavailable and 0.2 or (slot.empty and 0.35 or 1))
-        button.label:SetText(slot.unavailable and (slot.key .. " (unavailable)") or (slot.empty and (slot.key .. " (empty)") or slot.key))
+        button.label:SetText(slot.displayName)
+        setText(button.status, slot.statusText)
         button.empty = slot.empty
         button.unavailable = slot.unavailable
         button.itemID = slot.itemID
@@ -373,11 +388,17 @@ function GGM.CreateGuildGearBrowserWindow(api)
         button:SetPoint("CENTER", frame, "TOPLEFT", x, y)
         button.paperDollGroup, button.paperDollOrder = layout.group, layout.order
         button.icon = button:CreateTexture(nil, "ARTWORK")
-        button.icon:SetSize(38, 38)
+        button.icon:SetSize(28, 28)
         button.icon:SetPoint("TOP", button, "TOP", 0, -1)
         button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        button.label:SetPoint("TOP", button.icon, "BOTTOM", 0, -2)
-        button.label:SetText(trackedSlot.key)
+        button.label:SetWidth(58)
+        button.label:SetJustifyH("CENTER")
+        button.label:SetPoint("TOP", button.icon, "BOTTOM", 0, -1)
+        button.label:SetText(slotDisplayNames[trackedSlot.key])
+        button.status = button:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        button.status:SetWidth(58)
+        button.status:SetJustifyH("CENTER")
+        button.status:SetPoint("TOP", button.label, "BOTTOM", 0, 0)
         button:Hide()
         frame.slotButtons[index] = button
     end

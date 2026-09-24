@@ -382,7 +382,7 @@ T.test("received slot update rejects a sequence regression without mutation", fu
     T.assertEqual(record.gear.capturedAt, 1700000000)
 end)
 
-T.test("received slot update rejects a non-contiguous forward sequence without mutation", function()
+T.test("sequence gaps preserve values but require a full baseline before becoming complete", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = makeIdentity()
@@ -399,10 +399,24 @@ T.test("received slot update rejects a non-contiguous forward sequence without m
 
     T.assertFalse(ok)
     T.assertEqual(err, "confirmed-sequence-gap")
-    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    local record = assert(GGM.GetCharacterRecord(db, identity.key))
+    T.assertFalse(record.complete)
+    T.assertEqual(record.completeness, "incomplete")
+    T.assertTrue(record.refreshNeeded)
+    T.assertEqual(record.incompleteReason, "sequence-gap")
+    T.assertFalse(record.gear.complete)
     T.assertEqual(record.gear.slots.HEAD.itemID, 2001)
     T.assertEqual(record.confirmedSequence, 4)
     T.assertEqual(record.gear.capturedAt, 1700000000)
+
+    local baseline = makeSnapshot(GGM)
+    baseline.capturedAt = 1700001000
+    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, 6))
+    local repaired = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertTrue(repaired.complete)
+    T.assertTrue(repaired.gear.complete)
+    T.assertNil(repaired.refreshNeeded)
+    T.assertNil(repaired.incompleteReason)
 end)
 
 T.test("received slot update rejects a mismatched inventory slot id without mutation", function()

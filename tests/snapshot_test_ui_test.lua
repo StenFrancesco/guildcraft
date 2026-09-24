@@ -455,7 +455,12 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     T.assertTrue(emptySlot.empty)
     T.assertTrue(emptySlot.icon.desaturated)
     T.assertEqual(emptySlot.icon.alpha, 0.35)
-    T.assertEqual(emptySlot.label.text, "OFF_HAND (empty)")
+    T.assertEqual(emptySlot.key, "OFF_HAND")
+    T.assertEqual(emptySlot.label.text, "Off hand")
+    T.assertEqual(emptySlot.status.text, "Empty")
+    T.assertTrue(emptySlot.itemLink == false)
+    T.assertTrue(emptySlot.label.width <= 58)
+    T.assertTrue(emptySlot.status.width <= 58)
 end)
 
 T.test("opening and selecting browser entries never inspects, requests, captures, writes, or sends", function()
@@ -613,12 +618,53 @@ T.test("incomplete detail marks migrated missing slots unavailable, not empty", 
     end
     T.assertTrue(found.SHIRT.unavailable)
     T.assertFalse(found.SHIRT.empty)
-    T.assertEqual(found.SHIRT.valueText, "Unavailable")
+    T.assertEqual(found.SHIRT.valueText, "No data")
     T.assertFalse(found.HEAD.unavailable)
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
     T.assertEqual(frame.completenessLine.text, "Incomplete")
     local shirtIndex
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do if slot.key == "SHIRT" then shirtIndex = index end end
     T.assertTrue(frame.slotButtons[shirtIndex].unavailable)
-    T.assertEqual(frame.slotButtons[shirtIndex].label.text, "SHIRT (unavailable)")
+    T.assertEqual(frame.slotButtons[shirtIndex].label.text, "Shirt")
+    T.assertEqual(frame.slotButtons[shirtIndex].status.text, "No data")
+    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 58)
+    T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 58)
+end)
+
+T.test("sequence-gap browser records remain refresh-needed with all values and bounded captions", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    record.complete, record.completeness = false, "incomplete"
+    record.refreshNeeded, record.incompleteReason = true, "sequence-gap"
+    record.gear.complete = false
+    record.gear.slots.OFF_HAND.itemID, record.gear.slots.OFF_HAND.itemLink = false, false
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
+    T.assertTrue(frame.detailModel.hasRecord)
+    T.assertFalse(frame.detailModel.complete)
+    T.assertTrue(frame.detailModel.refreshNeeded)
+    T.assertEqual(frame.detailModel.completenessText, "Refresh needed")
+    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
+    for index, row in ipairs(frame.detailModel.slots) do
+        local button = frame.slotButtons[index]
+        T.assertFalse(row.unavailable)
+        T.assertTrue(button.label.width <= 58)
+        T.assertTrue(button.status.width <= 58)
+        T.assertTrue(#button.label.text <= 9)
+        T.assertTrue(#(button.status.text or "") <= 7)
+        T.assertEqual(button.key, row.key)
+        T.assertEqual(button.itemLink, row.itemLink)
+    end
+    local offHandIndex
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do if slot.key == "OFF_HAND" then offHandIndex = index end end
+    T.assertEqual(frame.slotButtons[offHandIndex].label.text, "Off hand")
+    T.assertEqual(frame.slotButtons[offHandIndex].status.text, "Empty")
+
+    local db = makeDB(GGM, { record })
+    local baseline = { complete = true, capturedAt = 1700001000, slots = record.gear.slots }
+    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, record.identity, baseline, 7))
+    frame = showBrowser(GGM, makeBrowserAPI(), db)
+    T.assertTrue(frame.detailModel.complete)
+    T.assertFalse(frame.detailModel.refreshNeeded)
+    T.assertEqual(frame.completenessLine.text, "Complete")
 end)
