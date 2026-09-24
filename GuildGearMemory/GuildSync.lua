@@ -113,9 +113,15 @@ end
 
 local function handleSlotUpdate(sync, sender, message)
     if sender ~= message.identity.key then return nil, "sync-sender-identity-mismatch" end
-    local record, recordErr = GGM.GetCompleteCharacterRecord(sync.db, message.identity.key)
+    local record, recordErr = GGM.GetCharacterRecord(sync.db, message.identity.key)
     if not record then return nil, recordErr end
     if not identitiesCompatible(record.identity, message.identity) then return nil, "identity-mismatch" end
+    if record.refreshNeeded == true then
+        local applied, applyErr = GGM.ApplyReceivedCharacterSlot(sync.db, message.identity.key, message.slotKey, message.slotValue, message.confirmedAt, message.confirmedSequence)
+        if not applied and applyErr == "confirmed-sequence-gap-advanced" then return "sequence-floor-advanced", nil end
+        return nil, applyErr or "record-missing"
+    end
+    if record.complete ~= true then return nil, "record-missing" end
     local applied, applyErr = GGM.ApplyReceivedCharacterSlot(sync.db, message.identity.key, message.slotKey, message.slotValue, message.confirmedAt, message.confirmedSequence)
     if not applied then return nil, applyErr end
     return "slot-applied", nil

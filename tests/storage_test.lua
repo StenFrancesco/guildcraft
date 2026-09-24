@@ -386,7 +386,8 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = makeIdentity()
-    assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
+    local originalSnapshot = makeSnapshot(GGM)
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, originalSnapshot, 4))
 
     local ok, err = GGM.ApplyReceivedCharacterSlot(
         db,
@@ -410,9 +411,26 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
     T.assertEqual(record.confirmedSequence, 4)
     T.assertEqual(record.gear.capturedAt, 1700000000)
 
+    local advanced, advancedErr = GGM.ApplyReceivedCharacterSlot(
+        db,
+        identity.key,
+        "HEAD",
+        { inventorySlotID = 1, itemID = 9408, itemLink = "|Hitem:9408|h[Later Update]|h" },
+        1700000902,
+        8
+    )
+    T.assertFalse(advanced)
+    T.assertEqual(advancedErr, "confirmed-sequence-gap-advanced")
+    local stillStale = assert(GGM.GetCharacterRecord(db, identity.key))
+    T.assertEqual(stillStale.requiredBaselineSequence, 8)
+    T.assertEqual(stillStale.confirmedSequence, 4)
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        T.assertTrue(GGM.AreGearSlotValuesEqual(stillStale.gear.slots[trackedSlot.key], originalSnapshot.slots[trackedSlot.key]))
+    end
+
     local baseline = makeSnapshot(GGM)
     baseline.capturedAt = 1700001000
-    for _, belowRequiredSequence in ipairs({ 4, 5 }) do
+    for _, belowRequiredSequence in ipairs({ 6, 7 }) do
         baseline.slots.HEAD.itemID = 3000 + belowRequiredSequence
         baseline.slots.HEAD.itemLink = "|Hitem:" .. (3000 + belowRequiredSequence) .. "|h[Too Old]|h"
         local repairedEarly, earlyErr = GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, belowRequiredSequence)
@@ -420,13 +438,13 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
         T.assertEqual(earlyErr, "confirmed-sequence-before-required-baseline")
         local stillStale = assert(GGM.GetCharacterRecord(db, identity.key))
         T.assertTrue(stillStale.refreshNeeded)
-        T.assertEqual(stillStale.requiredBaselineSequence, 6)
+        T.assertEqual(stillStale.requiredBaselineSequence, 8)
         T.assertEqual(stillStale.confirmedSequence, 4)
         T.assertEqual(stillStale.gear.slots.HEAD.itemID, 2001)
     end
-    baseline.slots.HEAD.itemID = 3006
-    baseline.slots.HEAD.itemLink = "|Hitem:3006|h[Repair At Required Sequence]|h"
-    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, 6))
+    baseline.slots.HEAD.itemID = 3008
+    baseline.slots.HEAD.itemLink = "|Hitem:3008|h[Repair At Required Sequence]|h"
+    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, 8))
     local repaired = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertTrue(repaired.complete)
     T.assertTrue(repaired.gear.complete)

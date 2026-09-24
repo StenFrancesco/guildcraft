@@ -98,7 +98,13 @@ T.test("incremental updates require a complete compatible baseline", function()
     T.assertEqual(db.characters[alice.key].gear.slots.HEAD.itemID, 9901)
     T.assertEqual(db.characters[alice.key].confirmedSequence, 5)
 
-    local gapPayload = assert(GGM.EncodeSyncSlotUpdate(alice, 7, "HEAD",
+    assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 9900), 4))
+    local preservedSlots = {}
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local slotValue = db.characters[alice.key].gear.slots[trackedSlot.key]
+        preservedSlots[trackedSlot.key] = { inventorySlotID = slotValue.inventorySlotID, itemID = slotValue.itemID, itemLink = slotValue.itemLink }
+    end
+    local gapPayload = assert(GGM.EncodeSyncSlotUpdate(alice, 6, "HEAD",
         { inventorySlotID = 1, itemID = 9903, itemLink = "|Hitem:9903|h[Gap]|h" }, 1700002302))
     state, err = GGM.HandleGuildSyncPayload(sync, alice.key, gapPayload)
     T.assertNil(state)
@@ -107,9 +113,28 @@ T.test("incremental updates require a complete compatible baseline", function()
     T.assertFalse(stale.complete)
     T.assertTrue(stale.refreshNeeded)
     T.assertEqual(stale.gear.slots.HEAD.itemID, 9901)
+
+    local laterPayload = assert(GGM.EncodeSyncSlotUpdate(alice, 8, "HEAD",
+        { inventorySlotID = 1, itemID = 9908, itemLink = "|Hitem:9908|h[Later]|h" }, 1700002304))
+    state, err = GGM.HandleGuildSyncPayload(sync, alice.key, laterPayload)
+    T.assertEqual(state, "sequence-floor-advanced")
+    T.assertNil(err)
+    stale = assert(GGM.GetCharacterRecord(db, alice.key))
+    T.assertEqual(stale.requiredBaselineSequence, 8)
+    T.assertEqual(stale.confirmedSequence, 4)
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        T.assertTrue(GGM.AreGearSlotValuesEqual(stale.gear.slots[trackedSlot.key], preservedSlots[trackedSlot.key]))
+    end
     T.assertEqual(#sends, 0)
 
-    assert(GGM.SaveReceivedCompleteCharacterRecord(db, alice, snapshot(GGM, 8000), 7))
+    for _, belowFloor in ipairs({ 6, 7 }) do
+        local repairedEarly, earlyErr = GGM.SaveReceivedCompleteCharacterRecord(db, alice, snapshot(GGM, 8000 + belowFloor), belowFloor)
+        T.assertFalse(repairedEarly)
+        T.assertEqual(earlyErr, "confirmed-sequence-before-required-baseline")
+        T.assertTrue(assert(GGM.GetCharacterRecord(db, alice.key)).refreshNeeded)
+        T.assertEqual(#sends, 0)
+    end
+    assert(GGM.SaveReceivedCompleteCharacterRecord(db, alice, snapshot(GGM, 8008), 8))
     local repaired = assert(GGM.GetCompleteCharacterRecord(db, alice.key))
     T.assertTrue(repaired.complete)
     T.assertNil(repaired.refreshNeeded)

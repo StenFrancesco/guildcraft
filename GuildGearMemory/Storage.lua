@@ -369,7 +369,7 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
         return false, "confirmed-sequence-invalid"
     end
 
-    local record, recordErr = GGM.GetCompleteCharacterRecord(db, characterKey)
+    local record, recordErr = GGM.GetCharacterRecord(db, characterKey)
     if not record then
         return false, recordErr
     end
@@ -388,6 +388,16 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
     if existingSequence == nil then
         return false, sequenceErr
     end
+
+    if record.refreshNeeded == true then
+        if confirmedSequence < existingSequence then return false, "confirmed-sequence-regression" end
+        if confirmedSequence > record.requiredBaselineSequence then
+            record.requiredBaselineSequence = confirmedSequence
+            return false, "confirmed-sequence-gap-advanced"
+        end
+        return false, "confirmed-sequence-gap"
+    end
+    if record.complete ~= true then return false, "record-missing" end
 
     if confirmedSequence < existingSequence then
         return false, "confirmed-sequence-regression"
