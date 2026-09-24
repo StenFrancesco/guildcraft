@@ -636,6 +636,7 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     local record = makeRecord(GGM)
     record.complete, record.completeness = false, "incomplete"
     record.refreshNeeded, record.incompleteReason = true, "sequence-gap"
+    record.requiredBaselineSequence = 2
     record.gear.complete = false
     record.gear.slots.OFF_HAND.itemID, record.gear.slots.OFF_HAND.itemLink = false, false
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))

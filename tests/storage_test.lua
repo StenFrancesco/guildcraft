@@ -404,6 +404,7 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
     T.assertEqual(record.completeness, "incomplete")
     T.assertTrue(record.refreshNeeded)
     T.assertEqual(record.incompleteReason, "sequence-gap")
+    T.assertEqual(record.requiredBaselineSequence, 6)
     T.assertFalse(record.gear.complete)
     T.assertEqual(record.gear.slots.HEAD.itemID, 2001)
     T.assertEqual(record.confirmedSequence, 4)
@@ -411,12 +412,27 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
 
     local baseline = makeSnapshot(GGM)
     baseline.capturedAt = 1700001000
+    for _, belowRequiredSequence in ipairs({ 4, 5 }) do
+        baseline.slots.HEAD.itemID = 3000 + belowRequiredSequence
+        baseline.slots.HEAD.itemLink = "|Hitem:" .. (3000 + belowRequiredSequence) .. "|h[Too Old]|h"
+        local repairedEarly, earlyErr = GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, belowRequiredSequence)
+        T.assertFalse(repairedEarly)
+        T.assertEqual(earlyErr, "confirmed-sequence-before-required-baseline")
+        local stillStale = assert(GGM.GetCharacterRecord(db, identity.key))
+        T.assertTrue(stillStale.refreshNeeded)
+        T.assertEqual(stillStale.requiredBaselineSequence, 6)
+        T.assertEqual(stillStale.confirmedSequence, 4)
+        T.assertEqual(stillStale.gear.slots.HEAD.itemID, 2001)
+    end
+    baseline.slots.HEAD.itemID = 3006
+    baseline.slots.HEAD.itemLink = "|Hitem:3006|h[Repair At Required Sequence]|h"
     T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, 6))
     local repaired = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertTrue(repaired.complete)
     T.assertTrue(repaired.gear.complete)
     T.assertNil(repaired.refreshNeeded)
     T.assertNil(repaired.incompleteReason)
+    T.assertNil(repaired.requiredBaselineSequence)
 end)
 
 T.test("received slot update rejects a mismatched inventory slot id without mutation", function()

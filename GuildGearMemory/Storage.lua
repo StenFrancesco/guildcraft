@@ -279,6 +279,11 @@ function GGM.GetCharacterRecord(db, characterKey)
 
     if record.refreshNeeded == true then
         if record.incompleteReason ~= "sequence-gap" then return nil, "record-incomplete-invalid" end
+        local confirmedSequence = readConfirmedSequence(record)
+        if not isIntegerInRange(record.requiredBaselineSequence, 0, GGM.SYNC_MAX_CONFIRMED_SEQUENCE)
+            or record.requiredBaselineSequence <= confirmedSequence then
+            return nil, "record-incomplete-invalid"
+        end
         local staleSnapshot = {
             complete = true,
             capturedAt = record.gear.capturedAt,
@@ -393,6 +398,7 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
         record.completeness = "incomplete"
         record.refreshNeeded = true
         record.incompleteReason = "sequence-gap"
+        record.requiredBaselineSequence = confirmedSequence
         record.gear.complete = false
         return false, "confirmed-sequence-gap"
     end
@@ -441,6 +447,11 @@ function GGM.SaveReceivedCompleteCharacterRecord(db, identity, snapshot, confirm
         local existingSequence, sequenceErr = readConfirmedSequence(existingRecord)
         if existingSequence == nil then
             return false, sequenceErr
+        end
+
+        if existingRecord.refreshNeeded == true
+            and confirmedSequence < existingRecord.requiredBaselineSequence then
+            return false, "confirmed-sequence-before-required-baseline"
         end
 
         if confirmedSequence < existingSequence then

@@ -236,9 +236,37 @@ T.test("a stale response does not cancel a fresher responder timer", function()
     T.assertFalse(carolTimers[1].cancelled)
     carolTimers[1]:Fire()
     T.assertEqual(carolSync.pendingSnapshotResponseCount, 1)
-    carolTimers[2]:Fire()
+    local timerIndex = 2
+    while timerIndex <= #carolTimers do carolTimers[timerIndex]:Fire(); timerIndex = timerIndex + 1 end
     T.assertEqual(carolSync.pendingSnapshotResponseCount, 0)
     T.assertTrue(#carolSends > 0)
+end)
+
+T.test("a better claim cancels a snapshot still queued behind outbound frames", function()
+    local GGM = loadModules()
+    local alice, bob, carol, dave = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B"), identity("Carol", "Silvermoon", "C"), identity("Dave", "Silvermoon", "D")
+    local db = assert(GGM.InitializeDatabase(nil)); assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 7500), 3))
+    local api, sends, _, _, timers = clientApi(carol); local sync = assert(GGM.CreateGuildSync(api, db))
+    assert(GGM.SendSyncPayload(sync.transport, string.rep("x", 700)))
+    local request = assert(GGM.EncodeSyncSnapshotRequest(bob, alice, "000001"))
+    T.assertEqual(GGM.HandleGuildSyncPayload(sync, bob.key, request), "snapshot-response-queued")
+
+    timers[2]:Fire() -- queues the claim behind the existing multi-frame payload
+    timers[3]:Fire() -- queues the complete snapshot behind that claim
+    local fullPayload = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 7500), 3, "000001"))
+    local fullFrameCount = math.ceil(#fullPayload / GGM.SYNC_FRAME_CHUNK_BYTES)
+    T.assertEqual(sync.pendingSnapshotResponseCount, 1)
+    T.assertEqual(#sync.transport.outboundFrames, 4 + fullFrameCount)
+
+    local betterClaim = assert(GGM.EncodeSyncSnapshotResponseClaim(alice, bob, dave, 4, "000001"))
+    T.assertEqual(GGM.HandleGuildSyncPayload(sync, dave.key, betterClaim), "snapshot-response-claim-accepted")
+    T.assertEqual(sync.pendingSnapshotResponseCount, 0)
+    T.assertEqual(#sync.transport.outboundFrames, 4)
+    T.assertEqual(#sends, 1)
+    local timerIndex = 1
+    while timerIndex <= #timers do timers[timerIndex]:Fire(); timerIndex = timerIndex + 1 end
+    T.assertEqual(#sync.transport.outboundFrames, 0)
+    T.assertEqual(#sends, 5) -- four blocker frames and one claim; no snapshot frames
 end)
 
 T.test("pending delayed snapshot responses are capped", function()

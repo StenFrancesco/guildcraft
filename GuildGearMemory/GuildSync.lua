@@ -107,6 +107,7 @@ local function cancelPendingSnapshotResponse(sync, requesterKey, targetKey, requ
     if not pending then return end
     if pending.timer and type(pending.timer.Cancel) == "function" then pending.timer:Cancel() end
     if pending.settleTimer and type(pending.settleTimer.Cancel) == "function" then pending.settleTimer:Cancel() end
+    if pending.sendToken then GGM.CancelSyncPayload(sync.transport, pending.sendToken) end
     removePendingSnapshotResponse(sync, key, pending)
 end
 
@@ -159,12 +160,21 @@ local function handleSnapshotRequest(sync, sender, message)
             return
         end
         local settleOk, settleTimer = pcall(sync.api.C_Timer.NewTimer, GGM.SYNC_SNAPSHOT_RESPONSE_OFFER_SETTLE_SECONDS, function()
-            if not removePendingSnapshotResponse(sync, responseKey, pending) then return end
-            local queued, queueErr = GGM.SendSyncPayload(sync.transport, payload)
+            if sync.pendingSnapshotResponses[responseKey] ~= pending then return end
+            local function responseFinished(sent, sendErr)
+                if not removePendingSnapshotResponse(sync, responseKey, pending) then return end
+                if sent then
+                    local sentAt = getResponseTime(sync)
+                    rememberResponse(sync, message.requester.key, message.target.key, sentAt or now)
+                else
+                    sync.transport.lastSendError = sendErr
+                end
+            end
+            local queued, queueErr, sendToken = GGM.SendSyncPayload(sync.transport, payload, responseFinished)
             if queued then
-                local sentAt = getResponseTime(sync)
-                rememberResponse(sync, message.requester.key, message.target.key, sentAt or now)
+                pending.sendToken = sendToken
             else
+                removePendingSnapshotResponse(sync, responseKey, pending)
                 sync.transport.lastSendError = queueErr
             end
         end)

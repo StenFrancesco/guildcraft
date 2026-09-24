@@ -42,19 +42,39 @@ local function sendFrame(transport, frame)
     return true, nil
 end
 
-local function abortOutbound(transport, err)
+local function finishOutboundGroup(group, sent, err)
+    if not group or group.finished then return end
+    group.finished = true
+    if type(group.onFinished) == "function" then pcall(group.onFinished, sent, err) end
+end
+
+local function abortOutbound(transport, err, activeGroup)
+    local groups = {}
+    if activeGroup then groups[activeGroup] = true end
+    for _, queued in ipairs(transport.outboundFrames) do
+        if type(queued) == "table" and queued.group then groups[queued.group] = true end
+    end
     transport.outboundFrames = {}
     transport.sendTimer = nil
     transport.lastSendError = err
+    for group in pairs(groups) do finishOutboundGroup(group, false, err) end
 end
 
 local pumpOutbound
 pumpOutbound = function(transport)
+    while #transport.outboundFrames > 0 do
+        local queued = table.remove(transport.outboundFrames, 1)
+        local group = queued.group
+        if not group.cancelled then
+            local sent, sendErr = sendFrame(transport, queued.frame)
+            if not sent then abortOutbound(transport, sendErr, group); return false, sendErr end
+            group.remaining = group.remaining - 1
+            if group.remaining == 0 then finishOutboundGroup(group, true, nil) end
+            break
+        end
+    end
     if #transport.outboundFrames == 0 then transport.sendTimer = nil; return true, nil end
-    local sent, sendErr = sendFrame(transport, table.remove(transport.outboundFrames, 1))
-    if not sent then abortOutbound(transport, sendErr); return false, sendErr end
     transport.lastSendError = nil
-    if #transport.outboundFrames == 0 then transport.sendTimer = nil; return true, nil end
     local timerOk, timerOrError = pcall(transport.api.C_Timer.NewTimer, GGM.SYNC_SEND_INTERVAL_SECONDS, function()
         transport.sendTimer = nil
         local _, asyncErr = pumpOutbound(transport)
@@ -111,14 +131,29 @@ function GGM.RegisterSyncPrefix(transport)
     return true, nil
 end
 
-function GGM.SendSyncPayload(transport, payload)
+function GGM.SendSyncPayload(transport, payload, onFinished)
     local frames, frameErr = buildFrames(payload, nextMessageID(transport))
     if not frames then return false, frameErr end
     if #transport.outboundFrames + #frames > GGM.SYNC_MAX_OUTBOUND_FRAMES then return false, "sync-outbound-queue-full" end
     local shouldPump = #transport.outboundFrames == 0 and transport.sendTimer == nil
-    for _, frame in ipairs(frames) do table.insert(transport.outboundFrames, frame) end
-    if shouldPump then return pumpOutbound(transport) end
-    return true, nil
+    local group = { remaining = #frames, cancelled = false, onFinished = onFinished }
+    for _, frame in ipairs(frames) do table.insert(transport.outboundFrames, { frame = frame, group = group }) end
+    if shouldPump then
+        local sent, sendErr = pumpOutbound(transport)
+        if not sent then return false, sendErr, group end
+    end
+    return true, nil, group
+end
+
+function GGM.CancelSyncPayload(transport, group)
+    if type(transport) ~= "table" or type(group) ~= "table" or group.finished or group.cancelled then return false end
+    group.cancelled = true
+    local remaining = {}
+    for _, queued in ipairs(transport.outboundFrames) do
+        if queued.group ~= group then table.insert(remaining, queued) end
+    end
+    transport.outboundFrames = remaining
+    return true
 end
 
 function GGM.HandleSyncTransportMessage(transport, prefix, text, channel, sender)
