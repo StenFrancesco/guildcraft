@@ -445,8 +445,26 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     api.GetInventoryItemID = forbidden
     api.GetInventoryItemLink = forbidden
     api.SendAddonMessage = forbidden
-    local before = first.gear.slots.HEAD.itemID
-    local frame = GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { first, second }))
+    local db = makeDB(GGM, { first, second })
+    local function copyTable(value)
+        if type(value) ~= "table" then return value end
+        local copy = {}
+        for key, child in pairs(value) do copy[copyTable(key)] = copyTable(child) end
+        return copy
+    end
+    local function tablesEqual(left, right)
+        if type(left) ~= type(right) then return false end
+        if type(left) ~= "table" then return left == right end
+        for key, value in pairs(left) do
+            if not tablesEqual(value, right[key]) then return false end
+        end
+        for key in pairs(right) do
+            if left[key] == nil then return false end
+        end
+        return true
+    end
+    local before = copyTable(db)
+    local frame = GGM.ShowGuildGearBrowserWindow(api, db)
 
     frame.searchBox:SetText("beatrice")
     T.assertEqual(#frame.filteredEntries, 1)
@@ -455,7 +473,7 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
 
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
-    T.assertEqual(first.gear.slots.HEAD.itemID, before)
+    T.assertTrue(tablesEqual(db, before), "browser interaction must not mutate any SavedVariables data")
 end)
 
 T.test("ggm slash command opens the local guild gear browser", function()

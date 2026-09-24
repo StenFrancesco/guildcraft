@@ -21,3 +21,7 @@ No policy conflict or missing behavior found in Task 3 scope. The suite still ne
 ## Files
 
 - `tests/snapshot_test_ui_test.lua`
+
+## Review finding follow-up
+
+The read-only browser regression test now deep-copies the entire SavedVariables database before opening the browser, filtering, and selecting a row, then recursively compares the complete database to that snapshot afterward. This covers every record and database field, rather than checking only one gear slot. Runtime tests remain unavailable by user direction; `git diff --check` is the static verification for this follow-up.
