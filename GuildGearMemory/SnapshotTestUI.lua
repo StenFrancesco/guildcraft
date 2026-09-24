@@ -170,138 +170,190 @@ function GGM.BuildSnapshotViewModel(record, formatTime)
         capturedAtText = capturedAtText, completenessText = "Complete", slots = slotRows }
 end
 
-local function setMetadataVisible(frame, visible)
-    local controls = { frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }
-    for _, control in ipairs(controls) do if visible then control:Show() else control:Hide() end end
+local function createText(frame, layer, fontObject)
+    return frame:CreateFontString(nil, layer or "OVERLAY", fontObject or "GameFontHighlight")
 end
 
-function GGM.RenderSnapshotViewModel(frame, model)
-    if not model.hasSnapshot then
-        frame.emptyState:SetText(model.emptyStateText); frame.emptyState:Show(); setMetadataVisible(frame, false)
-        for _, row in ipairs(frame.slotRows) do row:Hide() end
+local function setText(control, value)
+    control:SetText(value or "")
+    if value and value ~= "" then control:Show() else control:Hide() end
+end
+
+local function renderBrowserDetail(frame, entry, api)
+    frame.detailModel = nil
+    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine }) do control:Hide() end
+    frame.detailEmpty:Hide()
+    for _, slot in ipairs(frame.slotButtons) do slot:Hide() end
+    if not entry then
+        if #frame.entries == 0 then
+            frame.detailEmpty:SetText("No saved guild gear")
+        elseif #frame.filteredEntries == 0 then
+            frame.detailEmpty:SetText("No characters found")
+        else
+            frame.detailEmpty:SetText("Select a character")
+        end
+        frame.detailEmpty:Show()
         return
     end
-    frame.emptyState:Hide(); setMetadataVisible(frame, true)
-    frame.characterLine:SetText("Character: " .. model.characterName)
-    frame.realmLine:SetText("Realm: " .. model.realm)
-    frame.capturedLine:SetText("Captured: " .. model.capturedAtText)
-    frame.completenessLine:SetText("Completeness: " .. model.completenessText)
+
+    local model = GGM.BuildGuildGearBrowserDetail(entry.record, api)
+    frame.detailModel = model
+    if not model.hasRecord then
+        frame.detailEmpty:SetText("No saved guild gear")
+        frame.detailEmpty:Show()
+        return
+    end
+    setText(frame.characterLine, model.characterName)
+    setText(frame.realmLine, model.realm)
+    setText(frame.capturedLine, "Saved capture: " .. model.capturedAtText)
     for index, slot in ipairs(model.slots) do
-        local row = frame.slotRows[index]; row:SetText(slot.key .. ": " .. slot.valueText); row:Show()
+        local button = frame.slotButtons[index]
+        button.key = slot.key
+        button.icon:SetTexture(slot.icon)
+        button.icon:SetDesaturated(slot.empty)
+        button.icon:SetAlpha(slot.empty and 0.35 or 1)
+        button.label:SetText(slot.empty and (slot.key .. " (empty)") or slot.key)
+        button.empty = slot.empty
+        button.itemID = slot.itemID
+        button.itemLink = slot.itemLink
+        button:SetScript("OnEnter", function(self)
+            if self.itemLink and api.GameTooltip then
+                api.GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                api.GameTooltip:SetHyperlink(self.itemLink)
+                api.GameTooltip:Show()
+            end
+        end)
+        button:SetScript("OnLeave", function()
+            if api.GameTooltip then api.GameTooltip:Hide() end
+        end)
+        button:Show()
     end
-    for index = #model.slots + 1, #frame.slotRows do frame.slotRows[index]:Hide() end
 end
 
-local function createLine(frame, yOffset, fontObject)
-    local line = frame:CreateFontString(nil, "OVERLAY", fontObject)
-    line:SetPoint("TOPLEFT", 24, yOffset); line:SetPoint("RIGHT", frame, "RIGHT", -24, 0); line:SetJustifyH("LEFT")
-    return line
-end
+local function updateBrowserList(frame, api)
+    frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, frame.searchBox:GetText() or "")
+    local selectedStillVisible = false
+    for _, entry in ipairs(frame.filteredEntries) do
+        if frame.selectedEntry and entry.key == frame.selectedEntry.key then selectedStillVisible = true end
+    end
+    if not selectedStillVisible then frame.selectedEntry = frame.filteredEntries[1] end
 
-local function setSnapshotContentVisible(frame, visible)
-    if visible and frame.snapshotModel and frame.snapshotModel.hasSnapshot then
-        frame.emptyState:Hide()
-        setMetadataVisible(frame, true)
-        for _, row in ipairs(frame.slotRows) do row:Show() end
-    elseif visible and frame.snapshotModel then
-        frame.emptyState:Show()
-        setMetadataVisible(frame, false)
-        for _, row in ipairs(frame.slotRows) do row:Hide() end
+    local rows = frame.listRows
+    for index, entry in ipairs(frame.filteredEntries) do
+        local row = rows[index]
+        if not row then
+            row = api.CreateFrame("Button", nil, frame.listContent)
+            row:SetSize(220, 28)
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            row.label:SetPoint("LEFT", row, "LEFT", 8, 0)
+            row.label:SetJustifyH("LEFT")
+            row:RegisterForClicks("LeftButtonUp")
+            rows[index] = row
+        end
+        row.entry = entry
+        row.label:SetText(entry.name .. " - " .. entry.realm)
+        row:SetPoint("TOPLEFT", frame.listContent, "TOPLEFT", 0, -(index - 1) * 28)
+        row.selected = frame.selectedEntry ~= nil and frame.selectedEntry.key == entry.key
+        if row.label.SetTextColor then
+            if row.selected then row.label:SetTextColor(1, 0.82, 0) else row.label:SetTextColor(1, 1, 1) end
+        end
+        row:SetScript("OnClick", function()
+            frame.selectedEntry = row.entry
+            updateBrowserList(frame, api)
+            renderBrowserDetail(frame, frame.selectedEntry, api)
+        end)
+        row:Show()
+    end
+    for index = #frame.filteredEntries + 1, #rows do rows[index]:Hide() end
+    frame.listContent:SetHeight(math.max(#frame.filteredEntries * 28, 1))
+
+    if #frame.entries == 0 then
+        frame.listEmpty:SetText("No saved guild gear")
+        frame.listEmpty:Show()
+    elseif #frame.filteredEntries == 0 then
+        frame.listEmpty:SetText("No characters found")
+        frame.listEmpty:Show()
     else
-        frame.emptyState:Hide()
-        setMetadataVisible(frame, false)
-        for _, row in ipairs(frame.slotRows) do row:Hide() end
+        frame.listEmpty:Hide()
     end
+    renderBrowserDetail(frame, frame.selectedEntry, api)
 end
 
-function GGM.SelectSnapshotTab(frame, selectedKey)
-    if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then return false end
-    frame.activeTab = selectedKey
-    frame.TitleText:SetText(selectedKey == "Character" and "Guild Gear Memory - Saved Snapshot" or "Guild Gear Memory - " .. selectedKey)
+function GGM.CreateGuildGearBrowserWindow(api)
+    local frame = api.CreateFrame("Frame", "GuildGearMemoryBrowserFrame", api.UIParent, "BasicFrameTemplateWithInset")
+    frame:SetSize(900, 610)
+    frame:SetPoint("CENTER")
+    frame:SetClampedToScreen(true)
+    frame:Hide()
+    frame.TitleText:SetText("Guild Gear Memory - Saved Gear")
+    frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
 
-    for _, tab in ipairs(frame.navigationTabs) do
-        local selected = tab.key == selectedKey
-        tab.background:SetColorTexture(selected and 0.20 or 0.055, selected and 0.16 or 0.055, selected and 0.025 or 0.065, 0.96)
-        if selected then tab.label:SetTextColor(1, 0.82, 0) else tab.label:SetTextColor(0.9, 0.9, 0.9) end
+    frame.searchLabel = createText(frame, "OVERLAY", "GameFontNormal")
+    frame.searchLabel:SetText("Search characters")
+    frame.searchLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -40)
+    frame.searchBox = api.CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+    frame.searchBox:SetSize(230, 28)
+    frame.searchBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -60)
+    frame.searchBox:SetAutoFocus(false)
+    frame.searchBox:SetScript("OnTextChanged", function()
+        updateBrowserList(frame, api)
+    end)
+
+    frame.listScroll = api.CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
+    frame.listScroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -98)
+    frame.listScroll:SetSize(250, 480)
+    frame.listContent = api.CreateFrame("Frame", nil, frame.listScroll)
+    frame.listContent:SetSize(230, 1)
+    frame.listScroll:SetScrollChild(frame.listContent)
+    frame.listEmpty = createText(frame, "OVERLAY", "GameFontNormal")
+    frame.listEmpty:SetPoint("TOPLEFT", frame, "TOPLEFT", 28, -112)
+    frame.listEmpty:Hide()
+
+    frame.characterLine = createText(frame, "OVERLAY", "GameFontNormalLarge")
+    frame.characterLine:SetPoint("TOPLEFT", frame, "TOPLEFT", 300, -48)
+    frame.realmLine = createText(frame, "OVERLAY", "GameFontHighlight")
+    frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 0, -6)
+    frame.capturedLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
+    frame.capturedLine:SetPoint("TOPLEFT", frame.realmLine, "BOTTOMLEFT", 0, -6)
+    frame.detailEmpty = createText(frame, "OVERLAY", "GameFontNormalLarge")
+    frame.detailEmpty:SetPoint("CENTER", frame, "CENTER", 120, -20)
+    frame.detailEmpty:Hide()
+
+    local centerX, centerY, radiusX, radiusY = 410, -365, 225, 174
+    for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local angle = ((index - 1) / #GGM.TRACKED_SLOTS) * (2 * math.pi) - (math.pi / 2)
+        local button = api.CreateFrame("Button", nil, frame)
+        button:SetSize(62, 64)
+        button:SetPoint("CENTER", frame, "TOPLEFT", centerX + math.cos(angle) * radiusX, centerY + math.sin(angle) * radiusY)
+        button.icon = button:CreateTexture(nil, "ARTWORK")
+        button.icon:SetSize(42, 42)
+        button.icon:SetPoint("TOP", button, "TOP", 0, -1)
+        button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        button.label:SetPoint("TOP", button.icon, "BOTTOM", 0, -2)
+        button.label:SetText(trackedSlot.key)
+        button:Hide()
+        frame.slotButtons[index] = button
     end
-
-    local showSnapshot = selectedKey == "Character"
-    setSnapshotContentVisible(frame, showSnapshot)
-    for pageKey, page in pairs(frame.placeholderPages) do
-        if pageKey == selectedKey then page:Show() else page:Hide() end
-    end
-    return true
-end
-
-local function createNavigationTab(api, frame, key, label, iconPath, offset)
-    local tab = api.CreateFrame("Button", nil, frame)
-    tab:SetSize(72, 82)
-    tab:SetPoint("TOPRIGHT", frame, "TOPLEFT", -3, -72 - offset)
-
-    local background = tab:CreateTexture(nil, "BACKGROUND")
-    background:SetAllPoints(tab)
-    background:SetColorTexture(0.055, 0.055, 0.065, 0.96)
-
-    local icon = tab:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(34, 34)
-    icon:SetPoint("TOP", tab, "TOP", 0, -8)
-    icon:SetTexture(iconPath)
-
-    local text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    text:SetPoint("TOP", icon, "BOTTOM", 0, -3)
-    text:SetText(label)
-    text:SetJustifyH("CENTER")
-
-    tab.key = key
-    tab.background = background
-    tab.label = text
-    tab:RegisterForClicks("LeftButtonUp")
-    tab:SetScript("OnClick", function() GGM.SelectSnapshotTab(frame, key) end)
-    return tab
-end
-
-function GGM.CreateSnapshotTestWindow(api)
-    local frame = api.CreateFrame("Frame", "GuildGearMemorySnapshotTestFrame", api.UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(660, 500); frame:SetPoint("CENTER"); frame:SetClampedToScreen(true); frame:Hide()
-    frame.TitleText:SetText("Guild Gear Memory - Saved Snapshot")
-    frame.characterLine = createLine(frame, -62, "GameFontNormal")
-    frame.realmLine = createLine(frame, -84, "GameFontNormal")
-    frame.capturedLine = createLine(frame, -106, "GameFontHighlight")
-    frame.completenessLine = createLine(frame, -128, "GameFontHighlight")
-    frame.emptyState = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    frame.emptyState:SetPoint("CENTER", frame, "CENTER", 0, 0); frame.emptyState:Hide()
-    frame.slotRows = {}
-    for index = 1, #GGM.TRACKED_SLOTS do table.insert(frame.slotRows, createLine(frame, -158 - ((index - 1) * 19), "GameFontHighlightSmall")) end
-    frame.snapshotModel = nil
-    frame.placeholderPages = {}
-    for _, pageKey in ipairs({ "Professions", "Bank" }) do
-        local page = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        page:SetPoint("CENTER", frame, "CENTER", 0, 0)
-        page:SetText(pageKey .. " content will be added later.")
-        page:Hide()
-        frame.placeholderPages[pageKey] = page
-    end
-    frame.navigationTabs = {
-        createNavigationTab(api, frame, "Character", "Character", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", 0),
-        createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", 86),
-        createNavigationTab(api, frame, "Bank", "Bank", "Interface\\Icons\\INV_Misc_Bag_10", 172),
-    }
-    GGM.SelectSnapshotTab(frame, "Character")
     return frame
 end
 
-function GGM.ShowSnapshotTestWindow(api, db)
-    local record
-    if db ~= nil then record = select(1, GGM.GetLocalPlayerRecord(api, db)) end
-    local model = GGM.BuildSnapshotViewModel(record, api.date)
-    if not GGM.snapshotTestFrame then GGM.snapshotTestFrame = GGM.CreateSnapshotTestWindow(api) end
-    GGM.snapshotTestFrame.snapshotModel = model
-    GGM.RenderSnapshotViewModel(GGM.snapshotTestFrame, model)
-    GGM.SelectSnapshotTab(GGM.snapshotTestFrame, GGM.snapshotTestFrame.activeTab or "Character")
-    GGM.snapshotTestFrame:Show()
-    return model
+function GGM.ShowGuildGearBrowserWindow(api, db)
+    if not GGM.guildGearBrowserFrame then GGM.guildGearBrowserFrame = GGM.CreateGuildGearBrowserWindow(api) end
+    local frame = GGM.guildGearBrowserFrame
+    local query = frame.searchBox:GetText() or ""
+    local selectedKey = frame.selectedEntry and frame.selectedEntry.key or nil
+    frame.entries = GGM.BuildGuildGearBrowserEntries(db)
+    frame.searchBox:SetText(query)
+    frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, query)
+    frame.selectedEntry = nil
+    for _, entry in ipairs(frame.filteredEntries) do
+        if entry.key == selectedKey then frame.selectedEntry = entry; break end
+    end
+    if not frame.selectedEntry then frame.selectedEntry = frame.filteredEntries[1] end
+    updateBrowserList(frame, api)
+    frame:Show()
+    return frame.detailModel
 end
-
 local function parseRequestedIdentity(message)
     if type(message) ~= "string" then
         return nil, nil
@@ -353,6 +405,6 @@ function GGM.RegisterSnapshotTestSlashCommand(api)
             return
         end
 
-        GGM.ShowSnapshotTestWindow(api, GGM.db)
+        GGM.ShowGuildGearBrowserWindow(api, GGM.db)
     end
 end

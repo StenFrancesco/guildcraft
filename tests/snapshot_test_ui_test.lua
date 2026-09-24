@@ -296,130 +296,168 @@ T.test("malformed slot records become the no saved snapshot state", function()
     end
 end)
 
-T.test("renderer switches between saved data and no saved snapshot", function()
-    local GGM = loadUI()
-    local frame = newRenderableFrame(GGM)
-    local record = makeRecord(GGM)
-
-    local populated = GGM.BuildSnapshotViewModel(record)
-    GGM.RenderSnapshotViewModel(frame, populated)
-
-    T.assertFalse(frame.emptyState.visible)
-    T.assertTrue(frame.characterLine.visible)
-    T.assertEqual(frame.characterLine.text, "Character: Alice")
-    T.assertEqual(frame.realmLine.text, "Realm: Silvermoon")
-    T.assertEqual(frame.completenessLine.text, "Completeness: Complete")
-    T.assertEqual(frame.slotRows[1].text, "HEAD: " .. record.gear.slots.HEAD.itemLink)
-
-    local missing = GGM.BuildSnapshotViewModel(nil)
-    GGM.RenderSnapshotViewModel(frame, missing)
-
-    T.assertTrue(frame.emptyState.visible)
-    T.assertEqual(frame.emptyState.text, "No saved snapshot")
-    T.assertFalse(frame.characterLine.visible)
-    T.assertFalse(frame.slotRows[1].visible)
-end)
-
-T.test("renderer renders every tracked slot row in order", function()
-    local GGM = loadUI()
-    local frame = newRenderableFrame(GGM)
-    local record = makeRecord(GGM)
-
-    GGM.RenderSnapshotViewModel(frame, GGM.BuildSnapshotViewModel(record))
-
-    for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local savedSlot = record.gear.slots[trackedSlot.key]
-        T.assertTrue(frame.slotRows[index].visible)
-        T.assertEqual(frame.slotRows[index].text, trackedSlot.key .. ": " .. savedSlot.itemLink)
+local function newControl()
+    local control = { text = nil, visible = false, scripts = {} }
+    function control:SetText(text)
+        self.text = text
+        local changed = self.scripts.OnTextChanged
+        if changed then changed(self, true) end
     end
-end)
+    function control:GetText() return self.text or "" end
+    function control:Show() self.visible = true end
+    function control:Hide() self.visible = false end
+    function control:SetSize() end
+    function control:SetPoint() end
+    function control:SetClampedToScreen() end
+    function control:SetJustifyH() end
+    function control:SetAutoFocus() end
+    function control:SetHeight(height) self.height = height end
+    function control:SetWidth(width) self.width = width end
+    function control:SetScript(name, callback) self.scripts[name] = callback end
+    function control:RegisterForClicks() end
+    function control:SetDesaturated(value) self.desaturated = value end
+    function control:SetAlpha(value) self.alpha = value end
+    function control:SetTexture(value) self.texture = value end
+    function control:CreateFontString() return newControl() end
+    function control:CreateTexture() return newControl() end
+    return control
+end
 
-T.test("show snapshot reads the local record without capturing and reuses one frame", function()
-    local GGM = loadUI()
-    local record = makeRecord(GGM)
-    local frame = newRenderableFrame(GGM)
-    local db = { marker = "db" }
-    local readCount = 0
-    local createCount = 0
-
-    GGM.GetLocalPlayerRecord = function(api, receivedDB)
-        T.assertEqual(api.marker, "api")
-        T.assertTrue(receivedDB == db)
-        readCount = readCount + 1
-        return record, nil
-    end
-
-    GGM.CaptureAndStoreLocalPlayer = function()
-        error("snapshot UI must not capture or write")
-    end
-
-    GGM.CreateSnapshotTestWindow = function(api)
-        T.assertEqual(api.marker, "api")
-        createCount = createCount + 1
-        return frame
-    end
-
+local function makeBrowserAPI()
     local api = {
-        marker = "api",
-        date = function()
-            return "formatted time"
+        UIParent = newControl(),
+        CreateFrame = function(_, name, parent)
+            local frame = newControl()
+            frame.name, frame.parent = name, parent
+            frame.TitleText = newControl()
+            function frame:SetScrollChild(child) self.scrollChild = child end
+            return frame
         end,
+        date = function(_, timestamp) return "saved-" .. tostring(timestamp) end,
+        GetItemIcon = function(itemID) return "item-icon:" .. tostring(itemID) end,
+        GetInventorySlotInfo = function(slotName) return 1, "slot-icon:" .. slotName end,
     }
+    return api
+end
 
-    local firstModel = GGM.ShowSnapshotTestWindow(api, db)
-    local secondModel = GGM.ShowSnapshotTestWindow(api, db)
+local function makeDB(GGM, records)
+    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {} }
+    for _, record in ipairs(records or {}) do
+        db.characters[record.identity.key] = record
+    end
+    return db
+end
 
-    T.assertTrue(firstModel.hasSnapshot)
-    T.assertTrue(secondModel.hasSnapshot)
-    T.assertEqual(readCount, 2)
-    T.assertEqual(createCount, 1)
-    T.assertTrue(frame.shown)
-    T.assertEqual(frame.capturedLine.text, "Captured: formatted time")
+T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
+    local GGM = loadUI()
+    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM))
+
+    T.assertTrue(frame.visible)
+    T.assertEqual(frame.listEmpty.text, "No saved guild gear")
+    T.assertEqual(frame.detailEmpty.text, "No saved guild gear")
+    T.assertEqual(#frame.slotButtons, #GGM.TRACKED_SLOTS)
+    T.assertNil(frame.navigationTabs)
+    T.assertNil(frame.placeholderPages)
 end)
 
-T.test("show snapshot uses no saved snapshot when no usable database exists", function()
+T.test("guild gear browser keeps search text and shows no characters found after refresh", function()
     local GGM = loadUI()
-    local frame = newRenderableFrame(GGM)
-    local readCount = 0
+    local record = makeRecord(GGM)
+    local api = makeBrowserAPI()
+    local frame = GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { record }))
 
-    GGM.GetLocalPlayerRecord = function()
-        readCount = readCount + 1
-        return nil, "record-missing"
-    end
+    frame.searchBox:SetText("missing-name")
+    T.assertEqual(frame.searchBox:GetText(), "missing-name")
+    T.assertEqual(frame.listEmpty.text, "No characters found")
+    T.assertEqual(frame.detailEmpty.text, "No characters found")
+    T.assertNil(frame.selectedEntry)
 
-    GGM.CreateSnapshotTestWindow = function()
-        return frame
-    end
-
-    local model = GGM.ShowSnapshotTestWindow({ marker = "api" }, nil)
-
-    T.assertFalse(model.hasSnapshot)
-    T.assertEqual(model.emptyStateText, "No saved snapshot")
-    T.assertEqual(readCount, 0)
-    T.assertTrue(frame.emptyState.visible)
+    GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { record }))
+    T.assertEqual(frame.searchBox:GetText(), "missing-name")
+    T.assertEqual(frame.listEmpty.text, "No characters found")
 end)
 
-T.test("ggm slash command opens the saved snapshot for the current database", function()
+T.test("guild gear browser rows show name and realm and selecting renders saved identity time and slots", function()
     local GGM = loadUI()
-    local db = { marker = "db" }
-    local calledApi
-    local calledDB
+    local alpha = makeRecord(GGM)
+    local beta = makeRecord(GGM)
+    beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    beta.gear.capturedAt = 1700000200
+    local api = makeBrowserAPI()
+    local frame = GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { beta, alpha }))
 
+    T.assertEqual(frame.listRows[1].label.text, "Alice - Silvermoon")
+    T.assertEqual(frame.listRows[2].label.text, "Beatrice - ArgentDawn")
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+
+    T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
+    T.assertEqual(frame.characterLine.text, "Beatrice")
+    T.assertEqual(frame.realmLine.text, "ArgentDawn")
+    T.assertEqual(frame.capturedLine.text, "Saved capture: saved-1700000200")
+    T.assertEqual(frame.detailModel.key, "Beatrice-ArgentDawn")
+    T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
+    for index, slot in ipairs(frame.detailModel.slots) do
+        T.assertTrue(frame.slotButtons[index].visible)
+        T.assertEqual(frame.slotButtons[index].key, slot.key)
+        T.assertEqual(frame.slotButtons[index].itemID, slot.itemID)
+    end
+end)
+
+T.test("guild gear browser gives a saved empty slot an explicit dimmed empty treatment", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    record.gear.slots.OFF_HAND.itemID = false
+    record.gear.slots.OFF_HAND.itemLink = false
+    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { record }))
+    local offHandIndex
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        if slot.key == "OFF_HAND" then offHandIndex = index; break end
+    end
+
+    local emptySlot = frame.slotButtons[offHandIndex]
+    T.assertTrue(emptySlot.visible)
+    T.assertTrue(emptySlot.empty)
+    T.assertTrue(emptySlot.icon.desaturated)
+    T.assertEqual(emptySlot.icon.alpha, 0.35)
+    T.assertEqual(emptySlot.label.text, "OFF_HAND (empty)")
+end)
+
+T.test("opening and selecting browser entries never inspects, requests, captures, writes, or sends", function()
+    local GGM = loadUI()
+    local first, second = makeRecord(GGM), makeRecord(GGM)
+    second.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    local forbidden = function() error("browser interaction must remain local and read-only") end
+    for _, name in ipairs({
+        "InspectUnit", "NotifyInspect", "RequestCompleteSnapshot", "CaptureAndStoreLocalPlayer",
+        "CapturePlayerGearSnapshot", "SaveCompleteCharacterRecord", "UpdateConfirmedCharacterSlot",
+        "ApplyReceivedCharacterSlot", "SaveReceivedCompleteCharacterRecord", "SendAddonMessage",
+        "PublishConfirmedSlot", "SendGuildSyncMessage",
+    }) do
+        GGM[name] = forbidden
+    end
+    local api = makeBrowserAPI()
+    api.NotifyInspect = forbidden
+    api.SendAddonMessage = forbidden
+    local before = first.gear.slots.HEAD.itemID
+    local frame = GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { first, second }))
+
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+
+    T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
+    T.assertEqual(first.gear.slots.HEAD.itemID, before)
+end)
+
+T.test("ggm slash command opens the local guild gear browser", function()
+    local GGM = loadUI()
+    local db = makeDB(GGM)
+    local calledApi, calledDB
     GGM.db = db
-    GGM.ShowSnapshotTestWindow = function(api, receivedDB)
-        calledApi = api
-        calledDB = receivedDB
+    GGM.ShowGuildGearBrowserWindow = function(api, receivedDB)
+        calledApi, calledDB = api, receivedDB
     end
-
-    local api = {
-        SlashCmdList = {},
-    }
+    local api = { SlashCmdList = {} }
 
     GGM.RegisterSnapshotTestSlashCommand(api)
-
-    T.assertEqual(api.SLASH_GUILDGEARMEMORY1, "/ggm")
-    T.assertNotNil(api.SlashCmdList.GUILDGEARMEMORY)
-
     api.SlashCmdList.GUILDGEARMEMORY("")
 
     T.assertTrue(calledApi == api)
@@ -428,16 +466,12 @@ end)
 
 T.test("snapshot slash command can explicitly request exactly one named character", function()
     local GGM = loadUI()
-    local requestedSync
-    local requestedTarget
-    local api = {
-        SlashCmdList = {},
-    }
+    local requestedSync, requestedTarget
+    local api = { SlashCmdList = {} }
     local sync = { marker = "sync" }
     GGM.guildSync = sync
     GGM.RequestCompleteSnapshot = function(activeSync, target)
-        requestedSync = activeSync
-        requestedTarget = target
+        requestedSync, requestedTarget = activeSync, target
         return true, nil
     end
 
@@ -445,7 +479,6 @@ T.test("snapshot slash command can explicitly request exactly one named characte
     api.SlashCmdList.GUILDGEARMEMORY("request Alice-Silvermoon")
 
     T.assertTrue(requestedSync == sync)
-    T.assertNotNil(requestedTarget)
     T.assertEqual(requestedTarget.key, "Alice-Silvermoon")
     T.assertEqual(requestedTarget.name, "Alice")
     T.assertEqual(requestedTarget.realm, "Silvermoon")
@@ -456,9 +489,7 @@ end)
 T.test("snapshot slash command rejects malformed requests without sending", function()
     local GGM = loadUI()
     local sendCount = 0
-    local api = {
-        SlashCmdList = {},
-    }
+    local api = { SlashCmdList = {} }
     GGM.guildSync = {}
     GGM.RequestCompleteSnapshot = function()
         sendCount = sendCount + 1
