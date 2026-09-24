@@ -277,7 +277,63 @@ local function renderBrowserDetail(frame, entry, api)
     end
 end
 
-local function updateBrowserList(frame, api)
+local function setBrowserContentVisible(frame, visible)
+    local controls = {
+        frame.searchLabel,
+        frame.searchBox,
+        frame.listScroll,
+        frame.listEmpty,
+        frame.characterLine,
+        frame.realmLine,
+        frame.capturedLine,
+        frame.completenessLine,
+        frame.detailEmpty,
+    }
+    for _, control in ipairs(controls) do
+        if visible and (control == frame.searchLabel or control == frame.searchBox or control == frame.listScroll) then
+            control:Show()
+        elseif not visible then
+            control:Hide()
+        end
+    end
+    for _, button in ipairs(frame.slotButtons) do
+        if not visible then button:Hide() end
+    end
+end
+
+local updateBrowserList
+
+function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
+    if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then
+        return false
+    end
+
+    frame.activeTab = selectedKey
+    frame.TitleText:SetText(selectedKey == "Character"
+        and "Guild Gear Memory - Saved Gear"
+        or "Guild Gear Memory - " .. selectedKey)
+
+    for _, tab in ipairs(frame.navigationTabs) do
+        local selected = tab.key == selectedKey
+        tab.background:SetColorTexture(selected and 0.20 or 0.055, selected and 0.16 or 0.055,
+            selected and 0.025 or 0.065, 0.96)
+        if selected then tab.label:SetTextColor(1, 0.82, 0) else tab.label:SetTextColor(0.9, 0.9, 0.9) end
+    end
+
+    local showCharacter = selectedKey == "Character"
+    for pageKey, page in pairs(frame.placeholderPages) do
+        if pageKey == selectedKey then page:Show() else page:Hide() end
+    end
+    if showCharacter then
+        setBrowserContentVisible(frame, true)
+        updateBrowserList(frame, frame.api)
+    else
+        setBrowserContentVisible(frame, false)
+    end
+    return true
+end
+
+updateBrowserList = function(frame, api)
     frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, frame.searchBox:GetText() or "")
     local selectedStillVisible = false
     for _, entry in ipairs(frame.filteredEntries) do
@@ -325,6 +381,36 @@ local function updateBrowserList(frame, api)
         frame.listEmpty:Hide()
     end
     renderBrowserDetail(frame, frame.selectedEntry, api)
+    if frame.activeTab ~= "Character" then
+        setBrowserContentVisible(frame, false)
+    end
+end
+
+local function createNavigationTab(api, frame, key, label, iconPath, offset)
+    local tab = api.CreateFrame("Button", nil, frame)
+    tab:SetSize(72, 82)
+    tab:SetPoint("TOPRIGHT", frame, "TOPLEFT", -3, -72 - offset)
+
+    local background = tab:CreateTexture(nil, "BACKGROUND")
+    background:SetAllPoints(tab)
+    background:SetColorTexture(0.055, 0.055, 0.065, 0.96)
+
+    local icon = tab:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(34, 34)
+    icon:SetPoint("TOP", tab, "TOP", 0, -8)
+    icon:SetTexture(iconPath)
+
+    local text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    text:SetPoint("TOP", icon, "BOTTOM", 0, -3)
+    text:SetText(label)
+    text:SetJustifyH("CENTER")
+
+    tab.key = key
+    tab.background = background
+    tab.label = text
+    tab:RegisterForClicks("LeftButtonUp")
+    tab:SetScript("OnClick", function() GGM.SelectGuildGearBrowserTab(frame, key) end)
+    return tab
 end
 
 function GGM.CreateGuildGearBrowserWindow(api)
@@ -333,6 +419,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame:SetPoint("CENTER")
     frame:SetClampedToScreen(true)
     frame:Hide()
+    frame.api = api
     frame.TitleText:SetText("Guild Gear Memory - Saved Gear")
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
 
@@ -402,6 +489,21 @@ function GGM.CreateGuildGearBrowserWindow(api)
         button:Hide()
         frame.slotButtons[index] = button
     end
+
+    frame.placeholderPages = {}
+    for _, pageKey in ipairs({ "Professions", "Bank" }) do
+        local page = createText(frame, "OVERLAY", "GameFontNormalLarge")
+        page:SetPoint("CENTER", frame, "CENTER", 0, 0)
+        page:SetText(pageKey .. " content will be added later.")
+        page:Hide()
+        frame.placeholderPages[pageKey] = page
+    end
+    frame.navigationTabs = {
+        createNavigationTab(api, frame, "Character", "Character", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", 0),
+        createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", 86),
+        createNavigationTab(api, frame, "Bank", "Bank", "Interface\\Icons\\INV_Misc_Bag_10", 172),
+    }
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
     return frame
 end
 
@@ -419,6 +521,7 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     end
     if not frame.selectedEntry then frame.selectedEntry = frame.filteredEntries[1] end
     updateBrowserList(frame, api)
+    GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Character")
     frame:Show()
     return frame.detailModel
 end
