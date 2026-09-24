@@ -1,13 +1,146 @@
 local T = require("tests.testlib")
+local makeRecord
 
 local function loadUI()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
     return GGM
 end
 
-local function makeRecord(GGM)
+T.test("guild gear browser includes only valid records sorted by name then realm without mutation", function()
+    local GGM = loadUI()
+    local zulu = makeRecord(GGM)
+    zulu.identity = { key = "zULu-Zenith", name = "zULu", realm = "Zenith" }
+    local alpha = makeRecord(GGM)
+    alpha.identity = { key = "ALPHA-amber", name = "ALPHA", realm = "amber" }
+    local sameNameFirstRealm = makeRecord(GGM)
+    sameNameFirstRealm.identity = { key = "Alpha-Azure", name = "Alpha", realm = "Azure" }
+    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {
+        [zulu.identity.key] = zulu,
+        [alpha.identity.key] = alpha,
+        [sameNameFirstRealm.identity.key] = sameNameFirstRealm,
+        ["missing"] = false,
+        ["incomplete"] = { complete = false },
+        ["malformed"] = { complete = true, identity = { key = "wrong", name = "Bad", realm = "Realm" } },
+        ["invalid-snapshot"] = { complete = true, identity = { key = "invalid-snapshot", name = "invalid", realm = "snapshot" }, gear = { complete = false } },
+    } }
+    local beforeZuluName, beforeAlphaSlot = zulu.identity.name, alpha.gear.slots.HEAD.itemID
+
+    local entries = GGM.BuildGuildGearBrowserEntries(db)
+
+    T.assertEqual(#entries, 3)
+    T.assertEqual(entries[1].key, "ALPHA-amber")
+    T.assertEqual(entries[2].key, "Alpha-Azure")
+    T.assertEqual(entries[3].key, "zULu-Zenith")
+    T.assertTrue(entries[1].record == alpha)
+    T.assertTrue(db.characters[alpha.identity.key] == alpha)
+    T.assertEqual(zulu.identity.name, beforeZuluName)
+    T.assertEqual(alpha.gear.slots.HEAD.itemID, beforeAlphaSlot)
+    T.assertNil(GGM.BuildGuildGearBrowserEntries(nil)[1])
+end)
+
+T.test("guild gear browser filter matches name and realm case-insensitively without mutation", function()
+    local GGM = loadUI()
+    local entries = {
+        { key = "a", name = "Alpha", realm = "Silvermoon" },
+        { key = "b", name = "Beta", realm = "Argent Dawn" },
+    }
+    local originalFirst = entries[1]
+
+    local all = GGM.FilterGuildGearBrowserEntries(entries, nil)
+    local byName = GGM.FilterGuildGearBrowserEntries(entries, "ALP")
+    local byRealm = GGM.FilterGuildGearBrowserEntries(entries, "DAWN")
+
+    T.assertEqual(#all, 2)
+    T.assertEqual(#GGM.FilterGuildGearBrowserEntries(entries, ""), 2)
+    T.assertEqual(#byName, 1)
+    T.assertEqual(byName[1].key, "a")
+    T.assertEqual(#byRealm, 1)
+    T.assertEqual(byRealm[1].key, "b")
+    T.assertEqual(#entries, 2)
+    T.assertTrue(entries[1] == originalFirst)
+end)
+
+T.test("guild gear browser detail renders captured time and all saved or empty slots", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    local empty = record.gear.slots.OFF_HAND
+    empty.itemID, empty.itemLink = false, false
+    local iconCalls, textureCalls = {}, {}
+    local api = {
+        date = function(format, timestamp)
+            T.assertEqual(format, "%Y-%m-%d %H:%M:%S")
+            T.assertEqual(timestamp, 1700000100)
+            return "saved time"
+        end,
+        GetItemIcon = function(itemID)
+            table.insert(iconCalls, itemID)
+            return "icon:" .. itemID
+        end,
+        GetInventorySlotInfo = function(slotName)
+            for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+                if slot.inventoryName == slotName then
+                    table.insert(textureCalls, slotName)
+                    return slot.inventorySlotID or #textureCalls, "texture:" .. slotName
+                end
+            end
+        end,
+    }
+
+    local model = GGM.BuildGuildGearBrowserDetail(record, api)
+
+    T.assertTrue(model.hasRecord)
+    T.assertEqual(model.characterName, "Alice")
+    T.assertEqual(model.realm, "Silvermoon")
+    T.assertEqual(model.capturedAtText, "saved time")
+    T.assertEqual(#model.slots, #GGM.TRACKED_SLOTS)
+    for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local row = model.slots[index]
+        T.assertEqual(row.key, trackedSlot.key)
+        if trackedSlot.key == "OFF_HAND" then
+            T.assertTrue(row.empty)
+            T.assertEqual(row.itemID, false)
+            T.assertEqual(row.itemLink, false)
+            T.assertEqual(row.icon, "texture:" .. trackedSlot.inventoryName)
+            T.assertEqual(row.slotTexture, "texture:" .. trackedSlot.inventoryName)
+        else
+            local saved = record.gear.slots[trackedSlot.key]
+            T.assertFalse(row.empty)
+            T.assertEqual(row.itemID, saved.itemID)
+            T.assertEqual(row.itemLink, saved.itemLink)
+            T.assertEqual(row.icon, "icon:" .. saved.itemID)
+        end
+    end
+    T.assertEqual(#iconCalls, #GGM.TRACKED_SLOTS - 1)
+end)
+
+T.test("guild gear browser detail rejects invalid or incomplete records", function()
+    local GGM = loadUI()
+    local malformed = makeRecord(GGM)
+    malformed.gear.slots.HEAD.itemLink = false
+
+    T.assertFalse(GGM.BuildGuildGearBrowserDetail(nil, {}).hasRecord)
+    T.assertFalse(GGM.BuildGuildGearBrowserDetail({ complete = false }, {}).hasRecord)
+    T.assertFalse(GGM.BuildGuildGearBrowserDetail(malformed, {}).hasRecord)
+end)
+
+T.test("guild gear browser detail falls back to slot texture when item icon is unavailable", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    local model = GGM.BuildGuildGearBrowserDetail(record, {
+        GetItemIcon = function() return nil end,
+        GetInventorySlotInfo = function() return 1, "slot-texture" end,
+    })
+
+    T.assertEqual(model.slots[1].itemID, record.gear.slots.HEAD.itemID)
+    T.assertEqual(model.slots[1].itemLink, record.gear.slots.HEAD.itemLink)
+    T.assertEqual(model.slots[1].icon, "slot-texture")
+end)
+
+makeRecord = function(GGM)
     local slots = {}
 
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do

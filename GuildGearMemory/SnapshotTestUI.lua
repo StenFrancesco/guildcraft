@@ -17,6 +17,138 @@ local function hasValidDisplayShape(record)
     return true
 end
 
+local function hasValidBrowserIdentity(record, key)
+    return type(key) == "string"
+        and type(record) == "table"
+        and type(record.identity) == "table"
+        and record.identity.key == key
+        and type(record.identity.name) == "string"
+        and record.identity.name ~= ""
+        and type(record.identity.realm) == "string"
+        and record.identity.realm ~= ""
+        and key == record.identity.name .. "-" .. record.identity.realm
+end
+
+function GGM.BuildGuildGearBrowserEntries(db)
+    local entries = {}
+    if type(db) ~= "table" or type(db.characters) ~= "table"
+        or type(GGM.GetCompleteCharacterRecord) ~= "function" then
+        return entries
+    end
+
+    for key in pairs(db.characters) do
+        local record = GGM.GetCompleteCharacterRecord(db, key)
+        if record and hasValidBrowserIdentity(record, key) then
+            table.insert(entries, {
+                key = key,
+                name = record.identity.name,
+                realm = record.identity.realm,
+                record = record,
+            })
+        end
+    end
+
+    table.sort(entries, function(left, right)
+        local leftName, rightName = string.lower(left.name), string.lower(right.name)
+        if leftName ~= rightName then return leftName < rightName end
+        local leftRealm, rightRealm = string.lower(left.realm), string.lower(right.realm)
+        if leftRealm ~= rightRealm then return leftRealm < rightRealm end
+        return left.key < right.key
+    end)
+
+    return entries
+end
+
+function GGM.FilterGuildGearBrowserEntries(entries, query)
+    local filtered = {}
+    if type(entries) ~= "table" then return filtered end
+    if query == nil or query == "" then
+        for _, entry in ipairs(entries) do table.insert(filtered, entry) end
+        return filtered
+    end
+    if type(query) ~= "string" then return filtered end
+
+    local needle = string.lower(query)
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" then
+            local name = type(entry.name) == "string" and string.lower(entry.name) or ""
+            local realm = type(entry.realm) == "string" and string.lower(entry.realm) or ""
+            if string.find(name, needle, 1, true) or string.find(realm, needle, 1, true) then
+                table.insert(filtered, entry)
+            end
+        end
+    end
+    return filtered
+end
+
+local function getItemIcon(api, itemID)
+    if type(api.GetItemIcon) == "function" then
+        return api.GetItemIcon(itemID)
+    end
+    if type(api.C_Item) == "table" and type(api.C_Item.GetItemIconByID) == "function" then
+        return api.C_Item.GetItemIconByID(itemID)
+    end
+    return nil
+end
+
+local function getSlotTexture(api, trackedSlot)
+    if type(api.GetInventorySlotInfo) ~= "function" then return nil end
+    local _, texture = api.GetInventorySlotInfo(trackedSlot.inventoryName)
+    return texture
+end
+
+local function hasValidBrowserDetailRecord(record)
+    return type(record) == "table"
+        and record.complete == true
+        and type(record.identity) == "table"
+        and type(record.identity.key) == "string"
+        and type(record.identity.name) == "string"
+        and record.identity.name ~= ""
+        and type(record.identity.realm) == "string"
+        and record.identity.realm ~= ""
+        and record.identity.key == record.identity.name .. "-" .. record.identity.realm
+        and type(record.gear) == "table"
+        and type(GGM.ValidateCompleteSnapshot) == "function"
+        and GGM.ValidateCompleteSnapshot(record.gear) == true
+end
+
+function GGM.BuildGuildGearBrowserDetail(record, api)
+    api = type(api) == "table" and api or {}
+    if not hasValidBrowserDetailRecord(record) then return { hasRecord = false } end
+
+    local slots = {}
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local savedSlot = record.gear.slots[trackedSlot.key]
+        local slotTexture = getSlotTexture(api, trackedSlot)
+        local empty = savedSlot.itemID == false
+        local icon = slotTexture
+        if not empty then icon = getItemIcon(api, savedSlot.itemID) or slotTexture end
+        table.insert(slots, {
+            key = trackedSlot.key,
+            inventorySlotID = savedSlot.inventorySlotID,
+            itemID = savedSlot.itemID,
+            itemLink = savedSlot.itemLink,
+            empty = empty,
+            slotTexture = slotTexture,
+            icon = icon,
+        })
+    end
+
+    local capturedAtText = tostring(record.gear.capturedAt)
+    if type(api.date) == "function" then
+        capturedAtText = api.date("%Y-%m-%d %H:%M:%S", record.gear.capturedAt)
+    end
+    return {
+        hasRecord = true,
+        key = record.identity.key,
+        characterName = record.identity.name,
+        name = record.identity.name,
+        realm = record.identity.realm,
+        capturedAtText = capturedAtText,
+        slots = slots,
+    }
+end
+
 function GGM.BuildSnapshotViewModel(record, formatTime)
     if not hasValidDisplayShape(record) then return missingModel() end
     local slotRows = {}
