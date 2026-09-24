@@ -90,13 +90,10 @@ T.test("failed recapture preserves the previous complete record", function()
     local first = assert(GGM.CaptureAndStoreLocalPlayer(api, db))
     T.assertEqual(first.gear.capturedAt, 1700000100)
 
-    local headSlotID = api.GetInventorySlotInfo("HeadSlot")
-    local originalLink = api.GetInventoryItemLink
-    api.GetInventoryItemLink = function(unit, slotID)
-        if slotID == headSlotID then
-            return nil
-        end
-        return originalLink(unit, slotID)
+    local originalSlotInfo = api.GetInventorySlotInfo
+    api.GetInventorySlotInfo = function(inventoryName)
+        if inventoryName == "RangedSlot" then return nil end
+        return originalSlotInfo(inventoryName)
     end
     api.GetServerTime = function()
         return 1700000200
@@ -105,7 +102,7 @@ T.test("failed recapture preserves the previous complete record", function()
     local record, err = GGM.CaptureAndStoreLocalPlayer(api, db)
 
     T.assertNil(record)
-    T.assertEqual(err, "item-link-unavailable:HEAD")
+    T.assertEqual(err, "inventory-slot-unavailable:RANGED")
 
     local preserved = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
     T.assertEqual(preserved.gear.capturedAt, 1700000100)

@@ -366,7 +366,7 @@ end)
 
 T.test("guild gear browser slot buttons fit inside the detail panel with a gap after the list", function()
     local GGM = loadUI()
-    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM))
+    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local listRight = 20 + 250
     local detailRight = 900 - 20
     local gutter = 12
@@ -565,4 +565,55 @@ T.test("snapshot slash command rejects malformed requests without sending", func
 
     T.assertEqual(sendCount, 0)
     T.assertEqual(GGM.lastSyncError, "request-target-invalid")
+end)
+
+T.test("paper doll layout uses the requested left right and bottom slot order", function()
+    local GGM = loadUI()
+    local expected = {
+        left = { "HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "SHIRT", "TABARD", "WRIST" },
+        right = { "HANDS", "WAIST", "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2" },
+        bottom = { "MAIN_HAND", "OFF_HAND", "RANGED" },
+    }
+    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    T.assertNil(frame.characterModel)
+    for group, keys in pairs(expected) do
+        for index, key in ipairs(keys) do
+            T.assertEqual(GGM.BROWSER_SLOT_LAYOUT[key].group, group)
+            T.assertEqual(GGM.BROWSER_SLOT_LAYOUT[key].order, index)
+        end
+    end
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        local button = frame.slotButtons[index]
+        local layout = GGM.BROWSER_SLOT_LAYOUT[slot.key]
+        T.assertEqual(button.key, slot.key)
+        T.assertEqual(button.paperDollGroup, layout.group)
+        T.assertEqual(button.paperDollOrder, layout.order)
+    end
+end)
+
+T.test("incomplete detail marks migrated missing slots unavailable, not empty", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    record.complete, record.completeness, record.gear.complete = false, "incomplete", false
+    record.gear.slots.SHIRT, record.gear.slots.TABARD, record.gear.slots.RANGED = nil, nil, nil
+    local entries = GGM.BuildGuildGearBrowserEntries(makeDB(GGM, { record }))
+    T.assertEqual(#entries, 1)
+    local model = GGM.BuildGuildGearBrowserDetail(entries[1].record, {})
+    T.assertTrue(model.hasRecord)
+    T.assertFalse(model.complete)
+    T.assertEqual(model.completenessText, "Incomplete")
+    local found = {}
+    for _, row in ipairs(model.slots) do
+        found[row.key] = row
+    end
+    T.assertTrue(found.SHIRT.unavailable)
+    T.assertFalse(found.SHIRT.empty)
+    T.assertEqual(found.SHIRT.valueText, "Unavailable")
+    T.assertFalse(found.HEAD.unavailable)
+    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { record }))
+    T.assertEqual(frame.completenessLine.text, "Incomplete")
+    local shirtIndex
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do if slot.key == "SHIRT" then shirtIndex = index end end
+    T.assertTrue(frame.slotButtons[shirtIndex].unavailable)
+    T.assertEqual(frame.slotButtons[shirtIndex].label.text, "SHIRT (unavailable)")
 end)

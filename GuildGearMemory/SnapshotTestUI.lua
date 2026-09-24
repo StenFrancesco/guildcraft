@@ -17,6 +17,16 @@ local function hasValidDisplayShape(record)
     return true
 end
 
+local slotColumns = {
+    left = { "HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "SHIRT", "TABARD", "WRIST" },
+    right = { "HANDS", "WAIST", "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2" },
+    bottom = { "MAIN_HAND", "OFF_HAND", "RANGED" },
+}
+GGM.BROWSER_SLOT_LAYOUT = {}
+for group, keys in pairs(slotColumns) do
+    for order, key in ipairs(keys) do GGM.BROWSER_SLOT_LAYOUT[key] = { group = group, order = order } end
+end
+
 local function hasValidBrowserIdentity(record, key)
     return type(key) == "string"
         and type(record) == "table"
@@ -32,12 +42,12 @@ end
 function GGM.BuildGuildGearBrowserEntries(db)
     local entries = {}
     if type(db) ~= "table" or type(db.characters) ~= "table"
-        or type(GGM.GetCompleteCharacterRecord) ~= "function" then
+        or type(GGM.GetCharacterRecord) ~= "function" then
         return entries
     end
 
     for key in pairs(db.characters) do
-        local record = GGM.GetCompleteCharacterRecord(db, key)
+        local record = GGM.GetCharacterRecord(db, key)
         if record and hasValidBrowserIdentity(record, key) then
             table.insert(entries, {
                 key = key,
@@ -98,18 +108,28 @@ local function getSlotTexture(api, trackedSlot)
 end
 
 local function hasValidBrowserDetailRecord(record)
-    return type(record) == "table"
-        and record.complete == true
-        and type(record.identity) == "table"
-        and type(record.identity.key) == "string"
+    if type(record) ~= "table"
+        or type(record.identity) ~= "table"
+    then return false end
+    local baseValid = type(record.identity.key) == "string"
         and type(record.identity.name) == "string"
         and record.identity.name ~= ""
         and type(record.identity.realm) == "string"
         and record.identity.realm ~= ""
         and record.identity.key == record.identity.name .. "-" .. record.identity.realm
         and type(record.gear) == "table"
-        and type(GGM.ValidateCompleteSnapshot) == "function"
-        and GGM.ValidateCompleteSnapshot(record.gear) == true
+        and type(record.gear.slots) == "table"
+        and type(record.gear.capturedAt) == "number"
+    if not baseValid then return false end
+    if record.complete == true then
+        return record.gear.complete == true and GGM.ValidateCompleteSnapshot(record.gear) == true
+    end
+    if record.complete ~= false or record.completeness ~= "incomplete" or record.gear.complete ~= false then return false end
+    for key, value in pairs(record.gear.slots) do
+        local valid = GGM.ValidateGearSlotValue(key, value)
+        if not valid then return false end
+    end
+    return true
 end
 
 function GGM.BuildGuildGearBrowserDetail(record, api)
@@ -120,17 +140,25 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local savedSlot = record.gear.slots[trackedSlot.key]
         local slotTexture = getSlotTexture(api, trackedSlot)
-        local empty = savedSlot.itemID == false
+        local unavailable = savedSlot == nil
+        local empty = not unavailable and savedSlot.itemID == false
         local icon = slotTexture
-        if not empty then icon = getItemIcon(api, savedSlot.itemID) or slotTexture end
+        if not unavailable and not empty then icon = getItemIcon(api, savedSlot.itemID) or slotTexture end
+        local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
+        local itemID, itemLink, inventorySlotID
+        if savedSlot then itemID, itemLink, inventorySlotID = savedSlot.itemID, savedSlot.itemLink, savedSlot.inventorySlotID end
         table.insert(slots, {
             key = trackedSlot.key,
-            inventorySlotID = savedSlot.inventorySlotID,
-            itemID = savedSlot.itemID,
-            itemLink = savedSlot.itemLink,
+            inventorySlotID = inventorySlotID,
+            itemID = itemID,
+            itemLink = itemLink,
             empty = empty,
+            unavailable = unavailable,
+            valueText = unavailable and "Unavailable" or nil,
             slotTexture = slotTexture,
             icon = icon,
+            layoutGroup = layout.group,
+            layoutOrder = layout.order,
         })
     end
 
@@ -145,6 +173,8 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         name = record.identity.name,
         realm = record.identity.realm,
         capturedAtText = capturedAtText,
+        complete = record.complete == true,
+        completenessText = record.complete == true and "Complete" or "Incomplete",
         slots = slots,
     }
 end
@@ -181,7 +211,7 @@ end
 
 local function renderBrowserDetail(frame, entry, api)
     frame.detailModel = nil
-    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine }) do control:Hide() end
+    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do control:Hide() end
     frame.detailEmpty:Hide()
     for _, slot in ipairs(frame.slotButtons) do slot:Hide() end
     if not entry then
@@ -206,14 +236,16 @@ local function renderBrowserDetail(frame, entry, api)
     setText(frame.characterLine, model.characterName)
     setText(frame.realmLine, model.realm)
     setText(frame.capturedLine, "Saved capture: " .. model.capturedAtText)
+    setText(frame.completenessLine, model.completenessText)
     for index, slot in ipairs(model.slots) do
         local button = frame.slotButtons[index]
         button.key = slot.key
         button.icon:SetTexture(slot.icon)
-        button.icon:SetDesaturated(slot.empty)
-        button.icon:SetAlpha(slot.empty and 0.35 or 1)
-        button.label:SetText(slot.empty and (slot.key .. " (empty)") or slot.key)
+        button.icon:SetDesaturated(slot.empty or slot.unavailable)
+        button.icon:SetAlpha(slot.unavailable and 0.2 or (slot.empty and 0.35 or 1))
+        button.label:SetText(slot.unavailable and (slot.key .. " (unavailable)") or (slot.empty and (slot.key .. " (empty)") or slot.key))
         button.empty = slot.empty
+        button.unavailable = slot.unavailable
         button.itemID = slot.itemID
         button.itemLink = slot.itemLink
         button:SetScript("OnEnter", function(self)
@@ -316,20 +348,32 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 0, -6)
     frame.capturedLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
     frame.capturedLine:SetPoint("TOPLEFT", frame.realmLine, "BOTTOMLEFT", 0, -6)
+    frame.completenessLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
+    frame.completenessLine:SetPoint("TOPLEFT", frame.capturedLine, "BOTTOMLEFT", 0, -4)
     frame.detailEmpty = createText(frame, "OVERLAY", "GameFontNormalLarge")
     frame.detailEmpty:SetPoint("CENTER", frame, "CENTER", 120, -20)
     frame.detailEmpty:Hide()
 
-    -- Keep the full 62px slot buttons inside the right detail panel while
-    -- leaving a clear gutter after the character list (which ends at x=270).
-    local centerX, centerY, radiusX, radiusY = 590, -365, 250, 174
+    -- The open center and spaced columns keep slots clear of the character list.
+    local sideX = { left = 365, right = 800 }
+    local sideStartY, sidePitch = -158, 55.5
+    local bottomX = { 535, 600, 665 }
+    local bottomY = -550
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local angle = ((index - 1) / #GGM.TRACKED_SLOTS) * (2 * math.pi) - (math.pi / 2)
+        local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
+        local x, y
+        if layout.group == "bottom" then
+            x, y = bottomX[layout.order], bottomY
+        else
+            x = sideX[layout.group]
+            y = sideStartY - (layout.order - 1) * sidePitch
+        end
         local button = api.CreateFrame("Button", nil, frame)
-        button:SetSize(62, 64)
-        button:SetPoint("CENTER", frame, "TOPLEFT", centerX + math.cos(angle) * radiusX, centerY + math.sin(angle) * radiusY)
+        button:SetSize(58, 54)
+        button:SetPoint("CENTER", frame, "TOPLEFT", x, y)
+        button.paperDollGroup, button.paperDollOrder = layout.group, layout.order
         button.icon = button:CreateTexture(nil, "ARTWORK")
-        button.icon:SetSize(42, 42)
+        button.icon:SetSize(38, 38)
         button.icon:SetPoint("TOP", button, "TOP", 0, -1)
         button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         button.label:SetPoint("TOP", button.icon, "BOTTOM", 0, -2)

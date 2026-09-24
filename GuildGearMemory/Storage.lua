@@ -94,6 +94,43 @@ local function identitiesCompatible(left, right)
     return true
 end
 
+local schemaOneSlotKeys = {
+    "HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "WRIST", "HANDS", "WAIST",
+    "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2", "MAIN_HAND", "OFF_HAND",
+}
+
+local function migrateSchemaOneRecord(record, characterKey)
+    if type(record) ~= "table" or record.complete ~= true or type(record.gear) ~= "table"
+        or record.gear.complete ~= true or type(record.gear.slots) ~= "table"
+        or type(record.gear.capturedAt) ~= "number" then
+        return false
+    end
+    if not validateIdentity(record.identity) or record.identity.key ~= characterKey
+        or record.identity.key ~= record.identity.name .. "-" .. record.identity.realm then
+        return false
+    end
+    if not readConfirmedSequence(record) then return false end
+
+    local expected = {}
+    for _, key in ipairs(schemaOneSlotKeys) do expected[key] = true end
+    local count = 0
+    for key, value in pairs(record.gear.slots) do
+        if not expected[key] then return false end
+        local valid = GGM.ValidateGearSlotValue(key, value)
+        if not valid then return false end
+        count = count + 1
+    end
+    if count ~= #schemaOneSlotKeys then return false end
+    for _, key in ipairs(schemaOneSlotKeys) do
+        if type(record.gear.slots[key]) ~= "table" then return false end
+    end
+
+    record.complete = false
+    record.completeness = "incomplete"
+    record.gear.complete = false
+    return true
+end
+
 function GGM.GetConfirmedSequence(record)
     if type(record) ~= "table" then
         return nil, "record-invalid"
@@ -112,6 +149,17 @@ function GGM.InitializeDatabase(existing)
 
     if type(existing) ~= "table" then
         return nil, "database-invalid"
+    end
+
+    if existing.schemaVersion == 1 and GGM.SCHEMA_VERSION == 2 then
+        if type(existing.characters) ~= "table" then
+            return nil, "database-characters-invalid"
+        end
+        for characterKey, record in pairs(existing.characters) do
+            migrateSchemaOneRecord(record, characterKey)
+        end
+        existing.schemaVersion = 2
+        return existing, nil
     end
 
     if existing.schemaVersion ~= GGM.SCHEMA_VERSION then
@@ -147,7 +195,7 @@ function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequen
     local sequence = confirmedSequence
     if sequence == nil then
         local existing = db.characters[identity.key]
-        if type(existing) == "table" and existing.complete == true then
+        if type(existing) == "table" then
             local existingSequence, sequenceErr = readConfirmedSequence(existing)
             if existingSequence == nil then
                 return false, sequenceErr
@@ -205,6 +253,34 @@ function GGM.GetCompleteCharacterRecord(db, characterKey)
         return nil, sequenceErr
     end
 
+    return record, nil
+end
+
+function GGM.GetCharacterRecord(db, characterKey)
+    if type(db) ~= "table" or type(db.characters) ~= "table" then
+        return nil, "database-invalid"
+    end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then
+        return nil, "unsupported-schema-version:" .. tostring(db.schemaVersion)
+    end
+    local record = db.characters[characterKey]
+    if type(record) ~= "table" then return nil, "record-missing" end
+    local identityValid, identityErr = validateIdentity(record.identity)
+    if not identityValid then return nil, identityErr end
+    if record.identity.key ~= characterKey then return nil, "record-key-mismatch" end
+    if record.complete == true then return GGM.GetCompleteCharacterRecord(db, characterKey) end
+    if record.complete ~= false or record.completeness ~= "incomplete" then return nil, "record-incomplete-invalid" end
+    if type(record.gear) ~= "table" or record.gear.complete ~= false
+        or type(record.gear.capturedAt) ~= "number" or type(record.gear.slots) ~= "table" then
+        return nil, "record-incomplete-invalid"
+    end
+    local _, sequenceErr = readConfirmedSequence(record)
+    if sequenceErr then return nil, sequenceErr end
+    for key, value in pairs(record.gear.slots) do
+        if not isTrackedSlotKey(key) then return nil, "tracked-slot-unknown:" .. tostring(key) end
+        local slotValid, slotErr = GGM.ValidateGearSlotValue(key, value)
+        if not slotValid then return nil, slotErr end
+    end
     return record, nil
 end
 
@@ -321,8 +397,8 @@ function GGM.SaveReceivedCompleteCharacterRecord(db, identity, snapshot, confirm
     end
 
     local existing = db.characters[identity.key]
-    if type(existing) == "table" and existing.complete == true then
-        local existingRecord, existingErr = GGM.GetCompleteCharacterRecord(db, identity.key)
+    if type(existing) == "table" then
+        local existingRecord, existingErr = GGM.GetCharacterRecord(db, identity.key)
         if not existingRecord then
             return false, existingErr
         end

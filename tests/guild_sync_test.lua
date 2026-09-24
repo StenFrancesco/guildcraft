@@ -420,3 +420,20 @@ T.test("confirmed publication uses the persisted sequence and slot", function()
     local ok, err = GGM.PublishConfirmedSlot(sync, alice.key, "HEAD", changed, 1700003300, 5)
     T.assertTrue(ok); T.assertNil(err); drain(); T.assertTrue(#sends > 0)
 end)
+
+T.test("migrated incomplete records do not answer full snapshot requests", function()
+    local GGM = loadModules()
+    local alice, bob = identity("Alice", "Silvermoon", "Player-1234-AAAA"), identity("Bob", "Silvermoon", "Player-1234-BBBB")
+    local db = assert(GGM.InitializeDatabase(nil))
+    db.characters[alice.key] = {
+        complete = false, completeness = "incomplete", identity = alice, confirmedSequence = 3,
+        gear = { complete = false, capturedAt = 1700002000, slots = {} },
+    }
+    local api, _, _, _, timers = clientApi(alice)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local result, err = GGM.HandleGuildSyncPayload(sync, bob.key,
+        assert(GGM.EncodeSyncSnapshotRequest(bob, alice, "000001")))
+    T.assertNil(err)
+    T.assertEqual(result, "ignored")
+    T.assertEqual(#timers, 0)
+end)

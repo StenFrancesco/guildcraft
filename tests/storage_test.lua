@@ -40,7 +40,7 @@ T.test("database initialization creates the Phase 1 schema on first run", functi
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 1)
+    T.assertEqual(db.schemaVersion, 2)
     T.assertEqual(type(db.characters), "table")
 end)
 
@@ -272,7 +272,7 @@ T.test("new complete records persist confirmed sequence zero without a schema bu
 
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
-    T.assertEqual(db.schemaVersion, 1)
+    T.assertEqual(db.schemaVersion, 2)
     T.assertEqual(db.characters[identity.key].confirmedSequence, 0)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(GGM.GetConfirmedSequence(record), 0)
@@ -485,4 +485,33 @@ T.test("received complete snapshot rejects invalid identity before touching the 
     T.assertFalse(saved)
     T.assertEqual(err, "identity-invalid")
     T.assertNil(next(db.characters))
+end)
+
+T.test("schema one migration preserves known slots and leaves new slots unknown", function()
+    local GGM = loadModules()
+    local identity = makeIdentity()
+    local slots = {}
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        if slot.key ~= "SHIRT" and slot.key ~= "TABARD" and slot.key ~= "RANGED" then
+            slots[slot.key] = { inventorySlotID = index, itemID = 2000 + index, itemLink = "|Hitem:" .. tostring(2000 + index) .. "|h[Test]|h" }
+        end
+    end
+    local existing = { schemaVersion = 1, characters = { [identity.key] = {
+        complete = true, identity = identity, confirmedSequence = 7,
+        gear = { complete = true, capturedAt = 1700000123, slots = slots },
+    } } }
+    local db, err = GGM.InitializeDatabase(existing)
+    T.assertNil(err)
+    T.assertEqual(db.schemaVersion, 2)
+    local record = assert(GGM.GetCharacterRecord(db, identity.key))
+    T.assertFalse(record.complete)
+    T.assertEqual(record.completeness, "incomplete")
+    T.assertFalse(record.gear.complete)
+    T.assertEqual(record.gear.capturedAt, 1700000123)
+    T.assertEqual(record.confirmedSequence, 7)
+    T.assertEqual(record.gear.slots.HEAD.itemID, 2001)
+    T.assertNil(record.gear.slots.SHIRT)
+    T.assertNil(record.gear.slots.TABARD)
+    T.assertNil(record.gear.slots.RANGED)
+    T.assertNil(GGM.GetCompleteCharacterRecord(db, identity.key))
 end)

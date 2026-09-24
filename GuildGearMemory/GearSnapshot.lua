@@ -105,6 +105,14 @@ function GGM.ValidateCompleteSnapshot(snapshot)
         return false, "snapshot-slots-invalid"
     end
 
+    local knownKeys = {}
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do knownKeys[slot.key] = true end
+    for slotKey in pairs(snapshot.slots) do
+        if not knownKeys[slotKey] then
+            return false, "snapshot-slot-unknown:" .. tostring(slotKey)
+        end
+    end
+
     for _, slot in ipairs(GGM.TRACKED_SLOTS) do
         local valid, err = GGM.ValidateGearSlotValue(slot.key, snapshot.slots[slot.key])
         if not valid then

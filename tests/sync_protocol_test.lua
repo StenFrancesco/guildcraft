@@ -93,6 +93,9 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
     T.assertEqual(message.snapshot.slots.HEAD.itemID, 5001)
     T.assertEqual(message.snapshot.slots.OFF_HAND.itemID, false)
     T.assertEqual(message.snapshot.slots.OFF_HAND.itemLink, false)
+    for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        T.assertEqual(message.snapshot.slots[trackedSlot.key].inventorySlotID, index)
+    end
 end)
 
 T.test("protocol rejects identity keys that do not match name and realm", function()
@@ -118,7 +121,7 @@ T.test("protocol rejects unsupported versions and unknown message types", functi
     local versionMessage, versionErr = GGM.DecodeSyncMessage("9U")
     T.assertNil(versionMessage)
     T.assertEqual(versionErr, "sync-protocol-version-unsupported")
-    local typeMessage, typeErr = GGM.DecodeSyncMessage("1X")
+    local typeMessage, typeErr = GGM.DecodeSyncMessage("3X")
     T.assertNil(typeMessage)
     T.assertEqual(typeErr, "sync-message-type-unknown")
 end)
@@ -139,4 +142,18 @@ T.test("protocol rejects logical payloads above the configured bound", function(
     local message, err = GGM.DecodeSyncMessage(string.rep("x", GGM.SYNC_MAX_LOGICAL_BYTES + 1))
     T.assertNil(message)
     T.assertEqual(err, "sync-payload-too-large")
+end)
+
+T.test("protocol version three rejects version two snapshot payloads", function()
+    local GGM = loadModules()
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 3)
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(
+        makeIdentity("Alice", "Silvermoon", "A"),
+        makeIdentity("Bob", "Silvermoon", "B"),
+        makeIdentity("Carol", "Silvermoon", "C"),
+        makeSnapshot(GGM), 1, "000001"
+    ))
+    local message, err = GGM.DecodeSyncMessage("2" .. payload:sub(2))
+    T.assertNil(message)
+    T.assertEqual(err, "sync-protocol-version-unsupported")
 end)
