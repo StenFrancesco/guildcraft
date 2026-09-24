@@ -1,7 +1,7 @@
 # Guild Gear Memory — Guild Gear Browser Design
 
-**Status:** Design approved for spec review  
-**Date:** 24 September 2026  
+**Status:** Design approved for spec review
+**Date:** 24 September 2026
 **Scope:** Replace the local-only snapshot test view with a searchable browser for saved character gear records.
 
 ## Purpose

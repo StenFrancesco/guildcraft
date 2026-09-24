@@ -306,8 +306,12 @@ local function newControl()
     function control:GetText() return self.text or "" end
     function control:Show() self.visible = true end
     function control:Hide() self.visible = false end
-    function control:SetSize() end
-    function control:SetPoint() end
+    function control:SetSize(width, height)
+        self.width, self.height = width, height
+    end
+    function control:SetPoint(point, relativeTo, relativePoint, x, y)
+        self.point = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
+    end
     function control:SetClampedToScreen() end
     function control:SetJustifyH() end
     function control:SetAutoFocus() end
@@ -358,6 +362,30 @@ T.test("guild gear browser shows the no saved guild gear state for an empty data
     T.assertEqual(#frame.slotButtons, #GGM.TRACKED_SLOTS)
     T.assertNil(frame.navigationTabs)
     T.assertNil(frame.placeholderPages)
+end)
+
+T.test("guild gear browser slot buttons fit inside the detail panel with a gap after the list", function()
+    local GGM = loadUI()
+    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM))
+    local listRight = 20 + 250
+    local detailRight = 900 - 20
+    local gutter = 12
+    local topInset, bottomInset = 32, 20
+
+    for index, button in ipairs(frame.slotButtons) do
+        local point = button.point
+        T.assertTrue(point ~= nil, "slot button must have a recorded layout point")
+        T.assertTrue(point.relativeTo == frame, "slot button must be positioned relative to the browser")
+        T.assertEqual(point.point, "CENTER")
+        local left = point.x - button.width / 2
+        local right = point.x + button.width / 2
+        local top = -point.y - button.height / 2
+        local bottom = -point.y + button.height / 2
+        T.assertTrue(left >= listRight + gutter, "slot " .. index .. " overlaps or crowds the character list")
+        T.assertTrue(right <= detailRight, "slot " .. index .. " exceeds the detail panel right edge")
+        T.assertTrue(top >= topInset, "slot " .. index .. " exceeds the detail panel top edge")
+        T.assertTrue(bottom <= 610 - bottomInset, "slot " .. index .. " exceeds the detail panel bottom edge")
+    end
 end)
 
 T.test("guild gear browser keeps search text and shows no characters found after refresh", function()

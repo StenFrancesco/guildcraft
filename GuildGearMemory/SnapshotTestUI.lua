@@ -320,7 +320,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.detailEmpty:SetPoint("CENTER", frame, "CENTER", 120, -20)
     frame.detailEmpty:Hide()
 
-    local centerX, centerY, radiusX, radiusY = 410, -365, 225, 174
+    -- Keep the full 62px slot buttons inside the right detail panel while
+    -- leaving a clear gutter after the character list (which ends at x=270).
+    local centerX, centerY, radiusX, radiusY = 590, -365, 250, 174
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local angle = ((index - 1) / #GGM.TRACKED_SLOTS) * (2 * math.pi) - (math.pi / 2)
         local button = api.CreateFrame("Button", nil, frame)
