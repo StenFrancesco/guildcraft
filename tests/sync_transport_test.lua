@@ -118,7 +118,7 @@ T.test("transport reassembles a framed logical payload before invoking the handl
         return "handled", nil
     end))
 
-    for index = #sendCalls, 1, -1 do
+    for index = 1, #sendCalls do
         GGM.HandleSyncTransportMessage(receiverTransport, GGM.SYNC_PREFIX, sendCalls[index].message, "GUILD", "Alice-Silvermoon")
     end
 

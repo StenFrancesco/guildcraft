@@ -276,10 +276,20 @@ function GGM.GetCharacterRecord(db, characterKey)
     end
     local _, sequenceErr = readConfirmedSequence(record)
     if sequenceErr then return nil, sequenceErr end
+    local legacyKeys = {}
+    for _, key in ipairs(schemaOneSlotKeys) do legacyKeys[key] = true end
     for key, value in pairs(record.gear.slots) do
-        if not isTrackedSlotKey(key) then return nil, "tracked-slot-unknown:" .. tostring(key) end
+        if not legacyKeys[key] then
+            if isTrackedSlotKey(key) then return nil, "incomplete-record-new-slot-present:" .. tostring(key) end
+            return nil, "tracked-slot-unknown:" .. tostring(key)
+        end
         local slotValid, slotErr = GGM.ValidateGearSlotValue(key, value)
         if not slotValid then return nil, slotErr end
+    end
+    for _, key in ipairs(schemaOneSlotKeys) do
+        if type(record.gear.slots[key]) ~= "table" then
+            return nil, "snapshot-slot-missing:" .. key
+        end
     end
     return record, nil
 end

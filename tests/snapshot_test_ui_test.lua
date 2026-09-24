@@ -352,9 +352,14 @@ local function makeDB(GGM, records)
     return db
 end
 
+local function showBrowser(GGM, api, db)
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    return GGM.guildGearBrowserFrame
+end
+
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
     local GGM = loadUI()
-    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM))
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM))
 
     T.assertTrue(frame.visible)
     T.assertEqual(frame.listEmpty.text, "No saved guild gear")
@@ -366,7 +371,7 @@ end)
 
 T.test("guild gear browser slot buttons fit inside the detail panel with a gap after the list", function()
     local GGM = loadUI()
-    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local listRight = 20 + 250
     local detailRight = 900 - 20
     local gutter = 12
@@ -392,7 +397,7 @@ T.test("guild gear browser keeps search text and shows no characters found after
     local GGM = loadUI()
     local record = makeRecord(GGM)
     local api = makeBrowserAPI()
-    local frame = GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { record }))
+    local frame = showBrowser(GGM, api, makeDB(GGM, { record }))
 
     frame.searchBox:SetText("missing-name")
     T.assertEqual(frame.searchBox:GetText(), "missing-name")
@@ -412,7 +417,7 @@ T.test("guild gear browser rows show name and realm and selecting renders saved 
     beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
     beta.gear.capturedAt = 1700000200
     local api = makeBrowserAPI()
-    local frame = GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { beta, alpha }))
+    local frame = showBrowser(GGM, api, makeDB(GGM, { beta, alpha }))
 
     T.assertEqual(frame.listRows[1].label.text, "Alice - Silvermoon")
     T.assertEqual(frame.listRows[2].label.text, "Beatrice - ArgentDawn")
@@ -439,7 +444,7 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     local record = makeRecord(GGM)
     record.gear.slots.OFF_HAND.itemID = false
     record.gear.slots.OFF_HAND.itemLink = false
-    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { record }))
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
     local offHandIndex
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
         if slot.key == "OFF_HAND" then offHandIndex = index; break end
@@ -492,7 +497,7 @@ T.test("opening and selecting browser entries never inspects, requests, captures
         return true
     end
     local before = copyTable(db)
-    local frame = GGM.ShowGuildGearBrowserWindow(api, db)
+    local frame = showBrowser(GGM, api, db)
 
     frame.searchBox:SetText("beatrice")
     T.assertEqual(#frame.filteredEntries, 1)
@@ -574,7 +579,7 @@ T.test("paper doll layout uses the requested left right and bottom slot order", 
         right = { "HANDS", "WAIST", "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2" },
         bottom = { "MAIN_HAND", "OFF_HAND", "RANGED" },
     }
-    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     T.assertNil(frame.characterModel)
     for group, keys in pairs(expected) do
         for index, key in ipairs(keys) do
@@ -610,7 +615,7 @@ T.test("incomplete detail marks migrated missing slots unavailable, not empty", 
     T.assertFalse(found.SHIRT.empty)
     T.assertEqual(found.SHIRT.valueText, "Unavailable")
     T.assertFalse(found.HEAD.unavailable)
-    local frame = GGM.ShowGuildGearBrowserWindow(makeBrowserAPI(), makeDB(GGM, { record }))
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
     T.assertEqual(frame.completenessLine.text, "Incomplete")
     local shirtIndex
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do if slot.key == "SHIRT" then shirtIndex = index end end

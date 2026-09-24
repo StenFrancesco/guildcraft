@@ -515,3 +515,46 @@ T.test("schema one migration preserves known slots and leaves new slots unknown"
     T.assertNil(record.gear.slots.RANGED)
     T.assertNil(GGM.GetCompleteCharacterRecord(db, identity.key))
 end)
+
+T.test("incomplete records require all 16 legacy slots and allow only new slots to be unknown", function()
+    local GGM = loadModules()
+    local identity = makeIdentity()
+    local slots = {}
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        if slot.key ~= "SHIRT" and slot.key ~= "TABARD" and slot.key ~= "RANGED" then
+            slots[slot.key] = { inventorySlotID = index, itemID = 3000 + index, itemLink = "|Hitem:" .. tostring(3000 + index) .. "|h[Legacy]|h" }
+        end
+    end
+    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {
+        [identity.key] = { complete = false, completeness = "incomplete", identity = identity, gear = { complete = false, capturedAt = 1700000123, slots = slots } },
+    } }
+    local record, err = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(err)
+    T.assertNotNil(record)
+    T.assertNil(record.gear.slots.SHIRT)
+    T.assertNil(record.gear.slots.TABARD)
+    T.assertNil(record.gear.slots.RANGED)
+
+    local legacySlots = record.gear.slots
+    record.gear.slots = {}
+    local emptySubset, emptySubsetErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(emptySubset)
+    T.assertEqual(emptySubsetErr, "snapshot-slot-missing:HEAD")
+    record.gear.slots = legacySlots
+
+    record.gear.slots.HEAD = nil
+    local missing, missingErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(missing)
+    T.assertEqual(missingErr, "snapshot-slot-missing:HEAD")
+
+    record.gear.slots.HEAD = { inventorySlotID = 1, itemID = 3001, itemLink = "|Hitem:3001|h[Legacy]|h" }
+    record.gear.slots.NECK.itemID, record.gear.slots.NECK.itemLink = 3002, false
+    local invalid, invalidErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(invalid)
+    T.assertEqual(invalidErr, "snapshot-slot-value-invalid:NECK")
+    record.gear.slots.NECK.itemID, record.gear.slots.NECK.itemLink = 3002, "|Hitem:3002|h[Legacy]|h"
+    record.gear.slots.UNTRACKED = { inventorySlotID = 99, itemID = 3000, itemLink = "|Hitem:3000|h[Unknown]|h" }
+    local unknown, unknownErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(unknown)
+    T.assertEqual(unknownErr, "tracked-slot-unknown:UNTRACKED")
+end)

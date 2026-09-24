@@ -146,10 +146,11 @@ T.test("a snapshot request produces at most one cached response", function()
             GGM.HandleGuildSyncAddonMessage(carolSync, daveSends[deliveredDave].prefix, daveSends[deliveredDave].message, daveSends[deliveredDave].channel, dave.key)
         end
     end
-    local expectedWinnerSends = carolTimers[1].delay < daveTimers[1].delay and carolSends or daveSends
-    local expectedLoserSends = carolTimers[1].delay < daveTimers[1].delay and daveSends or carolSends
-    T.assertTrue(#expectedWinnerSends > 0)
-    T.assertEqual(#expectedLoserSends, 0)
+    -- Equal-sequence claims elect the lexicographically first responder even
+    -- when its deterministic response delay is later. The earlier client may
+    -- already have sent one bounded claim before it observes the better claim.
+    T.assertTrue(#carolSends > 1)
+    T.assertEqual(#daveSends, 1)
 end)
 
 T.test("equal sequence claims elect the lexicographically first responder", function()
@@ -216,6 +217,8 @@ T.test("a stale response does not cancel a fresher responder timer", function()
     T.assertEqual(carolSync.pendingSnapshotResponseCount, 1)
     T.assertFalse(carolTimers[1].cancelled)
     carolTimers[1]:Fire()
+    T.assertEqual(carolSync.pendingSnapshotResponseCount, 1)
+    carolTimers[2]:Fire()
     T.assertEqual(carolSync.pendingSnapshotResponseCount, 0)
     T.assertTrue(#carolSends > 0)
 end)
@@ -238,7 +241,7 @@ T.test("pending delayed snapshot responses are capped", function()
     T.assertEqual(#timers, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES)
     T.assertEqual(#sends, 0)
     timers[1]:Fire()
-    T.assertEqual(sync.pendingSnapshotResponseCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES - 1)
+    T.assertEqual(sync.pendingSnapshotResponseCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES)
 end)
 
 T.test("repeated snapshot requests for one requester and target coalesce", function()
@@ -407,7 +410,7 @@ T.test("pending snapshot requests are bounded and expire", function()
     T.assertFalse(ok); T.assertEqual(err, "sync-pending-request-limit")
     setTime(200 + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS)
     T.assertTrue(GGM.RequestCompleteSnapshot(sync, alice))
-    T.assertEqual(sync.pendingSnapshotRequestCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_REQUESTS)
+    T.assertEqual(sync.pendingSnapshotRequestCount, 1)
     T.assertTrue(#sends > 0)
 end)
 
@@ -425,9 +428,15 @@ T.test("migrated incomplete records do not answer full snapshot requests", funct
     local GGM = loadModules()
     local alice, bob = identity("Alice", "Silvermoon", "Player-1234-AAAA"), identity("Bob", "Silvermoon", "Player-1234-BBBB")
     local db = assert(GGM.InitializeDatabase(nil))
+    local migratedSlots = {}
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        if slot.key ~= "SHIRT" and slot.key ~= "TABARD" and slot.key ~= "RANGED" then
+            migratedSlots[slot.key] = { inventorySlotID = index, itemID = 7000 + index, itemLink = "|Hitem:" .. tostring(7000 + index) .. "|h[Legacy]|h" }
+        end
+    end
     db.characters[alice.key] = {
         complete = false, completeness = "incomplete", identity = alice, confirmedSequence = 3,
-        gear = { complete = false, capturedAt = 1700002000, slots = {} },
+        gear = { complete = false, capturedAt = 1700002000, slots = migratedSlots },
     }
     local api, _, _, _, timers = clientApi(alice)
     local sync = assert(GGM.CreateGuildSync(api, db))

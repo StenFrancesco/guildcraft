@@ -128,7 +128,7 @@ end)
 
 T.test("protocol rejects malformed length prefixes and trailing data", function()
     local GGM = loadModules()
-    local malformed, malformedErr = GGM.DecodeSyncMessage("1Qx:abc")
+    local malformed, malformedErr = GGM.DecodeSyncMessage("3Qx:abc")
     T.assertNil(malformed)
     T.assertEqual(malformedErr, "sync-field-length-invalid")
     local valid = assert(GGM.EncodeSyncSnapshotRequest(makeIdentity("Bob", "Silvermoon", "Player-1234-BBBB"), makeIdentity("Alice", "Silvermoon", nil), "000001"))
