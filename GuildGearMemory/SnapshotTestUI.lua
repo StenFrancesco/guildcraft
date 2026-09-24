@@ -66,6 +66,68 @@ local function createLine(frame, yOffset, fontObject)
     return line
 end
 
+local function setSnapshotContentVisible(frame, visible)
+    if visible and frame.snapshotModel and frame.snapshotModel.hasSnapshot then
+        frame.emptyState:Hide()
+        setMetadataVisible(frame, true)
+        for _, row in ipairs(frame.slotRows) do row:Show() end
+    elseif visible and frame.snapshotModel then
+        frame.emptyState:Show()
+        setMetadataVisible(frame, false)
+        for _, row in ipairs(frame.slotRows) do row:Hide() end
+    else
+        frame.emptyState:Hide()
+        setMetadataVisible(frame, false)
+        for _, row in ipairs(frame.slotRows) do row:Hide() end
+    end
+end
+
+function GGM.SelectSnapshotTab(frame, selectedKey)
+    if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then return false end
+    frame.activeTab = selectedKey
+    frame.TitleText:SetText(selectedKey == "Character" and "Guild Gear Memory - Saved Snapshot" or "Guild Gear Memory - " .. selectedKey)
+
+    for _, tab in ipairs(frame.navigationTabs) do
+        local selected = tab.key == selectedKey
+        tab.background:SetColorTexture(selected and 0.20 or 0.055, selected and 0.16 or 0.055, selected and 0.025 or 0.065, 0.96)
+        if selected then tab.label:SetTextColor(1, 0.82, 0) else tab.label:SetTextColor(0.9, 0.9, 0.9) end
+    end
+
+    local showSnapshot = selectedKey == "Character"
+    setSnapshotContentVisible(frame, showSnapshot)
+    for pageKey, page in pairs(frame.placeholderPages) do
+        if pageKey == selectedKey then page:Show() else page:Hide() end
+    end
+    return true
+end
+
+local function createNavigationTab(api, frame, key, label, iconPath, offset)
+    local tab = api.CreateFrame("Button", nil, frame)
+    tab:SetSize(72, 82)
+    tab:SetPoint("TOPRIGHT", frame, "TOPLEFT", -3, -72 - offset)
+
+    local background = tab:CreateTexture(nil, "BACKGROUND")
+    background:SetAllPoints(tab)
+    background:SetColorTexture(0.055, 0.055, 0.065, 0.96)
+
+    local icon = tab:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(34, 34)
+    icon:SetPoint("TOP", tab, "TOP", 0, -8)
+    icon:SetTexture(iconPath)
+
+    local text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    text:SetPoint("TOP", icon, "BOTTOM", 0, -3)
+    text:SetText(label)
+    text:SetJustifyH("CENTER")
+
+    tab.key = key
+    tab.background = background
+    tab.label = text
+    tab:RegisterForClicks("LeftButtonUp")
+    tab:SetScript("OnClick", function() GGM.SelectSnapshotTab(frame, key) end)
+    return tab
+end
+
 function GGM.CreateSnapshotTestWindow(api)
     local frame = api.CreateFrame("Frame", "GuildGearMemorySnapshotTestFrame", api.UIParent, "BasicFrameTemplateWithInset")
     frame:SetSize(660, 500); frame:SetPoint("CENTER"); frame:SetClampedToScreen(true); frame:Hide()
@@ -78,6 +140,21 @@ function GGM.CreateSnapshotTestWindow(api)
     frame.emptyState:SetPoint("CENTER", frame, "CENTER", 0, 0); frame.emptyState:Hide()
     frame.slotRows = {}
     for index = 1, #GGM.TRACKED_SLOTS do table.insert(frame.slotRows, createLine(frame, -158 - ((index - 1) * 19), "GameFontHighlightSmall")) end
+    frame.snapshotModel = nil
+    frame.placeholderPages = {}
+    for _, pageKey in ipairs({ "Professions", "Bank" }) do
+        local page = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        page:SetPoint("CENTER", frame, "CENTER", 0, 0)
+        page:SetText(pageKey .. " content will be added later.")
+        page:Hide()
+        frame.placeholderPages[pageKey] = page
+    end
+    frame.navigationTabs = {
+        createNavigationTab(api, frame, "Character", "Character", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", 0),
+        createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", 86),
+        createNavigationTab(api, frame, "Bank", "Bank", "Interface\\Icons\\INV_Misc_Bag_10", 172),
+    }
+    GGM.SelectSnapshotTab(frame, "Character")
     return frame
 end
 
@@ -86,7 +163,10 @@ function GGM.ShowSnapshotTestWindow(api, db)
     if db ~= nil then record = select(1, GGM.GetLocalPlayerRecord(api, db)) end
     local model = GGM.BuildSnapshotViewModel(record, api.date)
     if not GGM.snapshotTestFrame then GGM.snapshotTestFrame = GGM.CreateSnapshotTestWindow(api) end
-    GGM.RenderSnapshotViewModel(GGM.snapshotTestFrame, model); GGM.snapshotTestFrame:Show()
+    GGM.snapshotTestFrame.snapshotModel = model
+    GGM.RenderSnapshotViewModel(GGM.snapshotTestFrame, model)
+    GGM.SelectSnapshotTab(GGM.snapshotTestFrame, GGM.snapshotTestFrame.activeTab or "Character")
+    GGM.snapshotTestFrame:Show()
     return model
 end
 
