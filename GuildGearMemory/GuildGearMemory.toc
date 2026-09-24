@@ -1,0 +1,18 @@
+## Interface: 120000
+## Title: Guild Gear Memory
+## Notes: Local last-known gear memory for guild characters
+## Author: Guild Gear Memory contributors
+## Version: 0.4.0-phase4
+## SavedVariables: GuildGearMemoryDB
+
+Constants.lua
+CharacterIdentity.lua
+GearSnapshot.lua
+Storage.lua
+StableGearTracker.lua
+LocalGearMemory.lua
+SyncProtocol.lua
+SyncTransport.lua
+GuildSync.lua
+SnapshotTestUI.lua
+Main.lua
