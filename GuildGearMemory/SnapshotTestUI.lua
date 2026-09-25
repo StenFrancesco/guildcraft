@@ -223,6 +223,80 @@ local function setText(control, value)
     if value and value ~= "" then control:Show() else control:Hide() end
 end
 
+-- Build the equipment area from simple Blizzard-native pieces instead of relying on
+-- a retail-only paper-doll template.  The dark leather, brass trim and quick-slot
+-- borders keep the panel at home in the Classic UI while remaining safe on clients
+-- where some optional art assets are unavailable.
+local function createClassicGearPanel(api, parent)
+    local panel = api.CreateFrame("Frame", nil, parent)
+    panel:SetSize(570, 438)
+    panel:SetPoint("TOPLEFT", parent, "TOPLEFT", 292, -128)
+
+    panel.background = panel:CreateTexture(nil, "BACKGROUND")
+    panel.background:SetAllPoints(panel)
+    panel.background:SetColorTexture(0.035, 0.026, 0.017, 0.98)
+
+    panel.leather = panel:CreateTexture(nil, "BACKGROUND")
+    panel.leather:SetAllPoints(panel)
+    panel.leather:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background")
+    panel.leather:SetAlpha(0.28)
+
+    panel.headerBackground = panel:CreateTexture(nil, "BORDER")
+    panel.headerBackground:SetSize(566, 34)
+    panel.headerBackground:SetPoint("TOP", panel, "TOP", 0, -2)
+    panel.headerBackground:SetColorTexture(0.105, 0.070, 0.026, 0.98)
+
+    panel.headerLine = panel:CreateTexture(nil, "BORDER")
+    panel.headerLine:SetSize(548, 1)
+    panel.headerLine:SetPoint("TOP", panel.headerBackground, "BOTTOM", 0, 0)
+    panel.headerLine:SetColorTexture(0.55, 0.39, 0.11, 0.90)
+
+    panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    panel.title:SetPoint("CENTER", panel.headerBackground, "CENTER", 0, 0)
+    panel.title:SetText("Equipment")
+    panel.title:SetTextColor(1.0, 0.82, 0.0)
+
+    -- Keep the center open. The slot columns and weapon row frame the equipment
+    -- naturally, without an extra inset box or instructional text.
+
+    -- Outer double-line trim: dark outer edge + warm brass inner edge.
+    local outerTop = panel:CreateTexture(nil, "BORDER")
+    outerTop:SetSize(570, 2)
+    outerTop:SetPoint("TOP", panel, "TOP", 0, 0)
+    outerTop:SetColorTexture(0.16, 0.105, 0.035, 1)
+    local outerBottom = panel:CreateTexture(nil, "BORDER")
+    outerBottom:SetSize(570, 2)
+    outerBottom:SetPoint("BOTTOM", panel, "BOTTOM", 0, 0)
+    outerBottom:SetColorTexture(0.16, 0.105, 0.035, 1)
+    local outerLeft = panel:CreateTexture(nil, "BORDER")
+    outerLeft:SetSize(2, 438)
+    outerLeft:SetPoint("LEFT", panel, "LEFT", 0, 0)
+    outerLeft:SetColorTexture(0.16, 0.105, 0.035, 1)
+    local outerRight = panel:CreateTexture(nil, "BORDER")
+    outerRight:SetSize(2, 438)
+    outerRight:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
+    outerRight:SetColorTexture(0.16, 0.105, 0.035, 1)
+
+    local innerTop = panel:CreateTexture(nil, "BORDER")
+    innerTop:SetSize(564, 1)
+    innerTop:SetPoint("TOP", panel, "TOP", 0, -3)
+    innerTop:SetColorTexture(0.58, 0.42, 0.12, 0.94)
+    local innerBottom = panel:CreateTexture(nil, "BORDER")
+    innerBottom:SetSize(564, 1)
+    innerBottom:SetPoint("BOTTOM", panel, "BOTTOM", 0, 3)
+    innerBottom:SetColorTexture(0.58, 0.42, 0.12, 0.94)
+    local innerLeft = panel:CreateTexture(nil, "BORDER")
+    innerLeft:SetSize(1, 432)
+    innerLeft:SetPoint("LEFT", panel, "LEFT", 3, 0)
+    innerLeft:SetColorTexture(0.58, 0.42, 0.12, 0.94)
+    local innerRight = panel:CreateTexture(nil, "BORDER")
+    innerRight:SetSize(1, 432)
+    innerRight:SetPoint("RIGHT", panel, "RIGHT", -3, 0)
+    innerRight:SetColorTexture(0.58, 0.42, 0.12, 0.94)
+
+    return panel
+end
+
 local function renderBrowserDetail(frame, entry, api)
     frame.detailModel = nil
     for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do control:Hide() end
@@ -256,19 +330,32 @@ local function renderBrowserDetail(frame, entry, api)
         button.key = slot.key
         button.icon:SetTexture(slot.icon)
         button.icon:SetDesaturated(slot.empty or slot.unavailable)
-        button.icon:SetAlpha(slot.unavailable and 0.2 or (slot.empty and 0.35 or 1))
+        button.icon:SetAlpha(slot.unavailable and 0.18 or (slot.empty and 0.42 or 1))
+        if button.border then button.border:SetAlpha(slot.unavailable and 0.45 or (slot.empty and 0.72 or 1)) end
         button.label:SetText(slot.displayName)
         setText(button.status, slot.statusText)
         button.empty = slot.empty
         button.unavailable = slot.unavailable
         button.itemID = slot.itemID
         button.itemLink = slot.itemLink
+        button.slotDisplayName = slot.displayName
         button:SetScript("OnEnter", function(self)
-            if self.itemLink and api.GameTooltip then
-                api.GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            if not api.GameTooltip then return end
+            local anchor = self.paperDollGroup == "right" and "ANCHOR_LEFT" or "ANCHOR_RIGHT"
+            api.GameTooltip:SetOwner(self, anchor)
+            if self.itemLink then
                 api.GameTooltip:SetHyperlink(self.itemLink)
-                api.GameTooltip:Show()
+            elseif type(api.GameTooltip.SetText) == "function" then
+                api.GameTooltip:SetText(self.slotDisplayName or self.key or "Equipment")
+                if type(api.GameTooltip.AddLine) == "function" then
+                    if self.unavailable then
+                        api.GameTooltip:AddLine("No saved data", 0.65, 0.65, 0.65)
+                    elseif self.empty then
+                        api.GameTooltip:AddLine("Empty", 0.65, 0.65, 0.65)
+                    end
+                end
             end
+            api.GameTooltip:Show()
         end)
         button:SetScript("OnLeave", function()
             if api.GameTooltip then api.GameTooltip:Hide() end
@@ -295,6 +382,9 @@ local function setBrowserContentVisible(frame, visible)
         elseif not visible then
             control:Hide()
         end
+    end
+    if frame.gearPanel then
+        if visible then frame.gearPanel:Show() else frame.gearPanel:Hide() end
     end
     for _, button in ipairs(frame.slotButtons) do
         if not visible then button:Hide() end
@@ -452,15 +542,19 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.capturedLine:SetPoint("TOPLEFT", frame.realmLine, "BOTTOMLEFT", 0, -6)
     frame.completenessLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
     frame.completenessLine:SetPoint("TOPLEFT", frame.capturedLine, "BOTTOMLEFT", 0, -4)
-    frame.detailEmpty = createText(frame, "OVERLAY", "GameFontNormalLarge")
-    frame.detailEmpty:SetPoint("CENTER", frame, "CENTER", 120, -20)
+    frame.gearPanel = createClassicGearPanel(api, frame)
+
+    frame.detailEmpty = createText(frame.gearPanel, "OVERLAY", "GameFontNormalLarge")
+    frame.detailEmpty:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, -12)
     frame.detailEmpty:Hide()
 
-    -- The open center and spaced columns keep slots clear of the character list.
-    local sideX = { left = 365, right = 800 }
-    local sideStartY, sidePitch = -158, 55.5
-    local bottomX = { 535, 600, 665 }
-    local bottomY = -550
+    -- Classic paper-doll arrangement: eight slots on each side and weapons along
+    -- the bottom.  Slot names sit beside the icons instead of underneath them,
+    -- which leaves the center uncluttered and makes the silhouette easier to read.
+    local sideX = { left = 32, right = 538 }
+    local sideStartY, sidePitch = -68, 46
+    local bottomX = { 210, 285, 360 }
+    local bottomY = -374
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
         local x, y
@@ -470,22 +564,60 @@ function GGM.CreateGuildGearBrowserWindow(api)
             x = sideX[layout.group]
             y = sideStartY - (layout.order - 1) * sidePitch
         end
-        local button = api.CreateFrame("Button", nil, frame)
-        button:SetSize(58, 54)
-        button:SetPoint("CENTER", frame, "TOPLEFT", x, y)
+
+        local button = api.CreateFrame("Button", nil, frame.gearPanel)
+        button:SetSize(46, 46)
+        button:SetPoint("CENTER", frame.gearPanel, "TOPLEFT", x, y)
         button.paperDollGroup, button.paperDollOrder = layout.group, layout.order
+
+        button.slotBackground = button:CreateTexture(nil, "BACKGROUND")
+        button.slotBackground:SetSize(38, 38)
+        button.slotBackground:SetPoint("CENTER", button, "CENTER", 0, 0)
+        button.slotBackground:SetColorTexture(0.015, 0.015, 0.015, 0.96)
+
         button.icon = button:CreateTexture(nil, "ARTWORK")
-        button.icon:SetSize(28, 28)
-        button.icon:SetPoint("TOP", button, "TOP", 0, -1)
+        button.icon:SetSize(36, 36)
+        button.icon:SetPoint("CENTER", button, "CENTER", 0, 0)
+
+        button.border = button:CreateTexture(nil, "OVERLAY")
+        button.border:SetSize(54, 54)
+        button.border:SetPoint("CENTER", button, "CENTER", 0, 0)
+        button.border:SetTexture("Interface\\Buttons\\UI-Quickslot2")
+
+        button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
+        button.highlight:SetSize(42, 42)
+        button.highlight:SetPoint("CENTER", button, "CENTER", 0, 0)
+        button.highlight:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+
         button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        button.label:SetWidth(58)
-        button.label:SetJustifyH("CENTER")
-        button.label:SetPoint("TOP", button.icon, "BOTTOM", 0, -1)
         button.label:SetText(slotDisplayNames[trackedSlot.key])
+        button.label:SetTextColor(0.88, 0.78, 0.56)
+
         button.status = button:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-        button.status:SetWidth(58)
-        button.status:SetJustifyH("CENTER")
-        button.status:SetPoint("TOP", button.label, "BOTTOM", 0, 0)
+
+        if layout.group == "left" then
+            button.label:SetWidth(92)
+            button.label:SetJustifyH("LEFT")
+            button.label:SetPoint("LEFT", button, "RIGHT", 7, 6)
+            button.status:SetWidth(92)
+            button.status:SetJustifyH("LEFT")
+            button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -1)
+        elseif layout.group == "right" then
+            button.label:SetWidth(92)
+            button.label:SetJustifyH("RIGHT")
+            button.label:SetPoint("RIGHT", button, "LEFT", -7, 6)
+            button.status:SetWidth(92)
+            button.status:SetJustifyH("RIGHT")
+            button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -1)
+        else
+            button.label:SetWidth(70)
+            button.label:SetJustifyH("CENTER")
+            button.label:SetPoint("TOP", button, "BOTTOM", 0, -2)
+            button.status:SetWidth(70)
+            button.status:SetJustifyH("CENTER")
+            button.status:SetPoint("TOP", button.label, "BOTTOM", 0, -1)
+        end
+
         button:Hide()
         frame.slotButtons[index] = button
     end
