@@ -223,6 +223,56 @@ local function setText(control, value)
     if value and value ~= "" then control:Show() else control:Hide() end
 end
 
+-- A compact inset frame styled after Classic list panes.  It avoids newer
+-- backdrop APIs so the browser keeps working across Classic clients.
+local function createClassicInsetPanel(api, parent, width, height)
+    local panel = api.CreateFrame("Frame", nil, parent)
+    panel:SetSize(width, height)
+
+    panel.background = panel:CreateTexture(nil, "BACKGROUND")
+    panel.background:SetAllPoints(panel)
+    panel.background:SetColorTexture(0.018, 0.016, 0.015, 0.96)
+
+    panel.leather = panel:CreateTexture(nil, "BACKGROUND")
+    panel.leather:SetAllPoints(panel)
+    panel.leather:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background")
+    panel.leather:SetAlpha(0.20)
+
+    -- Soft black outer edge and pale raised trim approximate the old Classic
+    -- inset boxes used by guild, friends and character-list panels.
+    local edge = 2
+    local top = panel:CreateTexture(nil, "BORDER")
+    top:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
+    top:SetHeight(edge)
+    top:SetColorTexture(0.66, 0.66, 0.64, 0.95)
+
+    local left = panel:CreateTexture(nil, "BORDER")
+    left:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+    left:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
+    left:SetWidth(edge)
+    left:SetColorTexture(0.60, 0.60, 0.58, 0.95)
+
+    local bottom = panel:CreateTexture(nil, "BORDER")
+    bottom:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
+    bottom:SetHeight(edge)
+    bottom:SetColorTexture(0.20, 0.20, 0.20, 1)
+
+    local right = panel:CreateTexture(nil, "BORDER")
+    right:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
+    right:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
+    right:SetWidth(edge)
+    right:SetColorTexture(0.20, 0.20, 0.20, 1)
+
+    local inner = panel:CreateTexture(nil, "BORDER")
+    inner:SetPoint("TOPLEFT", panel, "TOPLEFT", 3, -3)
+    inner:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -3, 3)
+    inner:SetColorTexture(0.025, 0.022, 0.020, 0.75)
+
+    return panel
+end
+
 -- Build the equipment area from simple Blizzard-native pieces instead of relying on
 -- a retail-only paper-doll template.  The dark leather, brass trim and quick-slot
 -- borders keep the panel at home in the Classic UI while remaining safe on clients
@@ -365,10 +415,20 @@ local function renderBrowserDetail(frame, entry, api)
 end
 
 local function setBrowserContentVisible(frame, visible)
-    local controls = {
+    local alwaysCharacterControls = {
+        frame.searchPanel,
         frame.searchLabel,
         frame.searchBox,
+        frame.listPanel,
         frame.listScroll,
+    }
+    for _, control in ipairs(alwaysCharacterControls) do
+        if control then
+            if visible then control:Show() else control:Hide() end
+        end
+    end
+
+    local conditionalControls = {
         frame.listEmpty,
         frame.characterLine,
         frame.realmLine,
@@ -376,13 +436,12 @@ local function setBrowserContentVisible(frame, visible)
         frame.completenessLine,
         frame.detailEmpty,
     }
-    for _, control in ipairs(controls) do
-        if visible and (control == frame.searchLabel or control == frame.searchBox or control == frame.listScroll) then
-            control:Show()
-        elseif not visible then
-            control:Hide()
+    if not visible then
+        for _, control in ipairs(conditionalControls) do
+            if control then control:Hide() end
         end
     end
+
     if frame.gearPanel then
         if visible then frame.gearPanel:Show() else frame.gearPanel:Hide() end
     end
@@ -436,19 +495,33 @@ updateBrowserList = function(frame, api)
         local row = rows[index]
         if not row then
             row = api.CreateFrame("Button", nil, frame.listContent)
-            row:SetSize(220, 28)
+            row:SetSize(224, 24)
+
+            row.selection = row:CreateTexture(nil, "BACKGROUND")
+            row.selection:SetPoint("TOPLEFT", row, "TOPLEFT", 1, -1)
+            row.selection:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -1, 1)
+            row.selection:SetColorTexture(0.56, 0.48, 0.00, 0.66)
+            row.selection:Hide()
+
+            row.hover = row:CreateTexture(nil, "HIGHLIGHT")
+            row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", 1, -1)
+            row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -1, 1)
+            row.hover:SetColorTexture(0.34, 0.29, 0.05, 0.35)
+
             row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            row.label:SetPoint("LEFT", row, "LEFT", 8, 0)
+            row.label:SetPoint("LEFT", row, "LEFT", 5, 0)
+            row.label:SetWidth(214)
             row.label:SetJustifyH("LEFT")
             row:RegisterForClicks("LeftButtonUp")
             rows[index] = row
         end
         row.entry = entry
         row.label:SetText(entry.name .. " - " .. entry.realm)
-        row:SetPoint("TOPLEFT", frame.listContent, "TOPLEFT", 0, -(index - 1) * 28)
+        row:SetPoint("TOPLEFT", frame.listContent, "TOPLEFT", 0, -(index - 1) * 24)
         row.selected = frame.selectedEntry ~= nil and frame.selectedEntry.key == entry.key
+        if row.selected then row.selection:Show() else row.selection:Hide() end
         if row.label.SetTextColor then
-            if row.selected then row.label:SetTextColor(1, 0.82, 0) else row.label:SetTextColor(1, 1, 1) end
+            if row.selected then row.label:SetTextColor(1, 0.92, 0.05) else row.label:SetTextColor(0.95, 0.95, 0.92) end
         end
         local selectedRow = row
         row:SetScript("OnClick", function()
@@ -459,7 +532,7 @@ updateBrowserList = function(frame, api)
         row:Show()
     end
     for index = #frame.filteredEntries + 1, #rows do rows[index]:Hide() end
-    frame.listContent:SetHeight(math.max(#frame.filteredEntries * 28, 1))
+    frame.listContent:SetHeight(math.max(#frame.filteredEntries * 24, 1))
 
     if #frame.entries == 0 then
         frame.listEmpty:SetText("No saved guild gear")
@@ -513,25 +586,35 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.TitleText:SetText("Guild Gear Memory - Saved Gear")
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
 
-    frame.searchLabel = createText(frame, "OVERLAY", "GameFontNormal")
+    -- Left browser column: separate inset search and character-list panes, styled
+    -- after the compact black/silver list frames used throughout the Classic UI.
+    frame.searchPanel = createClassicInsetPanel(api, frame, 258, 74)
+    frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -42)
+
+    frame.searchLabel = createText(frame.searchPanel, "OVERLAY", "GameFontNormal")
     frame.searchLabel:SetText("Search characters")
-    frame.searchLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -40)
-    frame.searchBox = api.CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
-    frame.searchBox:SetSize(230, 28)
-    frame.searchBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -60)
+    frame.searchLabel:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 10, -9)
+    frame.searchLabel:SetTextColor(1, 0.82, 0)
+
+    frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel, "InputBoxTemplate")
+    frame.searchBox:SetSize(232, 26)
+    frame.searchBox:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 11, -34)
     frame.searchBox:SetAutoFocus(false)
     frame.searchBox:SetScript("OnTextChanged", function()
         updateBrowserList(frame, api)
     end)
 
-    frame.listScroll = api.CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-    frame.listScroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -98)
-    frame.listScroll:SetSize(250, 480)
+    frame.listPanel = createClassicInsetPanel(api, frame, 258, 458)
+    frame.listPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -126)
+
+    frame.listScroll = api.CreateFrame("ScrollFrame", nil, frame.listPanel, "UIPanelScrollFrameTemplate")
+    frame.listScroll:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 7, -7)
+    frame.listScroll:SetSize(242, 444)
     frame.listContent = api.CreateFrame("Frame", nil, frame.listScroll)
-    frame.listContent:SetSize(230, 1)
+    frame.listContent:SetSize(224, 1)
     frame.listScroll:SetScrollChild(frame.listContent)
-    frame.listEmpty = createText(frame, "OVERLAY", "GameFontNormal")
-    frame.listEmpty:SetPoint("TOPLEFT", frame, "TOPLEFT", 28, -112)
+    frame.listEmpty = createText(frame.listPanel, "OVERLAY", "GameFontNormal")
+    frame.listEmpty:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 14, -14)
     frame.listEmpty:Hide()
 
     frame.characterLine = createText(frame, "OVERLAY", "GameFontNormalLarge")
