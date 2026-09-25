@@ -166,6 +166,36 @@ T.test("transport aborts queued frames on throttling without retry or alternate 
     end
 end)
 
+T.test("transport finishes the active outbound group when timer creation fails", function()
+    local GGM = loadModules()
+    local api, _, sendCalls = makeApi()
+    local transport
+    api.C_Timer.NewTimer = function()
+        -- Ensure the active group cannot be found by scanning queued frames.
+        transport.outboundFrames = {}
+        return nil
+    end
+    transport = assert(GGM.CreateSyncTransport(api, function() end))
+    local callbackCount = 0
+    local callbackSent
+    local callbackErr
+
+    local ok, err = GGM.SendSyncPayload(transport, string.rep("d", 700), function(sent, finishErr)
+        callbackCount = callbackCount + 1
+        callbackSent = sent
+        callbackErr = finishErr
+    end)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "sync-send-timer-create-failed")
+    T.assertEqual(#sendCalls, 1)
+    T.assertEqual(callbackCount, 1)
+    T.assertFalse(callbackSent)
+    T.assertEqual(callbackErr, err)
+    T.assertEqual(#transport.outboundFrames, 0)
+    T.assertNil(transport.sendTimer)
+end)
+
 T.test("transport fails closed for not-in-guild and addon-message-lockdown results", function()
     local GGM = loadModules()
     local cases = {

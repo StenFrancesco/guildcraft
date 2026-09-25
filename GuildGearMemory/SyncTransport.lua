@@ -62,6 +62,7 @@ end
 
 local pumpOutbound
 pumpOutbound = function(transport)
+    local activeGroup
     while #transport.outboundFrames > 0 do
         local queued = table.remove(transport.outboundFrames, 1)
         local group = queued.group
@@ -70,6 +71,7 @@ pumpOutbound = function(transport)
             if not sent then abortOutbound(transport, sendErr, group); return false, sendErr end
             group.remaining = group.remaining - 1
             if group.remaining == 0 then finishOutboundGroup(group, true, nil) end
+            activeGroup = group
             break
         end
     end
@@ -82,7 +84,7 @@ pumpOutbound = function(transport)
     end)
     if not timerOk or timerOrError == nil then
         local err = "sync-send-timer-create-failed"
-        abortOutbound(transport, err)
+        abortOutbound(transport, err, activeGroup)
         return false, err
     end
     transport.sendTimer = timerOrError
