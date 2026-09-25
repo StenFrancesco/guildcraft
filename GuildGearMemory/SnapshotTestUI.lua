@@ -223,127 +223,102 @@ local function setText(control, value)
     if value and value ~= "" then control:Show() else control:Hide() end
 end
 
--- A compact inset frame styled after Classic list panes.  It avoids newer
--- backdrop APIs so the browser keeps working across Classic clients.
+-- Visual-only palette inspired by CurseForge's modern dark surfaces: flat charcoal
+-- cards, low-contrast separators, bright text, and a restrained orange accent.
+-- These values are intentionally local to the browser UI and do not affect data,
+-- filtering, selection, sync, or tooltip behavior.
+local CF = {
+    window = { 0.045, 0.045, 0.052, 0.99 },
+    topbar = { 0.070, 0.070, 0.080, 1.00 },
+    panel = { 0.082, 0.082, 0.092, 0.98 },
+    panelRaised = { 0.105, 0.105, 0.118, 1.00 },
+    panelHover = { 0.145, 0.145, 0.158, 0.92 },
+    border = { 0.205, 0.205, 0.225, 1.00 },
+    borderSoft = { 0.145, 0.145, 0.160, 1.00 },
+    accent = { 0.945, 0.310, 0.125, 1.00 },
+    accentSoft = { 0.370, 0.120, 0.055, 0.78 },
+    text = { 0.955, 0.955, 0.965 },
+    muted = { 0.650, 0.650, 0.685 },
+}
+
+local function setColor(texture, color)
+    texture:SetColorTexture(color[1], color[2], color[3], color[4] or 1)
+end
+
+local function createFlatBorder(panel, color)
+    local top = panel:CreateTexture(nil, "BORDER")
+    top:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
+    top:SetHeight(1)
+    setColor(top, color)
+
+    local bottom = panel:CreateTexture(nil, "BORDER")
+    bottom:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
+    bottom:SetHeight(1)
+    setColor(bottom, color)
+
+    local left = panel:CreateTexture(nil, "BORDER")
+    left:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
+    left:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
+    left:SetWidth(1)
+    setColor(left, color)
+
+    local right = panel:CreateTexture(nil, "BORDER")
+    right:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
+    right:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
+    right:SetWidth(1)
+    setColor(right, color)
+end
+
+-- Flat content card used for search/list areas.  Kept on basic textures only so it
+-- remains safe across Classic clients while shedding the older leather/inset look.
 local function createClassicInsetPanel(api, parent, width, height)
     local panel = api.CreateFrame("Frame", nil, parent)
     panel:SetSize(width, height)
 
     panel.background = panel:CreateTexture(nil, "BACKGROUND")
     panel.background:SetAllPoints(panel)
-    panel.background:SetColorTexture(0.018, 0.016, 0.015, 0.96)
+    setColor(panel.background, CF.panel)
 
-    panel.leather = panel:CreateTexture(nil, "BACKGROUND")
-    panel.leather:SetAllPoints(panel)
-    panel.leather:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background")
-    panel.leather:SetAlpha(0.20)
+    panel.inner = panel:CreateTexture(nil, "BACKGROUND")
+    panel.inner:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -2)
+    panel.inner:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -2, 2)
+    panel.inner:SetColorTexture(0.068, 0.068, 0.076, 0.82)
 
-    -- Soft black outer edge and pale raised trim approximate the old Classic
-    -- inset boxes used by guild, friends and character-list panels.
-    local edge = 2
-    local top = panel:CreateTexture(nil, "BORDER")
-    top:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
-    top:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
-    top:SetHeight(edge)
-    top:SetColorTexture(0.66, 0.66, 0.64, 0.95)
-
-    local left = panel:CreateTexture(nil, "BORDER")
-    left:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
-    left:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
-    left:SetWidth(edge)
-    left:SetColorTexture(0.60, 0.60, 0.58, 0.95)
-
-    local bottom = panel:CreateTexture(nil, "BORDER")
-    bottom:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
-    bottom:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
-    bottom:SetHeight(edge)
-    bottom:SetColorTexture(0.20, 0.20, 0.20, 1)
-
-    local right = panel:CreateTexture(nil, "BORDER")
-    right:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
-    right:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
-    right:SetWidth(edge)
-    right:SetColorTexture(0.20, 0.20, 0.20, 1)
-
-    local inner = panel:CreateTexture(nil, "BORDER")
-    inner:SetPoint("TOPLEFT", panel, "TOPLEFT", 3, -3)
-    inner:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -3, 3)
-    inner:SetColorTexture(0.025, 0.022, 0.020, 0.75)
-
+    createFlatBorder(panel, CF.border)
     return panel
 end
 
--- Build the equipment area from simple Blizzard-native pieces instead of relying on
--- a retail-only paper-doll template.  The dark leather, brass trim and quick-slot
--- borders keep the panel at home in the Classic UI while remaining safe on clients
--- where some optional art assets are unavailable.
+-- Equipment content card.  The paper-doll slot layout is unchanged; only the
+-- presentation is flattened into a CurseForge-like dark card with an orange rule.
 local function createClassicGearPanel(api, parent)
     local panel = api.CreateFrame("Frame", nil, parent)
     panel:SetSize(570, 438)
-    panel:SetPoint("TOPLEFT", parent, "TOPLEFT", 292, -128)
+    panel:SetPoint("TOPLEFT", parent, "TOPLEFT", 292, -156)
 
     panel.background = panel:CreateTexture(nil, "BACKGROUND")
     panel.background:SetAllPoints(panel)
-    panel.background:SetColorTexture(0.035, 0.026, 0.017, 0.98)
-
-    panel.leather = panel:CreateTexture(nil, "BACKGROUND")
-    panel.leather:SetAllPoints(panel)
-    panel.leather:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background")
-    panel.leather:SetAlpha(0.28)
+    setColor(panel.background, CF.panel)
 
     panel.headerBackground = panel:CreateTexture(nil, "BORDER")
-    panel.headerBackground:SetSize(566, 34)
-    panel.headerBackground:SetPoint("TOP", panel, "TOP", 0, -2)
-    panel.headerBackground:SetColorTexture(0.105, 0.070, 0.026, 0.98)
+    panel.headerBackground:SetPoint("TOPLEFT", panel, "TOPLEFT", 1, -1)
+    panel.headerBackground:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -1, -1)
+    panel.headerBackground:SetHeight(36)
+    setColor(panel.headerBackground, CF.panelRaised)
 
     panel.headerLine = panel:CreateTexture(nil, "BORDER")
-    panel.headerLine:SetSize(548, 1)
-    panel.headerLine:SetPoint("TOP", panel.headerBackground, "BOTTOM", 0, 0)
-    panel.headerLine:SetColorTexture(0.55, 0.39, 0.11, 0.90)
+    panel.headerLine:SetPoint("BOTTOMLEFT", panel.headerBackground, "BOTTOMLEFT", 0, 0)
+    panel.headerLine:SetPoint("BOTTOMRIGHT", panel.headerBackground, "BOTTOMRIGHT", 0, 0)
+    panel.headerLine:SetHeight(2)
+    setColor(panel.headerLine, CF.accent)
 
     panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    panel.title:SetPoint("CENTER", panel.headerBackground, "CENTER", 0, 0)
+    panel.title:SetPoint("LEFT", panel.headerBackground, "LEFT", 14, 1)
     panel.title:SetText("Equipment")
-    panel.title:SetTextColor(1.0, 0.82, 0.0)
+    panel.title:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
 
-    -- Keep the center open. The slot columns and weapon row frame the equipment
-    -- naturally, without an extra inset box or instructional text.
-
-    -- Outer double-line trim: dark outer edge + warm brass inner edge.
-    local outerTop = panel:CreateTexture(nil, "BORDER")
-    outerTop:SetSize(570, 2)
-    outerTop:SetPoint("TOP", panel, "TOP", 0, 0)
-    outerTop:SetColorTexture(0.16, 0.105, 0.035, 1)
-    local outerBottom = panel:CreateTexture(nil, "BORDER")
-    outerBottom:SetSize(570, 2)
-    outerBottom:SetPoint("BOTTOM", panel, "BOTTOM", 0, 0)
-    outerBottom:SetColorTexture(0.16, 0.105, 0.035, 1)
-    local outerLeft = panel:CreateTexture(nil, "BORDER")
-    outerLeft:SetSize(2, 438)
-    outerLeft:SetPoint("LEFT", panel, "LEFT", 0, 0)
-    outerLeft:SetColorTexture(0.16, 0.105, 0.035, 1)
-    local outerRight = panel:CreateTexture(nil, "BORDER")
-    outerRight:SetSize(2, 438)
-    outerRight:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
-    outerRight:SetColorTexture(0.16, 0.105, 0.035, 1)
-
-    local innerTop = panel:CreateTexture(nil, "BORDER")
-    innerTop:SetSize(564, 1)
-    innerTop:SetPoint("TOP", panel, "TOP", 0, -3)
-    innerTop:SetColorTexture(0.58, 0.42, 0.12, 0.94)
-    local innerBottom = panel:CreateTexture(nil, "BORDER")
-    innerBottom:SetSize(564, 1)
-    innerBottom:SetPoint("BOTTOM", panel, "BOTTOM", 0, 3)
-    innerBottom:SetColorTexture(0.58, 0.42, 0.12, 0.94)
-    local innerLeft = panel:CreateTexture(nil, "BORDER")
-    innerLeft:SetSize(1, 432)
-    innerLeft:SetPoint("LEFT", panel, "LEFT", 3, 0)
-    innerLeft:SetColorTexture(0.58, 0.42, 0.12, 0.94)
-    local innerRight = panel:CreateTexture(nil, "BORDER")
-    innerRight:SetSize(1, 432)
-    innerRight:SetPoint("RIGHT", panel, "RIGHT", -3, 0)
-    innerRight:SetColorTexture(0.58, 0.42, 0.12, 0.94)
-
+    createFlatBorder(panel, CF.border)
     return panel
 end
 
@@ -464,9 +439,17 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
 
     for _, tab in ipairs(frame.navigationTabs) do
         local selected = tab.key == selectedKey
-        tab.background:SetColorTexture(selected and 0.20 or 0.055, selected and 0.16 or 0.055,
-            selected and 0.025 or 0.065, 0.96)
-        if selected then tab.label:SetTextColor(1, 0.82, 0) else tab.label:SetTextColor(0.9, 0.9, 0.9) end
+        if selected then
+            setColor(tab.background, CF.panelRaised)
+            tab.label:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
+            if tab.accent then tab.accent:Show() end
+            if tab.icon then tab.icon:SetAlpha(1) end
+        else
+            setColor(tab.background, CF.panel)
+            tab.label:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+            if tab.accent then tab.accent:Hide() end
+            if tab.icon then tab.icon:SetAlpha(0.72) end
+        end
     end
 
     local showCharacter = selectedKey == "Character"
@@ -495,33 +478,61 @@ updateBrowserList = function(frame, api)
         local row = rows[index]
         if not row then
             row = api.CreateFrame("Button", nil, frame.listContent)
-            row:SetSize(224, 24)
+            row:SetSize(224, 32)
+
+            row.base = row:CreateTexture(nil, "BACKGROUND")
+            row.base:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+            row.base:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+            row.base:SetColorTexture(0.072, 0.072, 0.080, 0.70)
 
             row.selection = row:CreateTexture(nil, "BACKGROUND")
-            row.selection:SetPoint("TOPLEFT", row, "TOPLEFT", 1, -1)
-            row.selection:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -1, 1)
-            row.selection:SetColorTexture(0.56, 0.48, 0.00, 0.66)
+            row.selection:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+            row.selection:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+            setColor(row.selection, CF.accentSoft)
             row.selection:Hide()
 
+            row.selectedBar = row:CreateTexture(nil, "ARTWORK")
+            row.selectedBar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+            row.selectedBar:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+            row.selectedBar:SetWidth(3)
+            setColor(row.selectedBar, CF.accent)
+            row.selectedBar:Hide()
+
             row.hover = row:CreateTexture(nil, "HIGHLIGHT")
-            row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", 1, -1)
-            row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -1, 1)
-            row.hover:SetColorTexture(0.34, 0.29, 0.05, 0.35)
+            row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+            row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+            setColor(row.hover, CF.panelHover)
+
+            row.separator = row:CreateTexture(nil, "BORDER")
+            row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 8, 0)
+            row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -8, 0)
+            row.separator:SetHeight(1)
+            setColor(row.separator, CF.borderSoft)
 
             row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            row.label:SetPoint("LEFT", row, "LEFT", 5, 0)
-            row.label:SetWidth(214)
+            row.label:SetPoint("LEFT", row, "LEFT", 12, 0)
+            row.label:SetWidth(204)
             row.label:SetJustifyH("LEFT")
             row:RegisterForClicks("LeftButtonUp")
             rows[index] = row
         end
         row.entry = entry
         row.label:SetText(entry.name .. " - " .. entry.realm)
-        row:SetPoint("TOPLEFT", frame.listContent, "TOPLEFT", 0, -(index - 1) * 24)
+        row:SetPoint("TOPLEFT", frame.listContent, "TOPLEFT", 0, -(index - 1) * 32)
         row.selected = frame.selectedEntry ~= nil and frame.selectedEntry.key == entry.key
-        if row.selected then row.selection:Show() else row.selection:Hide() end
+        if row.selected then
+            row.selection:Show()
+            row.selectedBar:Show()
+        else
+            row.selection:Hide()
+            row.selectedBar:Hide()
+        end
         if row.label.SetTextColor then
-            if row.selected then row.label:SetTextColor(1, 0.92, 0.05) else row.label:SetTextColor(0.95, 0.95, 0.92) end
+            if row.selected then
+                row.label:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
+            else
+                row.label:SetTextColor(0.86, 0.86, 0.88)
+            end
         end
         local selectedRow = row
         row:SetScript("OnClick", function()
@@ -532,7 +543,7 @@ updateBrowserList = function(frame, api)
         row:Show()
     end
     for index = #frame.filteredEntries + 1, #rows do rows[index]:Hide() end
-    frame.listContent:SetHeight(math.max(#frame.filteredEntries * 24, 1))
+    frame.listContent:SetHeight(math.max(#frame.filteredEntries * 32, 1))
 
     if #frame.entries == 0 then
         frame.listEmpty:SetText("No saved guild gear")
@@ -551,25 +562,40 @@ end
 
 local function createNavigationTab(api, frame, key, label, iconPath, offset)
     local tab = api.CreateFrame("Button", nil, frame)
-    tab:SetSize(72, 82)
-    tab:SetPoint("TOPRIGHT", frame, "TOPLEFT", -3, -72 - offset)
+    tab:SetSize(116, 34)
+    tab:SetPoint("TOPLEFT", frame, "TOPLEFT", 16 + offset, -48)
 
     local background = tab:CreateTexture(nil, "BACKGROUND")
     background:SetAllPoints(tab)
-    background:SetColorTexture(0.055, 0.055, 0.065, 0.96)
+    setColor(background, CF.panel)
+
+    local accent = tab:CreateTexture(nil, "ARTWORK")
+    accent:SetPoint("BOTTOMLEFT", tab, "BOTTOMLEFT", 0, 0)
+    accent:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", 0, 0)
+    accent:SetHeight(2)
+    setColor(accent, CF.accent)
+    accent:Hide()
+
+    local hover = tab:CreateTexture(nil, "HIGHLIGHT")
+    hover:SetAllPoints(tab)
+    setColor(hover, CF.panelHover)
 
     local icon = tab:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(34, 34)
-    icon:SetPoint("TOP", tab, "TOP", 0, -8)
+    icon:SetSize(18, 18)
+    icon:SetPoint("LEFT", tab, "LEFT", 10, 0)
     icon:SetTexture(iconPath)
+    icon:SetAlpha(0.72)
 
     local text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    text:SetPoint("TOP", icon, "BOTTOM", 0, -3)
+    text:SetPoint("LEFT", icon, "RIGHT", 7, 0)
     text:SetText(label)
-    text:SetJustifyH("CENTER")
+    text:SetJustifyH("LEFT")
+    text:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
 
     tab.key = key
     tab.background = background
+    tab.accent = accent
+    tab.icon = icon
     tab.label = text
     tab:RegisterForClicks("LeftButtonUp")
     tab:SetScript("OnClick", function() GGM.SelectGuildGearBrowserTab(frame, key) end)
@@ -586,45 +612,93 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.TitleText:SetText("Guild Gear Memory - Saved Gear")
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
 
-    -- Left browser column: separate inset search and character-list panes, styled
-    -- after the compact black/silver list frames used throughout the Classic UI.
-    frame.searchPanel = createClassicInsetPanel(api, frame, 258, 74)
-    frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -42)
+    -- Cover the default parchment/inset treatment with a flat dark application shell.
+    -- Template-owned regions are hidden conditionally so this stays compatible with
+    -- Classic variants that expose slightly different frame members.
+    if frame.Bg and frame.Bg.Hide then frame.Bg:Hide() end
+    if frame.TitleBg and frame.TitleBg.Hide then frame.TitleBg:Hide() end
+    if frame.TopTileStreaks and frame.TopTileStreaks.Hide then frame.TopTileStreaks:Hide() end
+    if frame.TopTileStreak and frame.TopTileStreak.Hide then frame.TopTileStreak:Hide() end
+    if frame.Portrait and frame.Portrait.Hide then frame.Portrait:Hide() end
+    if frame.NineSlice and frame.NineSlice.Hide then frame.NineSlice:Hide() end
+    if frame.Inset and frame.Inset.Hide then frame.Inset:Hide() end
+
+    frame.cfBackground = frame:CreateTexture(nil, "BACKGROUND")
+    frame.cfBackground:SetAllPoints(frame)
+    setColor(frame.cfBackground, CF.window)
+
+    frame.cfTopbar = frame:CreateTexture(nil, "BORDER")
+    frame.cfTopbar:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
+    frame.cfTopbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
+    frame.cfTopbar:SetHeight(39)
+    setColor(frame.cfTopbar, CF.topbar)
+
+    frame.cfTopbarAccent = frame:CreateTexture(nil, "BORDER")
+    frame.cfTopbarAccent:SetPoint("BOTTOMLEFT", frame.cfTopbar, "BOTTOMLEFT", 0, 0)
+    frame.cfTopbarAccent:SetPoint("BOTTOMRIGHT", frame.cfTopbar, "BOTTOMRIGHT", 0, 0)
+    frame.cfTopbarAccent:SetHeight(2)
+    setColor(frame.cfTopbarAccent, CF.accent)
+    createFlatBorder(frame, CF.border)
+
+    if frame.TitleText.ClearAllPoints then
+        frame.TitleText:ClearAllPoints()
+        frame.TitleText:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -12)
+    end
+    if frame.TitleText.SetTextColor then
+        frame.TitleText:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
+    end
+
+    -- Left browser column: compact filter card over a dense, table-like result list.
+    frame.searchPanel = createClassicInsetPanel(api, frame, 258, 66)
+    frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -90)
 
     frame.searchLabel = createText(frame.searchPanel, "OVERLAY", "GameFontNormal")
     frame.searchLabel:SetText("Search characters")
-    frame.searchLabel:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 10, -9)
-    frame.searchLabel:SetTextColor(1, 0.82, 0)
+    frame.searchLabel:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 12, -9)
+    frame.searchLabel:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
 
     frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel, "InputBoxTemplate")
-    frame.searchBox:SetSize(232, 26)
-    frame.searchBox:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 11, -34)
+    frame.searchBox:SetSize(232, 25)
+    frame.searchBox:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 12, -32)
+
+    frame.searchBoxBackground = frame.searchBox:CreateTexture(nil, "BACKGROUND")
+    frame.searchBoxBackground:SetPoint("TOPLEFT", frame.searchBox, "TOPLEFT", -3, 2)
+    frame.searchBoxBackground:SetPoint("BOTTOMRIGHT", frame.searchBox, "BOTTOMRIGHT", 3, -2)
+    frame.searchBoxBackground:SetColorTexture(0.040, 0.040, 0.046, 1)
+    createFlatBorder(frame.searchBox, CF.border)
+    if frame.searchBox.Left and frame.searchBox.Left.Hide then frame.searchBox.Left:Hide() end
+    if frame.searchBox.Middle and frame.searchBox.Middle.Hide then frame.searchBox.Middle:Hide() end
+    if frame.searchBox.Right and frame.searchBox.Right.Hide then frame.searchBox.Right:Hide() end
     frame.searchBox:SetAutoFocus(false)
     frame.searchBox:SetScript("OnTextChanged", function()
         updateBrowserList(frame, api)
     end)
 
-    frame.listPanel = createClassicInsetPanel(api, frame, 258, 458)
-    frame.listPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -126)
+    frame.listPanel = createClassicInsetPanel(api, frame, 258, 430)
+    frame.listPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -164)
 
     frame.listScroll = api.CreateFrame("ScrollFrame", nil, frame.listPanel, "UIPanelScrollFrameTemplate")
     frame.listScroll:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 7, -7)
-    frame.listScroll:SetSize(242, 444)
+    frame.listScroll:SetSize(242, 416)
     frame.listContent = api.CreateFrame("Frame", nil, frame.listScroll)
     frame.listContent:SetSize(224, 1)
     frame.listScroll:SetScrollChild(frame.listContent)
     frame.listEmpty = createText(frame.listPanel, "OVERLAY", "GameFontNormal")
-    frame.listEmpty:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 14, -14)
+    frame.listEmpty:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 14, -16)
     frame.listEmpty:Hide()
 
     frame.characterLine = createText(frame, "OVERLAY", "GameFontNormalLarge")
-    frame.characterLine:SetPoint("TOPLEFT", frame, "TOPLEFT", 300, -48)
+    frame.characterLine:SetPoint("TOPLEFT", frame, "TOPLEFT", 300, -94)
     frame.realmLine = createText(frame, "OVERLAY", "GameFontHighlight")
-    frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 0, -6)
+    frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 0, -4)
     frame.capturedLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
-    frame.capturedLine:SetPoint("TOPLEFT", frame.realmLine, "BOTTOMLEFT", 0, -6)
+    frame.capturedLine:SetPoint("TOPLEFT", frame.realmLine, "BOTTOMLEFT", 0, -5)
     frame.completenessLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
-    frame.completenessLine:SetPoint("TOPLEFT", frame.capturedLine, "BOTTOMLEFT", 0, -4)
+    frame.completenessLine:SetPoint("LEFT", frame.capturedLine, "RIGHT", 16, 0)
+    frame.characterLine:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
+    frame.realmLine:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+    frame.capturedLine:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+    frame.completenessLine:SetTextColor(CF.accent[1], CF.accent[2], CF.accent[3])
     frame.gearPanel = createClassicGearPanel(api, frame)
 
     frame.detailEmpty = createText(frame.gearPanel, "OVERLAY", "GameFontNormalLarge")
@@ -656,25 +730,25 @@ function GGM.CreateGuildGearBrowserWindow(api)
         button.slotBackground = button:CreateTexture(nil, "BACKGROUND")
         button.slotBackground:SetSize(38, 38)
         button.slotBackground:SetPoint("CENTER", button, "CENTER", 0, 0)
-        button.slotBackground:SetColorTexture(0.015, 0.015, 0.015, 0.96)
+        button.slotBackground:SetColorTexture(0.030, 0.030, 0.035, 1)
 
         button.icon = button:CreateTexture(nil, "ARTWORK")
         button.icon:SetSize(36, 36)
         button.icon:SetPoint("CENTER", button, "CENTER", 0, 0)
 
-        button.border = button:CreateTexture(nil, "OVERLAY")
-        button.border:SetSize(54, 54)
+        button.border = api.CreateFrame("Frame", nil, button)
+        button.border:SetSize(42, 42)
         button.border:SetPoint("CENTER", button, "CENTER", 0, 0)
-        button.border:SetTexture("Interface\\Buttons\\UI-Quickslot2")
+        createFlatBorder(button.border, CF.border)
 
         button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
         button.highlight:SetSize(42, 42)
         button.highlight:SetPoint("CENTER", button, "CENTER", 0, 0)
-        button.highlight:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
+        button.highlight:SetColorTexture(CF.accent[1], CF.accent[2], CF.accent[3], 0.28)
 
         button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         button.label:SetText(slotDisplayNames[trackedSlot.key])
-        button.label:SetTextColor(0.88, 0.78, 0.56)
+        button.label:SetTextColor(0.80, 0.80, 0.83)
 
         button.status = button:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 
@@ -710,13 +784,14 @@ function GGM.CreateGuildGearBrowserWindow(api)
         local page = createText(frame, "OVERLAY", "GameFontNormalLarge")
         page:SetPoint("CENTER", frame, "CENTER", 0, 0)
         page:SetText(pageKey .. " content will be added later.")
+        page:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
         page:Hide()
         frame.placeholderPages[pageKey] = page
     end
     frame.navigationTabs = {
         createNavigationTab(api, frame, "Character", "Character", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", 0),
-        createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", 86),
-        createNavigationTab(api, frame, "Bank", "Bank", "Interface\\Icons\\INV_Misc_Bag_10", 172),
+        createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", 122),
+        createNavigationTab(api, frame, "Bank", "Bank", "Interface\\Icons\\INV_Misc_Bag_10", 244),
     }
     GGM.SelectGuildGearBrowserTab(frame, "Character")
     return frame
