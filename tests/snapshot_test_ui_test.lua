@@ -347,8 +347,10 @@ local function newControl()
     function control:RegisterForClicks() end
     function control:SetDesaturated(value) self.desaturated = value end
     function control:SetAlpha(value) self.alpha = value end
-    function control:SetTexture(value) self.texture = value end
-    function control:SetColorTexture(...) self.color = { ... } end
+    function control:SetTexture(value) self.texture = value; self.atlas = nil end
+    function control:SetColorTexture(...) self.color = { ... }; self.texture = nil; self.atlas = nil end
+    function control:SetAtlas(value) self.atlas = value; self.texture = nil end
+    function control:SetTexCoord(...) self.texCoord = { ... } end
     function control:CreateFontString() return newControl() end
     function control:CreateTexture() return newControl() end
     return control
@@ -373,34 +375,18 @@ end
 
 local function makeModelBrowserAPI(failModelCreation)
     local api = makeBrowserAPI()
-    api.Enum = { ItemTryOnReason = { Success = 1 } }
-    api.MAINHANDSLOT, api.SECONDARYHANDSLOT = "MainHandSlot", "SecondaryHandSlot"
-    api.modelCalls = {}
-    api.GetItemInfo = function(itemLink) return "Saved item" end
+    api.C_CreatureInfo = { GetRaceInfo = function(raceID)
+        if raceID == 1 then return { raceName = "Human", clientFileString = "Human" } end
+        if raceID == 2 then return { raceName = "Orc", clientFileString = "Orc" } end
+    end }
+    api.C_Texture = { GetAtlasInfo = function(atlas)
+        if atlas == "raceicon128-human-male" or atlas == "raceicon128-orc-female" then return {} end
+    end }
     local createFrame = api.CreateFrame
     api.CreateFrame = function(frameType, name, parent)
-        if frameType == "DressUpModel" and failModelCreation then return nil end
-        local frame = createFrame(frameType, name, parent)
-        if frameType == "DressUpModel" then
-            function frame:Undress()
-                api.modelCalls[#api.modelCalls + 1] = "Undress"
-                self.displayID, self.worn = nil, {}
-                return true
-            end
-            function frame:UndressSlot(slot) api.modelCalls[#api.modelCalls + 1] = "UndressSlot:" .. slot; return true end
-            function frame:SetDisplayInfo(id)
-                api.modelCalls[#api.modelCalls + 1] = "Display:" .. id
-                self.displayID = id
-                return true
-            end
-            function frame:TryOn(link, slot)
-                api.modelCalls[#api.modelCalls + 1] = "TryOn:" .. link .. ":" .. tostring(slot)
-                self.worn = self.worn or {}
-                table.insert(self.worn, link)
-                return 1
-            end
-        end
-        return frame
+        if failModelCreation and frameType == "Frame" and parent
+            and parent.width == 570 and parent.height == 438 then return nil end
+        return createFrame(frameType, name, parent)
     end
     return api
 end
@@ -575,18 +561,18 @@ T.test("guild gear browser rows show name and realm and selecting renders saved 
     end
 end)
 
-T.test("browser detail model carries saved record and reports missing model identity", function()
+T.test("browser detail carries the saved record for 2D portrait rendering", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
     local detail = GGM.BuildGuildGearBrowserDetail(record, makeBrowserAPI())
 
-    T.assertEqual(detail.modelState, "identity-unavailable")
+    T.assertEqual(detail.modelState, "render-unavailable")
     T.assertTrue(detail.modelInput == record)
     T.assertEqual(detail.completenessText, "Complete")
     T.assertEqual(#detail.slots, #GGM.TRACKED_SLOTS)
 end)
 
-T.test("browser model selection clears A before B and clears on no selection", function()
+T.test("browser portrait selection updates from A to B and clears on no selection", function()
     local GGM = loadUI()
     local alpha, beta = makeRecord(GGM), makeRecord(GGM)
     beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
@@ -596,23 +582,25 @@ T.test("browser model selection clears A before B and clears on no selection", f
     local api = makeModelBrowserAPI()
     local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
 
-    T.assertEqual(frame.modelUnavailableLabel.text, "Model unavailable: race or gender not saved")
-    T.assertTrue(frame.modelUnavailableLabel.visible)
+    T.assertTrue(frame.characterModelView.model.visible)
+    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
+    T.assertTrue(frame.characterModelView.questionMark.visible)
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertTrue(frame.characterModelView.model.visible)
-    T.assertTrue(frame.modelUnavailableLabel.visible == false)
+    T.assertFalse(frame.modelUnavailableLabel.visible)
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
     T.assertEqual(frame.characterLine.text, "Beatrice")
     T.assertEqual(frame.capturedLine.text, "Saved capture: saved-1700000200")
     T.assertEqual(frame.completenessLine.text, "Complete")
-    local callsBeforeClear = #api.modelCalls
     frame.searchBox:SetText("no match")
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
-    T.assertTrue(#api.modelCalls > callsBeforeClear)
+    T.assertNil(frame.characterModelView.portrait.atlas)
+    T.assertEqual(frame.characterModelView.raceLabel.text, "")
     T.assertFalse(frame.characterLine.visible)
 end)
 
-T.test("browser renders A then B after clearing A and clears the model when selection disappears", function()
+T.test("browser replaces one saved race portrait with another and clears it on empty selection", function()
     local GGM = loadUI()
     local alpha, beta = makeRecord(GGM), makeRecord(GGM)
     setSavedModelIdentity(alpha)
@@ -629,28 +617,20 @@ T.test("browser renders A then B after clearing A and clears the model when sele
     local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
     local view = frame.characterModelView.model
     T.assertTrue(view.visible)
-    T.assertEqual(view.displayID, 101)
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
 
-    local beforeB = #api.modelCalls
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertTrue(view.visible)
-    T.assertEqual(view.displayID, 202)
-    local clearedBeforeB
-    for index = beforeB + 1, #api.modelCalls do
-        if api.modelCalls[index] == "Undress" then clearedBeforeB = index end
-        if api.modelCalls[index] == "Display:202" then
-            T.assertNotNil(clearedBeforeB, "record A must be cleared before record B is applied")
-            break
-        end
-    end
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
+    T.assertEqual(frame.characterModelView.raceLabel.text, "Orc")
 
     frame.searchBox:SetText("no match")
     T.assertFalse(view.visible)
-    T.assertNil(view.displayID)
-    T.assertEqual(#view.worn, 0)
+    T.assertNil(frame.characterModelView.portrait.atlas)
+    T.assertEqual(frame.characterModelView.raceLabel.text, "")
 end)
 
-T.test("failed native model frame creation leaves saved detail visible with unavailable label", function()
+T.test("failed 2D portrait frame creation leaves saved detail visible with unavailable label", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
     setSavedModelIdentity(record)
@@ -658,7 +638,7 @@ T.test("failed native model frame creation leaves saved detail visible with unav
 
     T.assertNil(frame.characterModelView.model)
     T.assertTrue(frame.modelUnavailableLabel.visible)
-    T.assertEqual(frame.modelUnavailableLabel.text, "Model unavailable: saved appearance could not be rendered")
+    T.assertEqual(frame.modelUnavailableLabel.text, "2D paper doll unavailable")
     T.assertTrue(frame.characterLine.visible)
     T.assertTrue(frame.realmLine.visible)
     T.assertTrue(frame.capturedLine.visible)
@@ -668,19 +648,21 @@ T.test("failed native model frame creation leaves saved detail visible with unav
     for _, slot in ipairs(frame.slotButtons) do T.assertTrue(slot.visible) end
 end)
 
-T.test("missing saved display id does not claim race or gender is missing", function()
+T.test("missing saved display ID still renders the race portrait", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
     setSavedModelIdentity(record)
     record.identity.displayID = nil
     local frame = showBrowser(GGM, makeModelBrowserAPI(), makeDB(GGM, { record }))
 
-    T.assertEqual(frame.modelUnavailableLabel.text, "Model unavailable: saved display ID not available")
+    T.assertTrue(frame.characterModelView.model.visible)
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
+    T.assertFalse(frame.modelUnavailableLabel.visible)
     T.assertTrue(frame.capturedLine.visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
 end)
 
-T.test("browser model failures preserve incomplete and refresh-needed gear details and hide by tab", function()
+T.test("browser missing portrait data preserves incomplete and refresh-needed gear details and hides by tab", function()
     local GGM = loadUI()
     local legacy = makeRecord(GGM)
     legacy.identity.raceID, legacy.identity.sex, legacy.identity.displayID = nil, nil, nil
@@ -689,7 +671,7 @@ T.test("browser model failures preserve incomplete and refresh-needed gear detai
     local api = makeModelBrowserAPI()
     local frame = showBrowser(GGM, api, makeDB(GGM, { legacy }))
 
-    T.assertEqual(frame.modelUnavailableLabel.text, "Model unavailable: race or gender not saved")
+    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
     T.assertEqual(frame.completenessLine.text, "Incomplete")
     T.assertTrue(frame.capturedLine.text:find("Saved capture:", 1, true) == 1)
     T.assertTrue(frame.slotButtons[1].visible)
@@ -703,7 +685,8 @@ T.test("browser model failures preserve incomplete and refresh-needed gear detai
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
-    T.assertTrue(frame.modelUnavailableLabel.visible)
+    T.assertTrue(frame.characterModelView.model.visible)
+    T.assertFalse(frame.modelUnavailableLabel.visible)
     T.assertEqual(frame.completenessLine.text, "Refresh needed")
 end)
 

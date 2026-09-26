@@ -1,312 +1,142 @@
 local T = require("tests.testlib")
 
-local VISUAL_SLOTS = {
-    { key = "HEAD", id = 1 },
-    { key = "SHOULDER", id = 3 },
-    { key = "CHEST", id = 5 },
-    { key = "WAIST", id = 6 },
-    { key = "LEGS", id = 7 },
-    { key = "FEET", id = 8 },
-    { key = "WRIST", id = 9 },
-    { key = "HANDS", id = 10 },
-    { key = "BACK", id = 15 },
-    { key = "MAIN_HAND", id = 16 },
-    { key = "OFF_HAND", id = 17 },
-    { key = "TABARD", id = 19 },
-}
-local LINK_SLOTS = {
-    "HEAD", "SHOULDER", "CHEST", "WAIST", "LEGS", "FEET",
-    "WRIST", "HANDS", "BACK", "TABARD",
-}
-
 local function loadModel()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
     return GGM
 end
 
-local function newFakeModel(log, resultOverrides)
-    local model = { visible = false }
-    local function call(name, ...)
-        table.insert(log, { name = name, args = { ... }, argumentCount = select("#", ...) })
-        if resultOverrides and resultOverrides[name] ~= nil then
-            return resultOverrides[name]
-        end
-        if name == "TryOn" then return 0 end
-        -- Undress, UndressSlot, and SetDisplayInfo are documented void methods.
-        return nil
-    end
-    function model:Hide() self.visible = false; call("Hide") end
-    function model:Show() self.visible = true; call("Show") end
-    function model:Undress() return call("Undress") end
-    function model:SetDisplayInfo(displayID) return call("SetDisplayInfo", displayID) end
-    function model:TryOn(link, ...) return call("TryOn", link, ...) end
-    function model:UndressSlot(slotID) return call("UndressSlot", slotID) end
-    return model
+local function control()
+    local value = { visible = false }
+    function value:Hide() self.visible = false end
+    function value:Show() self.visible = true end
+    function value:SetText(text) self.text = text end
+    function value:SetTextColor() end
+    function value:SetAllPoints() end
+    function value:SetSize() end
+    function value:SetPoint() end
+    function value:SetWidth() end
+    function value:SetJustifyH() end
+    function value:SetColorTexture(...) self.color = { ... }; self.atlas = nil; self.texture = nil end
+    function value:SetTexture(texture) self.texture = texture; self.atlas = nil end
+    function value:SetTexCoord(...) self.texCoord = { ... } end
+    function value:SetAtlas(atlas) self.atlas = atlas; self.texture = nil end
+    function value:CreateTexture() return control() end
+    function value:CreateFontString() return control() end
+    return value
 end
 
-local function makeRecord()
-    local slots = {}
-    for _, slot in ipairs(VISUAL_SLOTS) do
-        local isHand = slot.key == "MAIN_HAND" or slot.key == "OFF_HAND"
-        slots[slot.key] = {
-            inventorySlotID = slot.id,
-            itemID = isHand and false or 10000 + slot.id,
-            itemLink = isHand and false or ("item-link:" .. slot.key),
-        }
-        if isHand then
-            slots[slot.key].itemID = false
-            slots[slot.key].itemLink = false
-        end
-    end
-    return {
-        identity = { name = "Saved", realm = "Silvermoon", raceID = 1, sex = 2, displayID = 12345 },
-        gear = { slots = slots },
-    }
-end
-
-local function makeView(GGM, overrides, enumSuccess)
-    local log = {}
-    local model = newFakeModel(log, overrides)
+local function makeView(GGM, options)
+    options = options or {}
+    local calls = {}
     local api = {
         CreateFrame = function(frameType, name, parent)
-            T.assertEqual(frameType, "DressUpModel")
+            T.assertEqual(frameType, "Frame")
             T.assertNil(name)
             T.assertNotNil(parent)
-            return model
+            if options.noFrame then return nil end
+            return control()
         end,
-        GetItemInfo = function(link)
-            table.insert(log, { name = "GetItemInfo", args = { link } })
-            return "item-name"
+        C_CreatureInfo = { GetRaceInfo = function(raceID)
+            calls[#calls + 1] = "race:" .. raceID
+            return options.raceInfo
+        end },
+        C_Texture = { GetAtlasInfo = function(atlas)
+            calls[#calls + 1] = "atlas:" .. atlas
+            if options.atlases and options.atlases[atlas] then return {} end
+        end },
+        SetPortraitTextureFromCreatureDisplayID = function(texture, displayID)
+            calls[#calls + 1] = "display:" .. displayID
+            if options.displayFails then error("display unavailable") end
+            texture:SetTexture("display:" .. displayID)
         end,
-        Enum = { ItemTryOnReason = { Success = enumSuccess or 0, WrongRace = 1, NotEquippable = 2, DataPending = 3 } },
-        MAINHANDSLOT = "Main hand",
-        SECONDARYHANDSLOT = "Off hand",
     }
-    local parent = {}
-    return GGM.CreateSavedCharacterModel(api, parent), model, log
+    return GGM.CreateSavedCharacterModel(api, {}), calls
 end
 
-local function findCalls(log, name)
-    local calls = {}
-    for _, entry in ipairs(log) do
-        if entry.name == name then table.insert(calls, entry) end
-    end
-    return calls
+local function record(raceID, sex, displayID)
+    return { identity = { raceID = raceID, sex = sex, displayID = displayID }, gear = { slots = {} } }
 end
 
-T.test("saved character model initializes from saved identity and saved item links by visual slot", function()
+T.test("saved portrait uses a verified race atlas without requiring gear or display ID", function()
     local GGM = loadModel()
-    local view, model, log = makeView(GGM)
-    local record = makeRecord()
+    local view = makeView(GGM, {
+        raceInfo = { clientFileString = "Human", raceName = "Human" },
+        atlases = { ["raceicon128-human-male"] = true },
+    })
 
-    local state = GGM.RenderSavedCharacterModel(view, record)
-
-    T.assertEqual(state, "shown")
-    T.assertTrue(model.visible)
-    local display = findCalls(log, "SetDisplayInfo")
-    T.assertEqual(#display, 1)
-    T.assertEqual(display[1].args[1], record.identity.displayID)
-    local tried = findCalls(log, "TryOn")
-    T.assertEqual(#tried, #LINK_SLOTS)
-    for index, key in ipairs(LINK_SLOTS) do
-        T.assertEqual(tried[index].args[1], record.gear.slots[key].itemLink)
-        T.assertNil(tried[index].args[2])
-        T.assertEqual(tried[index].argumentCount, 1)
-    end
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(1, 2)), "shown")
+    T.assertTrue(view.model.visible)
+    T.assertTrue(view.portraitRendered)
+    T.assertEqual(view.portraitSource, "raceicon128-human-male")
+    T.assertEqual(view.portrait.atlas, "raceicon128-human-male")
+    T.assertEqual(view.raceLabel.text, "Human")
+    T.assertEqual(view.sexLabel.text, "Male")
+    T.assertEqual(view.caption.text, "Saved race portrait")
+    T.assertFalse(view.questionMark.visible)
 end)
 
-T.test("saved false false visual slots are explicitly cleared and unavailable slots fail closed", function()
+T.test("saved portrait falls back to the legacy race sheet", function()
     local GGM = loadModel()
-    local view, model, log = makeView(GGM)
-    local record = makeRecord()
-    record.gear.slots.MAIN_HAND.itemID = false
-    record.gear.slots.MAIN_HAND.itemLink = false
+    local view = makeView(GGM)
 
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, record), "shown")
-    local clears = findCalls(log, "UndressSlot")
-    T.assertEqual(#clears, 2)
-    T.assertEqual(clears[1].args[1], 16)
-    T.assertEqual(#findCalls(log, "TryOn"), #LINK_SLOTS)
-
-    record.gear.slots.MAIN_HAND = { unavailable = true }
-    for index = #log, 1, -1 do table.remove(log, index) end
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, record), "render-unavailable")
-    T.assertFalse(model.visible)
-    T.assertEqual(#findCalls(log, "UndressSlot"), 0)
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(2, 3)), "shown")
+    T.assertEqual(view.portraitSource, "legacy-race-sheet")
+    T.assertEqual(view.portrait.texture, "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Races")
+    T.assertEqual(view.portrait.texCoord[1], 0.375)
+    T.assertEqual(view.portrait.texCoord[3], 0.75)
+    T.assertEqual(view.sexLabel.text, "Female")
 end)
 
-T.test("selection changes clear the previous model before initializing the next record", function()
+T.test("saved portrait uses display ID when a race icon is unavailable", function()
     local GGM = loadModel()
-    local view, model, log = makeView(GGM)
-    local first = makeRecord()
-    local second = makeRecord()
-    second.identity.displayID = 54321
+    local view, calls = makeView(GGM)
 
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, first), "shown")
-    for index = #log, 1, -1 do table.remove(log, index) end
-    local state = GGM.RenderSavedCharacterModel(view, second)
-
-    T.assertEqual(state, "shown")
-    T.assertTrue(model.visible)
-    T.assertEqual(log[1].name, "Hide")
-    T.assertEqual(log[2].name, "Undress")
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(99, 2, 12345)), "shown")
+    T.assertEqual(view.portraitSource, "display-id")
+    T.assertEqual(view.portrait.texture, "display:12345")
+    T.assertEqual(calls[#calls], "display:12345")
+    T.assertEqual(view.caption.text, "Saved 2D portrait")
 end)
 
-T.test("missing or malformed saved race sex or display ID never initializes a model", function()
+T.test("unavailable portrait keeps saved gear panel visible and labels the absence", function()
     local GGM = loadModel()
-    local invalidCases = {
-        function(r) r.identity.raceID = nil end,
-        function(r) r.identity.raceID = "1" end,
-        function(r) r.identity.sex = nil end,
-        function(r) r.identity.sex = 1 end,
-        function(r) r.identity.displayID = nil end,
-        function(r) r.identity.displayID = 0 end,
-    }
-    for _, invalidate in ipairs(invalidCases) do
-        local view, model, log = makeView(GGM)
-        local record = makeRecord()
-        invalidate(record)
-        T.assertEqual(GGM.RenderSavedCharacterModel(view, record), "identity-unavailable")
-        T.assertFalse(model.visible)
-        T.assertEqual(#findCalls(log, "SetDisplayInfo"), 0)
-        T.assertEqual(#findCalls(log, "TryOn"), 0)
-    end
+    local view = makeView(GGM, { displayFails = true })
+
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(nil, nil, 12345)), "shown")
+    T.assertTrue(view.model.visible)
+    T.assertFalse(view.portraitRendered)
+    T.assertTrue(view.questionMark.visible)
+    T.assertEqual(view.raceLabel.text, "Race unavailable")
+    T.assertEqual(view.sexLabel.text, "Gender unavailable")
+    T.assertEqual(view.caption.text, "Saved gear - portrait not available")
 end)
 
-T.test("failed and indeterminate native model or item calls clear and hide visuals", function()
-    local failureNames = { "Undress", "SetDisplayInfo", "TryOn", "UndressSlot" }
-    for _, failureName in ipairs(failureNames) do
-        local GGM = loadModel()
-        local view, model = makeView(GGM, { [failureName] = false })
-        local record = makeRecord()
-        if failureName == "UndressSlot" then
-            record.gear.slots.MAIN_HAND.itemID = false
-            record.gear.slots.MAIN_HAND.itemLink = false
-        end
-        T.assertEqual(GGM.RenderSavedCharacterModel(view, record), "render-unavailable")
-        T.assertFalse(model.visible)
-    end
-
-end)
-
-T.test("native model exceptions fail closed", function()
-    local methodNames = { "Undress", "SetDisplayInfo", "TryOn", "UndressSlot" }
-    for _, methodName in ipairs(methodNames) do
-        local GGM = loadModel()
-        local view, model = makeView(GGM)
-        if methodName == "UndressSlot" then
-            local emptyRecord = makeRecord()
-            emptyRecord.gear.slots.MAIN_HAND.itemID = false
-            emptyRecord.gear.slots.MAIN_HAND.itemLink = false
-            model.UndressSlot = function() error("native failure") end
-            T.assertEqual(GGM.RenderSavedCharacterModel(view, emptyRecord), "render-unavailable")
-        else
-            model[methodName] = function() error("native failure") end
-            T.assertEqual(GGM.RenderSavedCharacterModel(view, makeRecord()), "render-unavailable")
-        end
-        T.assertFalse(model.visible)
-    end
-end)
-
-T.test("saved weapon links use the API hand strings for their exact hands", function()
+T.test("changing selection clears the previous portrait and labels", function()
     local GGM = loadModel()
-    local view, model, log = makeView(GGM)
-    local record = makeRecord()
-    record.gear.slots.MAIN_HAND.itemID = 10016
-    record.gear.slots.MAIN_HAND.itemLink = "item-link:MAIN_HAND"
-    record.gear.slots.OFF_HAND.itemID = 10017
-    record.gear.slots.OFF_HAND.itemLink = "item-link:OFF_HAND"
+    local view = makeView(GGM, { atlases = { ["raceicon128-human-male"] = true } })
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(1, 2, 101)), "shown")
 
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, record), "shown")
-    T.assertTrue(model.visible)
-    local tried = findCalls(log, "TryOn")
-    T.assertEqual(#tried, #LINK_SLOTS + 2)
-    local seenHands = {}
-    for _, call in ipairs(tried) do
-        if call.args[1] == "item-link:MAIN_HAND" then
-            seenHands.main = true
-            T.assertEqual(call.args[2], view.api.MAINHANDSLOT)
-            T.assertEqual(call.argumentCount, 2)
-        elseif call.args[1] == "item-link:OFF_HAND" then
-            seenHands.off = true
-            T.assertEqual(call.args[2], view.api.SECONDARYHANDSLOT)
-            T.assertEqual(call.argumentCount, 2)
-        else
-            T.assertNil(call.args[2])
-            T.assertEqual(call.argumentCount, 1)
-        end
-    end
-    T.assertTrue(seenHands.main)
-    T.assertTrue(seenHands.off)
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(nil, nil)), "shown")
+    T.assertNil(view.portrait.atlas)
+    T.assertFalse(view.portraitRendered)
+    T.assertNil(view.portraitSource)
+    T.assertTrue(view.questionMark.visible)
+    T.assertEqual(view.raceLabel.text, "Race unavailable")
+
+    T.assertTrue(GGM.ClearSavedCharacterModel(view))
+    T.assertFalse(view.model.visible)
+    T.assertEqual(view.raceLabel.text, "")
+    T.assertEqual(view.caption.text, "")
 end)
 
-T.test("saved weapon links fail closed when an API hand string is absent or malformed", function()
+T.test("missing record identity and failed frame creation are unavailable", function()
     local GGM = loadModel()
-    for _, invalidValue in ipairs({ false, "" }) do
-        local view, model = makeView(GGM)
-        view.api.MAINHANDSLOT = invalidValue
-        view.api.SECONDARYHANDSLOT = invalidValue
-        local record = makeRecord()
-        record.gear.slots.MAIN_HAND.itemID = 10016
-        record.gear.slots.MAIN_HAND.itemLink = "item-link:MAIN_HAND"
-        record.gear.slots.OFF_HAND.itemID = 10017
-        record.gear.slots.OFF_HAND.itemLink = "item-link:OFF_HAND"
+    local view = makeView(GGM)
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, {}), "identity-unavailable")
+    T.assertFalse(view.model.visible)
 
-        T.assertEqual(GGM.RenderSavedCharacterModel(view, record), "render-unavailable")
-        T.assertFalse(model.visible)
-    end
-end)
-
-T.test("TryOn accepts the documented enum success value and rejects data pending", function()
-    local GGM = loadModel()
-    local successView = makeView(GGM, { TryOn = 42 }, 42)
-    T.assertEqual(GGM.RenderSavedCharacterModel(successView, makeRecord()), "shown")
-
-    local pendingView, pendingModel = makeView(GGM, { TryOn = 3 })
-    T.assertEqual(GGM.RenderSavedCharacterModel(pendingView, makeRecord()), "render-unavailable")
-    T.assertFalse(pendingModel.visible)
-end)
-
-T.test("TryOn numeric zero fails closed when enum success metadata is absent", function()
-    local GGM = loadModel()
-    local view, model = makeView(GGM)
-    view.api.Enum = nil
-
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, makeRecord()), "render-unavailable")
-    T.assertFalse(model.visible)
-end)
-
-T.test("a failed second record render clears the previously shown model", function()
-    local GGM = loadModel()
-    local view, model, log = makeView(GGM)
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, makeRecord()), "shown")
-    T.assertTrue(model.visible)
-    for index = #log, 1, -1 do table.remove(log, index) end
-
-    model.TryOn = function(self, link, handSlotName)
-        table.insert(log, { name = "TryOn", args = { link, handSlotName } })
-        return 2
-    end
-    local state = GGM.RenderSavedCharacterModel(view, makeRecord())
-
-    T.assertEqual(state, "render-unavailable")
-    T.assertFalse(model.visible)
-    T.assertEqual(log[1].name, "Hide")
-    T.assertEqual(log[2].name, "Undress")
-end)
-
-T.test("pending item data and indeterminate TryOn never produce a shown model", function()
-    local GGM = loadModel()
-    local view, model = makeView(GGM)
-    view.api.GetItemInfo = function() return nil end
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, makeRecord()), "render-unavailable")
-    T.assertFalse(model.visible)
-
-    local view2, model2, log2 = makeView(GGM)
-    view2.model.TryOn = function(self, link, handSlotName)
-        table.insert(log2, { name = "TryOn", args = { link, handSlotName } })
-    end
-    T.assertEqual(GGM.RenderSavedCharacterModel(view2, makeRecord()), "render-unavailable")
-    T.assertFalse(model2.visible)
+    local failedView = makeView(GGM, { noFrame = true })
+    T.assertNil(failedView.model)
+    T.assertEqual(GGM.RenderSavedCharacterModel(failedView, record(1, 2)), "render-unavailable")
 end)

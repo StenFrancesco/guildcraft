@@ -207,10 +207,7 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         completenessText = record.complete == true and "Complete"
             or (record.refreshNeeded == true and "Refresh needed" or "Incomplete"),
         modelInput = record,
-        modelState = type(record.identity.raceID) == "number"
-            and (record.identity.sex == 2 or record.identity.sex == 3)
-            and type(record.identity.displayID) == "number"
-            and "render-unavailable" or "identity-unavailable",
+        modelState = "render-unavailable",
         slots = slots,
     }
 end
@@ -388,19 +385,7 @@ local function renderBrowserDetail(frame, entry, api)
         if frame.characterModelView.model then frame.characterModelView.model:Show() end
     else
         if frame.characterModelView.model then frame.characterModelView.model:Hide() end
-        local identity = model.modelInput.identity
-        local raceOrGenderUnavailable = type(identity.raceID) ~= "number" or identity.raceID < 1
-            or identity.raceID > 255 or identity.raceID ~= math.floor(identity.raceID)
-            or (identity.sex ~= 2 and identity.sex ~= 3)
-        local displayUnavailable = type(identity.displayID) ~= "number" or identity.displayID < 1
-            or identity.displayID > 2147483647 or identity.displayID ~= math.floor(identity.displayID)
-        local unavailableText = "Model unavailable: saved appearance could not be rendered"
-        if raceOrGenderUnavailable then
-            unavailableText = "Model unavailable: race or gender not saved"
-        elseif displayUnavailable then
-            unavailableText = "Model unavailable: saved display ID not available"
-        end
-        frame.modelUnavailableLabel:SetText(unavailableText)
+        frame.modelUnavailableLabel:SetText("2D paper doll unavailable")
         frame.modelUnavailableLabel:Show()
     end
     setText(frame.characterLine, model.characterName)
@@ -849,9 +834,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.detailEmpty:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, -12)
     frame.detailEmpty:Hide()
 
-    -- Classic paper-doll arrangement: eight slots on each side and weapons along
-    -- the bottom.  Slot names sit beside the icons instead of underneath them,
-    -- which leaves the center uncluttered and makes the silhouette easier to read.
+    -- Classic 2D paper-doll arrangement: eight slots on each side and weapons
+    -- along the bottom. The center prefers a verified race+sex icon atlas and
+    -- falls back without affecting the saved gear display.
     local sideX = { left = 32, right = 538 }
     local sideStartY, sidePitch = -68, 46
     local bottomX = { 210, 285, 360 }
