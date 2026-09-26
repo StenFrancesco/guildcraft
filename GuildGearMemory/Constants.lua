@@ -3,7 +3,7 @@ local _, GGM = ...
 GGM.SCHEMA_VERSION = 2
 GGM.DEFAULT_STABILITY_DELAY_SECONDS = 300
 
-GGM.SYNC_PROTOCOL_VERSION = 3
+GGM.SYNC_PROTOCOL_VERSION = 4
 GGM.SYNC_PREFIX = "DysGuildGear"
 GGM.SYNC_CHAT_TYPE = "GUILD"
 
@@ -62,4 +62,10 @@ GGM.TRACKED_SLOTS = {
     { key = "MAIN_HAND", inventoryName = "MainHandSlot" },
     { key = "OFF_HAND", inventoryName = "SecondaryHandSlot" },
     { key = "RANGED", inventoryName = "RangedSlot" },
+}
+
+-- Some WoW variants expose a ranged equipment slot and others do not. Keep it
+-- available when the client provides it, but do not require it for a snapshot.
+GGM.OPTIONAL_TRACKED_SLOTS = {
+    RANGED = true,
 }

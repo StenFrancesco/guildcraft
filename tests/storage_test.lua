@@ -42,6 +42,58 @@ T.test("database initialization creates the Phase 1 schema on first run", functi
     T.assertNil(err)
     T.assertEqual(db.schemaVersion, 2)
     T.assertEqual(type(db.characters), "table")
+    T.assertEqual(type(db.localCharacters), "table")
+    T.assertNil(next(db.localCharacters))
+end)
+
+T.test("database initialization backfills local ownership for supported existing schemas", function()
+    local GGM = loadModules()
+    for _, schemaVersion in ipairs({ 1, 2 }) do
+        local existing = { schemaVersion = schemaVersion, characters = {} }
+
+        local db, err = GGM.InitializeDatabase(existing)
+
+        T.assertNil(err)
+        T.assertTrue(db == existing)
+        T.assertEqual(type(db.localCharacters), "table")
+        T.assertNil(next(db.localCharacters))
+    end
+end)
+
+T.test("database initialization rejects invalid existing local ownership metadata", function()
+    local GGM = loadModules()
+    local existing = { schemaVersion = 2, characters = {}, localCharacters = false }
+
+    local db, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(db)
+    T.assertEqual(err, "database-local-characters-invalid")
+    T.assertFalse(existing.localCharacters == nil)
+end)
+
+T.test("local ownership marks and queries only valid marked keys", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+
+    T.assertFalse(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertTrue(GGM.MarkLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertTrue(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertFalse(GGM.IsLocalCharacter(db, "Bob-Silvermoon"))
+    for _, key in ipairs({ "", 42, false, {} }) do
+        local ok = GGM.MarkLocalCharacter(db, key)
+        T.assertFalse(ok)
+        T.assertNil(db.localCharacters[key])
+    end
+end)
+
+T.test("received complete records do not become locally owned", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+
+    assert(GGM.SaveReceivedCompleteCharacterRecord(db, makeIdentity(), makeSnapshot(GGM), 0))
+
+    T.assertFalse(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertNil(db.localCharacters["Alice-Silvermoon"])
 end)
 
 T.test("database initialization reuses a valid existing SavedVariables table", function()

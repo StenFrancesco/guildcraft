@@ -99,6 +99,21 @@ function GGM.FilterGuildGearBrowserEntries(entries, query)
     return filtered
 end
 
+function GGM.FilterGuildGearBrowserOwnership(entries, db, view)
+    local filtered = {}
+    if type(entries) ~= "table" then return filtered end
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" and type(entry.key) == "string" then
+            local isMine = type(GGM.IsLocalCharacter) == "function"
+                and GGM.IsLocalCharacter(db, entry.key) == true
+            if (view == "Mine" and isMine) or (view ~= "Mine" and not isMine) then
+                table.insert(filtered, entry)
+            end
+        end
+    end
+    return filtered
+end
+
 local function getItemIcon(api, itemID)
     if type(api.GetItemIcon) == "function" then
         return api.GetItemIcon(itemID)
@@ -149,14 +164,16 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local savedSlot = record.gear.slots[trackedSlot.key]
         local slotTexture = getSlotTexture(api, trackedSlot)
-        local unavailable = savedSlot == nil
+        local unavailable = savedSlot == nil or savedSlot.unavailable == true
         local empty = not unavailable and savedSlot.itemID == false
         local icon = slotTexture
         if not unavailable and not empty then icon = getItemIcon(api, savedSlot.itemID) or slotTexture end
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
         local displayName = slotDisplayNames[trackedSlot.key]
         local itemID, itemLink, inventorySlotID
-        if savedSlot then itemID, itemLink, inventorySlotID = savedSlot.itemID, savedSlot.itemLink, savedSlot.inventorySlotID end
+        if savedSlot and not unavailable then
+            itemID, itemLink, inventorySlotID = savedSlot.itemID, savedSlot.itemLink, savedSlot.inventorySlotID
+        end
         table.insert(slots, {
             key = trackedSlot.key,
             inventorySlotID = inventorySlotID,
@@ -198,10 +215,16 @@ function GGM.BuildSnapshotViewModel(record, formatTime)
     local slotRows = {}
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local savedSlot = record.gear.slots[trackedSlot.key]
-        if type(savedSlot) ~= "table" then return missingModel() end
-        if type(savedSlot.inventorySlotID) ~= "number" then return missingModel() end
         local valueText
-        if type(savedSlot.itemID) == "number" and type(savedSlot.itemLink) == "string" and savedSlot.itemLink ~= "" then
+        if savedSlot == nil and GGM.OPTIONAL_TRACKED_SLOTS[trackedSlot.key] == true then
+            valueText = "No data"
+        elseif type(savedSlot) ~= "table" then
+            return missingModel()
+        elseif savedSlot.unavailable == true then
+            valueText = "No data"
+        elseif type(savedSlot.inventorySlotID) ~= "number" then
+            return missingModel()
+        elseif type(savedSlot.itemID) == "number" and type(savedSlot.itemLink) == "string" and savedSlot.itemLink ~= "" then
             valueText = savedSlot.itemLink
         elseif savedSlot.itemID == false and savedSlot.itemLink == false then
             valueText = "Empty"
@@ -328,8 +351,8 @@ local function renderBrowserDetail(frame, entry, api)
     frame.detailEmpty:Hide()
     for _, slot in ipairs(frame.slotButtons) do slot:Hide() end
     if not entry then
-        if #frame.entries == 0 then
-            frame.detailEmpty:SetText("No saved guild gear")
+        if #frame.activeEntries == 0 then
+            frame.detailEmpty:SetText(frame.browserView == "Mine" and "No saved personal gear" or "No saved guild gear")
         elseif #frame.filteredEntries == 0 then
             frame.detailEmpty:SetText("No characters found")
         else
@@ -466,7 +489,8 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
 end
 
 updateBrowserList = function(frame, api)
-    frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, frame.searchBox:GetText() or "")
+    frame.activeEntries = GGM.FilterGuildGearBrowserOwnership(frame.entries, frame.db, frame.browserView)
+    frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.activeEntries, frame.searchBox:GetText() or "")
     local selectedStillVisible = false
     for _, entry in ipairs(frame.filteredEntries) do
         if frame.selectedEntry and entry.key == frame.selectedEntry.key then selectedStillVisible = true end
@@ -545,8 +569,8 @@ updateBrowserList = function(frame, api)
     for index = #frame.filteredEntries + 1, #rows do rows[index]:Hide() end
     frame.listContent:SetHeight(math.max(#frame.filteredEntries * 32, 1))
 
-    if #frame.entries == 0 then
-        frame.listEmpty:SetText("No saved guild gear")
+    if #frame.activeEntries == 0 then
+        frame.listEmpty:SetText(frame.browserView == "Mine" and "No saved personal gear" or "No saved guild gear")
         frame.listEmpty:Show()
     elseif #frame.filteredEntries == 0 then
         frame.listEmpty:SetText("No characters found")
@@ -558,6 +582,60 @@ updateBrowserList = function(frame, api)
     if frame.activeTab ~= "Character" then
         setBrowserContentVisible(frame, false)
     end
+end
+
+local function updateBrowserViewButtonStyles(frame)
+    for _, button in ipairs({ frame.mineButton, frame.guildButton }) do
+        local selected = button.key == frame.browserView
+        button.selected = selected
+        if selected then
+            setColor(button.background, CF.accentSoft)
+            for _, border in ipairs(button.border) do setColor(border, CF.accent) end
+            button.label:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
+        else
+            setColor(button.background, CF.panelRaised)
+            for _, border in ipairs(button.border) do setColor(border, CF.border) end
+            button.label:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+        end
+    end
+end
+
+local function createBrowserViewButton(api, frame, key, label, x)
+    local button = api.CreateFrame("Button", nil, frame.searchPanel)
+    button:SetSize(45, 21)
+    button:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", x, -6)
+    button.background = button:CreateTexture(nil, "BACKGROUND")
+    button.background:SetAllPoints(button)
+    setColor(button.background, CF.panelRaised)
+    button.border = {}
+    local edges = {
+        { "TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", 0, 0, 0, 0, "height" },
+        { "BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0, 0, 0, "height" },
+        { "TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", 0, 0, 0, 0, "width" },
+        { "TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0, 0, 0, "width" },
+    }
+    for index, edge in ipairs(edges) do
+        local border = button:CreateTexture(nil, "BORDER")
+        border:SetPoint(edge[1], button, edge[2], edge[5], edge[6])
+        border:SetPoint(edge[3], button, edge[4], edge[7], edge[8])
+        if edge[9] == "height" then border:SetHeight(1) else border:SetWidth(1) end
+        setColor(border, CF.border)
+        button.border[index] = border
+    end
+    button.hover = button:CreateTexture(nil, "HIGHLIGHT")
+    button.hover:SetAllPoints(button)
+    setColor(button.hover, CF.panelHover)
+    button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
+    button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+    button.label:SetText(label)
+    button:RegisterForClicks("LeftButtonUp")
+    button.key = key
+    button:SetScript("OnClick", function()
+        frame.browserView = key
+        updateBrowserViewButtonStyles(frame)
+        updateBrowserList(frame, api)
+    end)
+    return button
 end
 
 local function createNavigationTab(api, frame, key, label, iconPath, offset)
@@ -611,6 +689,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.api = api
     frame.TitleText:SetText("Guild Gear Memory - Saved Gear")
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
+    frame.browserView = "Guild"
 
     -- Cover the default parchment/inset treatment with a flat dark application shell.
     -- Template-owned regions are hidden conditionally so this stays compatible with
@@ -656,6 +735,11 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.searchLabel:SetText("Search characters")
     frame.searchLabel:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 12, -9)
     frame.searchLabel:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+
+    frame.searchLabel:SetWidth(132)
+    frame.mineButton = createBrowserViewButton(api, frame, "Mine", "Mine", 154)
+    frame.guildButton = createBrowserViewButton(api, frame, "Guild", "Guild", 204)
+    updateBrowserViewButtonStyles(frame)
 
     frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel, "InputBoxTemplate")
     frame.searchBox:SetSize(232, 25)
@@ -803,6 +887,7 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     local query = frame.searchBox:GetText() or ""
     local selectedKey = frame.selectedEntry and frame.selectedEntry.key or nil
     frame.entries = GGM.BuildGuildGearBrowserEntries(db)
+    frame.db = db
     frame.searchBox:SetText(query)
     frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, query)
     frame.selectedEntry = nil
@@ -841,10 +926,64 @@ local function parseRequestedIdentity(message)
     }, nil
 end
 
+local function printAddonStatus(api)
+    local chatFrame = api.DEFAULT_CHAT_FRAME
+    local emit
+    if chatFrame and type(chatFrame.AddMessage) == "function" then
+        emit = function(message) chatFrame:AddMessage(message) end
+    elseif type(api.print) == "function" then
+        emit = function(message) api.print(message) end
+    end
+
+    if not emit then return end
+
+    emit("Guild Gear Memory status:")
+    if GGM.startupError then
+        emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
+        return
+    end
+    if type(GGM.db) ~= "table" then
+        emit("Database: unavailable")
+        return
+    end
+
+    local identity, identityErr = GGM.BuildPlayerIdentity(api)
+    if not identity then
+        emit("Current character: unavailable (" .. tostring(identityErr) .. ")")
+        return
+    end
+
+    emit("Current character: " .. identity.key)
+    local record, recordErr = GGM.GetCharacterRecord(GGM.db, identity.key)
+    if record then
+        emit("Saved gear: " .. (record.complete == true and "complete" or "incomplete"))
+    else
+        emit("Saved gear: no (" .. tostring(recordErr) .. ")")
+    end
+    emit("Ownership: " .. (GGM.IsLocalCharacter(GGM.db, identity.key) and "Mine" or "not marked Mine"))
+    local trackerActive = type(GGM.gearTracker) == "table"
+        and GGM.gearTracker.characterKey == identity.key
+    emit("Tracking: " .. (trackerActive and "active" or "not active"))
+
+    local trackingErr = GGM.lastGearTrackingError or GGM.lastCaptureError
+    if trackingErr then
+        emit("Login capture/tracking error: " .. tostring(trackingErr))
+    elseif not record then
+        emit("Login capture/tracking error: no error was recorded")
+    else
+        emit("Login capture/tracking error: none")
+    end
+end
+
 function GGM.RegisterSnapshotTestSlashCommand(api)
     api.SlashCmdList = api.SlashCmdList or {}
     api.SLASH_GUILDGEARMEMORY1 = "/ggm"
     api.SlashCmdList.GUILDGEARMEMORY = function(message)
+        if type(message) == "string" and message:match("^%s*status%s*$") then
+            printAddonStatus(api)
+            return
+        end
+
         local target, requestErr = parseRequestedIdentity(message)
         if target then
             if not GGM.guildSync then

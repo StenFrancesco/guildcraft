@@ -169,7 +169,7 @@ T.test("gear slot comparison notices an item-link change for the same item id", 
     T.assertTrue(GGM.AreGearSlotValuesEqual(left, left))
 end)
 
-T.test("capture does not invent the added ranged slot when its API mapping is unavailable", function()
+T.test("capture preserves the snapshot when the optional ranged slot is unavailable", function()
     local GGM = loadModules()
     local api = makeCompleteApi(GGM)
     api.GetInventorySlotInfo = function(inventoryName)
@@ -179,6 +179,8 @@ T.test("capture does not invent the added ranged slot when its API mapping is un
         end
     end
     local snapshot, err = GGM.CapturePlayerGearSnapshot(api)
-    T.assertNil(snapshot)
-    T.assertEqual(err, "inventory-slot-unavailable:RANGED")
+    T.assertNil(err)
+    T.assertNotNil(snapshot)
+    T.assertTrue(snapshot.slots.RANGED.unavailable)
+    T.assertTrue(type(snapshot.slots.HEAD.itemID) == "number")
 end)

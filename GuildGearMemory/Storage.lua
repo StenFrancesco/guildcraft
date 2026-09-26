@@ -10,6 +10,9 @@ local function copyIdentity(identity)
 end
 
 local function copySlotValue(source)
+    if source == nil or source.unavailable == true then
+        return { unavailable = true }
+    end
     return {
         inventorySlotID = source.inventorySlotID,
         itemID = source.itemID,
@@ -144,6 +147,7 @@ function GGM.InitializeDatabase(existing)
         return {
             schemaVersion = GGM.SCHEMA_VERSION,
             characters = {},
+            localCharacters = {},
         }, nil
     end
 
@@ -152,6 +156,9 @@ function GGM.InitializeDatabase(existing)
     end
 
     if existing.schemaVersion == 1 and GGM.SCHEMA_VERSION == 2 then
+        if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
+            return nil, "database-local-characters-invalid"
+        end
         if type(existing.characters) ~= "table" then
             return nil, "database-characters-invalid"
         end
@@ -159,6 +166,7 @@ function GGM.InitializeDatabase(existing)
             migrateSchemaOneRecord(record, characterKey)
         end
         existing.schemaVersion = 2
+        existing.localCharacters = existing.localCharacters or {}
         return existing, nil
     end
 
@@ -170,7 +178,37 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-characters-invalid"
     end
 
+    if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
+        return nil, "database-local-characters-invalid"
+    end
+    existing.localCharacters = existing.localCharacters or {}
+
     return existing, nil
+end
+
+function GGM.MarkLocalCharacter(db, characterKey)
+    if type(db) ~= "table" or type(db.characters) ~= "table" then
+        return false, "database-invalid"
+    end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then
+        return false, "unsupported-schema-version:" .. tostring(db.schemaVersion)
+    end
+    if type(db.localCharacters) ~= "table" then
+        return false, "database-local-characters-invalid"
+    end
+    if type(characterKey) ~= "string" or characterKey == "" then
+        return false, "character-key-invalid"
+    end
+
+    db.localCharacters[characterKey] = true
+    return true
+end
+
+function GGM.IsLocalCharacter(db, characterKey)
+    return type(db) == "table"
+        and type(db.localCharacters) == "table"
+        and type(characterKey) == "string"
+        and db.localCharacters[characterKey] == true
 end
 
 function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequence)
@@ -335,7 +373,9 @@ function GGM.UpdateConfirmedCharacterSlot(db, characterKey, slotKey, slotValue, 
     end
 
     local sharedSlot = record.gear.slots[slotKey]
-    if slotValue.inventorySlotID ~= sharedSlot.inventorySlotID then
+    if not (GGM.OPTIONAL_TRACKED_SLOTS[slotKey] == true
+        and (sharedSlot == nil or sharedSlot.unavailable == true))
+        and slotValue.inventorySlotID ~= sharedSlot.inventorySlotID then
         return false, "snapshot-slot-id-mismatch:" .. slotKey
     end
 
@@ -380,7 +420,9 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
     end
 
     local sharedSlot = record.gear.slots[slotKey]
-    if slotValue.inventorySlotID ~= sharedSlot.inventorySlotID then
+    if not (GGM.OPTIONAL_TRACKED_SLOTS[slotKey] == true
+        and (sharedSlot == nil or sharedSlot.unavailable == true))
+        and slotValue.inventorySlotID ~= sharedSlot.inventorySlotID then
         return false, "snapshot-slot-id-mismatch:" .. slotKey
     end
 
