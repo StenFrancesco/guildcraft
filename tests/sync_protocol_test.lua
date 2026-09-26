@@ -26,6 +26,33 @@ local function makeSnapshot(GGM)
     return snapshot
 end
 
+local function parseFields(payload)
+    local fields, cursor = {}, 3
+    while cursor <= #payload do
+        local colon = assert(payload:find(":", cursor, true))
+        local length = tonumber(payload:sub(cursor, colon - 1))
+        local first = colon + 1
+        fields[#fields + 1] = payload:sub(first, first + length - 1)
+        cursor = first + length
+    end
+    return payload:sub(1, 2), fields
+end
+
+local function buildPayload(header, fields)
+    local parts = { header }
+    for _, field in ipairs(fields) do
+        field = tostring(field)
+        parts[#parts + 1] = tostring(#field) .. ":" .. field
+    end
+    return table.concat(parts)
+end
+
+local function copyFields(fields)
+    local copied = {}
+    for index, field in ipairs(fields) do copied[index] = field end
+    return copied
+end
+
 T.test("slot update protocol round trips explicit bounded fields", function()
     local GGM = loadModules()
     local identity = makeIdentity("Alice", "Silvermoon", "Player-1234-AAAA")
@@ -80,6 +107,7 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
     local GGM = loadModules()
     local requester = makeIdentity("Bob", "Silvermoon", "Player-1234-BBBB")
     local target = makeIdentity("Alice", "Silvermoon", "Player-1234-AAAA")
+    target.raceID, target.sex, target.displayID = 1, 3, 12345
     local snapshot = makeSnapshot(GGM)
     snapshot.slots.RANGED = { unavailable = true }
     local payload = assert(GGM.EncodeSyncSnapshotResponse(target, requester, makeIdentity("Carol", "Silvermoon", "Player-1234-CCCC"), snapshot, 12, "000001"))
@@ -87,6 +115,9 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
     T.assertNil(err)
     T.assertEqual(message.type, "SNAPSHOT_RESPONSE")
     T.assertEqual(message.target.key, target.key)
+    T.assertEqual(message.target.raceID, 1)
+    T.assertEqual(message.target.sex, 3)
+    T.assertEqual(message.target.displayID, 12345)
     T.assertEqual(message.requester.key, requester.key)
     T.assertEqual(message.responder.key, "Carol-Silvermoon")
     T.assertEqual(message.requestID, "000001")
@@ -102,6 +133,90 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
             T.assertEqual(message.snapshot.slots[trackedSlot.key].inventorySlotID, index)
         end
     end
+end)
+
+T.test("snapshot response preserves race and sex when display id is unavailable", function()
+    local GGM = loadModules()
+    local target = makeIdentity("Alice", "Silvermoon", nil)
+    target.raceID, target.sex = 2, 2
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(target, makeIdentity("Bob", "Silvermoon", "B"), makeIdentity("Carol", "Silvermoon", "C"), makeSnapshot(GGM), 1, "000001"))
+    local message = assert(GGM.DecodeSyncMessage(payload))
+    T.assertEqual(message.target.raceID, 2)
+    T.assertEqual(message.target.sex, 2)
+    T.assertNil(message.target.displayID)
+end)
+
+T.test("snapshot response encodes an absent race and sex pair as zero trio", function()
+    local GGM = loadModules()
+    local target = makeIdentity("Alice", "Silvermoon", nil)
+    target.displayID = 12345
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(target, makeIdentity("Bob", "Silvermoon", "B"), makeIdentity("Carol", "Silvermoon", "C"), makeSnapshot(GGM), 1, "000001"))
+    local _, fields = parseFields(payload)
+    T.assertEqual(fields[16], "0")
+    T.assertEqual(fields[17], "0")
+    T.assertEqual(fields[18], "0")
+    local message = assert(GGM.DecodeSyncMessage(payload))
+    T.assertNil(message.target.raceID)
+    T.assertNil(message.target.sex)
+    T.assertNil(message.target.displayID)
+end)
+
+T.test("snapshot response rejects malformed target model fields and trailing fields", function()
+    local GGM = loadModules()
+    local base = assert(GGM.EncodeSyncSnapshotResponse(makeIdentity("Alice", "Silvermoon", nil), makeIdentity("Bob", "Silvermoon", "B"), makeIdentity("Carol", "Silvermoon", "C"), makeSnapshot(GGM), 1, "000001"))
+    local header, original = parseFields(base)
+    local malformed = {
+        { "1", "0", "0" }, -- half-present pair
+        { "x", "3", "1" }, -- nonnumeric race
+        { "1", "x", "1" }, -- nonnumeric sex
+        { "1", "3", "x" }, -- nonnumeric display id
+        { "256", "3", "1" }, -- race out of range
+        { "1", "4", "1" }, -- sex out of range
+        { "1", "3", "2147483648" }, -- display id out of range
+        { "0", "0", "1" }, -- display id without a race/sex pair
+    }
+    for _, trio in ipairs(malformed) do
+        local fields = copyFields(original)
+        fields[16], fields[17], fields[18] = trio[1], trio[2], trio[3]
+        local message, err = GGM.DecodeSyncMessage(buildPayload(header, fields))
+        T.assertNil(message)
+        T.assertNotNil(err)
+    end
+    local extra = copyFields(original)
+    extra[#extra + 1] = "unexpected"
+    local extraMessage, extraErr = GGM.DecodeSyncMessage(buildPayload(header, extra))
+    T.assertNil(extraMessage)
+    T.assertEqual(extraErr, "sync-payload-trailing-data")
+end)
+
+T.test("snapshot response retains bounded framing shapes for existing message types", function()
+    local GGM = loadModules()
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
+    local identity = makeIdentity("Alice", "Silvermoon", "A")
+    local update = assert(GGM.EncodeSyncSlotUpdate(identity, 1, "HEAD", { inventorySlotID = 1, itemID = 5, itemLink = "|Hitem:5|h[Test]|h" }, 1))
+    local request = assert(GGM.EncodeSyncSnapshotRequest(identity, makeIdentity("Bob", "Silvermoon", "B"), "000001"))
+    local claim = assert(GGM.EncodeSyncSnapshotResponseClaim(identity, makeIdentity("Bob", "Silvermoon", "B"), makeIdentity("Carol", "Silvermoon", "C"), 1, "000001"))
+    local response = assert(GGM.EncodeSyncSnapshotResponse(identity, makeIdentity("Bob", "Silvermoon", "B"), makeIdentity("Carol", "Silvermoon", "C"), makeSnapshot(GGM), 1, "000001"))
+    local updateHeader, updateFields = parseFields(update)
+    local requestHeader, requestFields = parseFields(request)
+    local claimHeader, claimFields = parseFields(claim)
+    local responseHeader, responseFields = parseFields(response)
+    T.assertEqual(updateHeader, "5U")
+    T.assertEqual(#updateFields, 10)
+    T.assertEqual(requestHeader, "5Q")
+    T.assertEqual(#requestFields, 9)
+    T.assertEqual(claimHeader, "5C")
+    T.assertEqual(#claimFields, 5)
+    T.assertEqual(responseHeader, "5S")
+    T.assertEqual(#responseFields, 18 + 4 * #GGM.TRACKED_SLOTS)
+    T.assertTrue(#response <= GGM.SYNC_MAX_LOGICAL_BYTES)
+    T.assertTrue(math.ceil(#response / GGM.SYNC_FRAME_CHUNK_BYTES) <= GGM.SYNC_MAX_FRAME_COUNT)
+    local configuredMaximum = GGM.SYNC_MAX_LOGICAL_BYTES
+    GGM.SYNC_MAX_LOGICAL_BYTES = #response - 1
+    local oversized, err = GGM.EncodeSyncSnapshotResponse(identity, makeIdentity("Bob", "Silvermoon", "B"), makeIdentity("Carol", "Silvermoon", "C"), makeSnapshot(GGM), 1, "000001")
+    GGM.SYNC_MAX_LOGICAL_BYTES = configuredMaximum
+    T.assertNil(oversized)
+    T.assertEqual(err, "sync-payload-too-large")
 end)
 
 T.test("protocol rejects identity keys that do not match name and realm", function()
@@ -150,9 +265,9 @@ T.test("protocol rejects logical payloads above the configured bound", function(
     T.assertEqual(err, "sync-payload-too-large")
 end)
 
-T.test("protocol version four rejects version two snapshot payloads", function()
+T.test("protocol version five rejects version two snapshot payloads", function()
     local GGM = loadModules()
-    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 4)
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
     local payload = assert(GGM.EncodeSyncSnapshotResponse(
         makeIdentity("Alice", "Silvermoon", "A"),
         makeIdentity("Bob", "Silvermoon", "B"),

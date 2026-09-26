@@ -206,6 +206,11 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         refreshNeeded = record.refreshNeeded == true,
         completenessText = record.complete == true and "Complete"
             or (record.refreshNeeded == true and "Refresh needed" or "Incomplete"),
+        modelInput = record,
+        modelState = type(record.identity.raceID) == "number"
+            and (record.identity.sex == 2 or record.identity.sex == 3)
+            and type(record.identity.displayID) == "number"
+            and "render-unavailable" or "identity-unavailable",
         slots = slots,
     }
 end
@@ -346,6 +351,12 @@ local function createClassicGearPanel(api, parent)
 end
 
 local function renderBrowserDetail(frame, entry, api)
+    if type(GGM.ClearSavedCharacterModel) == "function" then
+        GGM.ClearSavedCharacterModel(frame.characterModelView)
+    elseif frame.characterModelView and frame.characterModelView.model then
+        frame.characterModelView.model:Hide()
+    end
+    if frame.modelUnavailableLabel then frame.modelUnavailableLabel:Hide() end
     frame.detailModel = nil
     for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do control:Hide() end
     frame.detailEmpty:Hide()
@@ -368,6 +379,29 @@ local function renderBrowserDetail(frame, entry, api)
         frame.detailEmpty:SetText("No saved guild gear")
         frame.detailEmpty:Show()
         return
+    end
+    local renderState = type(GGM.RenderSavedCharacterModel) == "function"
+        and GGM.RenderSavedCharacterModel(frame.characterModelView, model.modelInput)
+        or "render-unavailable"
+    model.modelState = renderState
+    if renderState == "shown" then
+        if frame.characterModelView.model then frame.characterModelView.model:Show() end
+    else
+        if frame.characterModelView.model then frame.characterModelView.model:Hide() end
+        local identity = model.modelInput.identity
+        local raceOrGenderUnavailable = type(identity.raceID) ~= "number" or identity.raceID < 1
+            or identity.raceID > 255 or identity.raceID ~= math.floor(identity.raceID)
+            or (identity.sex ~= 2 and identity.sex ~= 3)
+        local displayUnavailable = type(identity.displayID) ~= "number" or identity.displayID < 1
+            or identity.displayID > 2147483647 or identity.displayID ~= math.floor(identity.displayID)
+        local unavailableText = "Model unavailable: saved appearance could not be rendered"
+        if raceOrGenderUnavailable then
+            unavailableText = "Model unavailable: race or gender not saved"
+        elseif displayUnavailable then
+            unavailableText = "Model unavailable: saved display ID not available"
+        end
+        frame.modelUnavailableLabel:SetText(unavailableText)
+        frame.modelUnavailableLabel:Show()
     end
     setText(frame.characterLine, model.characterName)
     setText(frame.realmLine, model.realm)
@@ -433,10 +467,16 @@ local function setBrowserContentVisible(frame, visible)
         frame.capturedLine,
         frame.completenessLine,
         frame.detailEmpty,
+        frame.modelUnavailableLabel,
     }
     if not visible then
         for _, control in ipairs(conditionalControls) do
             if control then control:Hide() end
+        end
+        if type(GGM.ClearSavedCharacterModel) == "function" then
+            GGM.ClearSavedCharacterModel(frame.characterModelView)
+        elseif frame.characterModelView and frame.characterModelView.model then
+            frame.characterModelView.model:Hide()
         end
     end
 
@@ -445,6 +485,13 @@ local function setBrowserContentVisible(frame, visible)
     end
     for _, button in ipairs(frame.slotButtons) do
         if not visible then button:Hide() end
+    end
+    if frame.characterModelView and frame.characterModelView.model then
+        if visible and frame.detailModel and frame.detailModel.modelState == "shown" then
+            frame.characterModelView.model:Show()
+        else
+            frame.characterModelView.model:Hide()
+        end
     end
 end
 
@@ -784,6 +831,19 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.capturedLine:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
     frame.completenessLine:SetTextColor(CF.accent[1], CF.accent[2], CF.accent[3])
     frame.gearPanel = createClassicGearPanel(api, frame)
+
+    frame.characterModelView = GGM.CreateSavedCharacterModel(api, frame.gearPanel)
+    if frame.characterModelView.model then
+        frame.characterModelView.model:SetSize(220, 252)
+        frame.characterModelView.model:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, 6)
+        frame.characterModelView.model:Hide()
+    end
+    frame.modelUnavailableLabel = createText(frame.gearPanel, "OVERLAY", "GameFontDisableSmall")
+    frame.modelUnavailableLabel:SetSize(220, 36)
+    frame.modelUnavailableLabel:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, 6)
+    frame.modelUnavailableLabel:SetJustifyH("CENTER")
+    frame.modelUnavailableLabel:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+    frame.modelUnavailableLabel:Hide()
 
     frame.detailEmpty = createText(frame.gearPanel, "OVERLAY", "GameFontNormalLarge")
     frame.detailEmpty:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, -12)

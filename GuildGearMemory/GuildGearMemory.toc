@@ -14,5 +14,6 @@ LocalGearMemory.lua
 SyncProtocol.lua
 SyncTransport.lua
 GuildSync.lua
+SavedCharacterModel.lua
 SnapshotTestUI.lua
 Main.lua

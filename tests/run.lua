@@ -12,6 +12,7 @@ local suites = {
     "tests.sync_transport_test",
     "tests.guild_sync_test",
     "tests.main_test",
+    "tests.saved_character_model_test",
 }
 
 local function modulePath(moduleName)

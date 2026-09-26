@@ -102,6 +102,23 @@ local function encodeSlotFields(fields, slotKey, slotValue)
     end
 end
 
+local function getTargetModelFields(target)
+    if target.raceID == nil and target.sex == nil then
+        return 0, 0, 0, nil
+    end
+    if not isIntegerInRange(target.raceID, 1, GGM.SYNC_MAX_RACE_ID)
+        or (target.sex ~= 2 and target.sex ~= 3) then
+        return nil, nil, nil, "sync-target-model-identity-invalid"
+    end
+    local displayID = target.displayID
+    if displayID == nil or displayID == 0 then
+        displayID = 0
+    elseif not isIntegerInRange(displayID, 1, GGM.SYNC_MAX_DISPLAY_ID) then
+        return nil, nil, nil, "sync-target-display-id-invalid"
+    end
+    return target.raceID, target.sex, displayID, nil
+end
+
 function GGM.EncodeSyncSlotUpdate(identity, confirmedSequence, slotKey, slotValue, confirmedAt)
     local identityValid, identityErr = GGM.ValidateSyncIdentity(identity)
     if not identityValid then return nil, identityErr end
@@ -175,6 +192,12 @@ function GGM.EncodeSyncSnapshotResponse(target, requester, responder, snapshot, 
     if not requestIDValid then return nil, requestIDErr end
     local timeValid, timeErr = validateTimestamp(snapshot.capturedAt, "sync-captured-at-invalid")
     if not timeValid then return nil, timeErr end
+    local modelCheckOk, raceID, sex, displayID, modelErr = pcall(getTargetModelFields, target)
+    if not modelCheckOk then
+        raceID, sex, displayID = 0, 0, 0
+    elseif modelErr then
+        return nil, modelErr
+    end
     local fields = {}
     appendIdentity(fields, target)
     appendIdentity(fields, requester)
@@ -182,6 +205,9 @@ function GGM.EncodeSyncSnapshotResponse(target, requester, responder, snapshot, 
     table.insert(fields, requestID)
     table.insert(fields, tostring(confirmedSequence))
     table.insert(fields, tostring(snapshot.capturedAt))
+    table.insert(fields, tostring(raceID))
+    table.insert(fields, tostring(sex))
+    table.insert(fields, tostring(displayID))
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local slotValue = snapshot.slots[trackedSlot.key]
         if slotValue == nil and GGM.OPTIONAL_TRACKED_SLOTS[trackedSlot.key] == true then
@@ -267,7 +293,7 @@ function GGM.DecodeSyncMessage(payload)
     local fieldCount
     if typeCode == "U" then fieldCount = 10
     elseif typeCode == "Q" then fieldCount = 9
-    elseif typeCode == "S" then fieldCount = 15 + (#GGM.TRACKED_SLOTS * 4)
+    elseif typeCode == "S" then fieldCount = 18 + (#GGM.TRACKED_SLOTS * 4)
     elseif typeCode == "C" then fieldCount = 5
     else return nil, "sync-message-type-unknown" end
     local fields, cursor, fieldsErr = readFields(payload, 3, fieldCount)
@@ -319,8 +345,19 @@ function GGM.DecodeSyncMessage(payload)
     if sequence == nil then return nil, sequenceErr end
     local capturedAt, capturedErr = parseUnsignedInteger(fields[15], 0, GGM.SYNC_MAX_TIMESTAMP, "sync-captured-at-invalid")
     if capturedAt == nil then return nil, capturedErr end
+    local raceID, raceErr = parseUnsignedInteger(fields[16], 0, GGM.SYNC_MAX_RACE_ID, "sync-target-race-id-invalid")
+    if raceID == nil then return nil, raceErr end
+    local sex, sexErr = parseUnsignedInteger(fields[17], 0, 3, "sync-target-sex-invalid")
+    if sex == nil then return nil, sexErr end
+    local displayID, displayErr = parseUnsignedInteger(fields[18], 0, GGM.SYNC_MAX_DISPLAY_ID, "sync-target-display-id-invalid")
+    if displayID == nil then return nil, displayErr end
+    local noModel = raceID == 0 and sex == 0 and displayID == 0
+    local validModel = raceID >= 1 and sex >= 2 and sex <= 3
+    if not noModel and not validModel then return nil, "sync-target-model-identity-invalid" end
+    if raceID == 0 then raceID, sex = nil, nil end
+    if displayID == 0 then displayID = nil end
     local snapshot = { complete = true, capturedAt = capturedAt, slots = {} }
-    local offset = 16
+    local offset = 19
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local slotKey, slotValue, slotErr = decodeSlot(fields, offset, trackedSlot.key)
         if not slotKey then return nil, slotErr end
@@ -329,5 +366,6 @@ function GGM.DecodeSyncMessage(payload)
     end
     local snapshotValid, snapshotErr = GGM.ValidateCompleteSnapshot(snapshot)
     if not snapshotValid then return nil, snapshotErr end
+    target.raceID, target.sex, target.displayID = raceID, sex, displayID
     return { type = "SNAPSHOT_RESPONSE", target = target, requester = requester, responder = responder, requestID = fields[13], confirmedSequence = sequence, snapshot = snapshot }, nil
 end

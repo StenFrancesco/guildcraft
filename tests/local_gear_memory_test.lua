@@ -33,6 +33,15 @@ local function makeApi(GGM)
         UnitGUID = function()
             return "Player-1234-ABCDEF"
         end,
+        UnitRace = function()
+            return "Human", "Human", 1
+        end,
+        UnitSex = function()
+            return 3
+        end,
+        UnitDisplayID = function()
+            return 12345
+        end,
         GetInventorySlotInfo = function(inventoryName)
             return slotIDs[inventoryName]
         end,
@@ -252,6 +261,63 @@ T.test("cached guild record is marked local only when current player tracking st
 
     T.assertNotNil(tracker)
     T.assertTrue(GGM.IsLocalCharacter(db, identity.key))
+end)
+
+T.test("tracking startup refreshes saved model identity without changing saved gear", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = makeApi(GGM)
+    local identity = assert(GGM.BuildPlayerIdentity(api))
+    identity.raceID, identity.sex, identity.displayID = nil, nil, nil
+    local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 7))
+    local prior = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    local capturedAt = prior.gear.capturedAt
+    local gearSlots = prior.gear.slots
+
+    api.UnitRace = function() return "Orc", "Orc", 2 end
+    api.UnitSex = function() return 2 end
+    api.UnitDisplayID = function() return 54321 end
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5)
+
+    T.assertNil(err)
+    T.assertNotNil(tracker)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(record.identity.raceID, 2)
+    T.assertEqual(record.identity.sex, 2)
+    T.assertEqual(record.identity.displayID, 54321)
+    T.assertEqual(record.gear.capturedAt, capturedAt)
+    T.assertEqual(record.confirmedSequence, 7)
+    T.assertTrue(record.gear.slots == gearSlots)
+    T.assertTrue(record.complete)
+    T.assertTrue(record.gear.complete)
+end)
+
+T.test("tracking startup preserves saved model identity when current observations are unavailable", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = makeApi(GGM)
+    local identity = assert(GGM.BuildPlayerIdentity(api))
+    local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 8))
+    local prior = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    local capturedAt = prior.gear.capturedAt
+    local head = prior.gear.slots.HEAD
+
+    api.UnitRace = function() error("temporarily unavailable") end
+    api.UnitSex = function() error("temporarily unavailable") end
+    api.UnitDisplayID = function() error("temporarily unavailable") end
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5)
+
+    T.assertNil(err)
+    T.assertNotNil(tracker)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(record.identity.raceID, 1)
+    T.assertEqual(record.identity.sex, 3)
+    T.assertEqual(record.identity.displayID, 12345)
+    T.assertEqual(record.gear.capturedAt, capturedAt)
+    T.assertEqual(record.confirmedSequence, 8)
+    T.assertTrue(record.gear.slots.HEAD == head)
 end)
 
 T.test("ownership marking failure is returned from tracking startup", function()
