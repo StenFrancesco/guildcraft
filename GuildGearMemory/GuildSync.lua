@@ -107,14 +107,21 @@ local function cancelPendingSnapshotResponse(sync, requesterKey, targetKey, requ
     if not pending then return end
     if pending.timer and type(pending.timer.Cancel) == "function" then pending.timer:Cancel() end
     if pending.settleTimer and type(pending.settleTimer.Cancel) == "function" then pending.settleTimer:Cancel() end
+    if pending.sendToken then GGM.CancelSyncPayload(sync.transport, pending.sendToken) end
     removePendingSnapshotResponse(sync, key, pending)
 end
 
 local function handleSlotUpdate(sync, sender, message)
     if sender ~= message.identity.key then return nil, "sync-sender-identity-mismatch" end
-    local record, recordErr = GGM.GetCompleteCharacterRecord(sync.db, message.identity.key)
+    local record, recordErr = GGM.GetCharacterRecord(sync.db, message.identity.key)
     if not record then return nil, recordErr end
     if not identitiesCompatible(record.identity, message.identity) then return nil, "identity-mismatch" end
+    if record.refreshNeeded == true then
+        local applied, applyErr = GGM.ApplyReceivedCharacterSlot(sync.db, message.identity.key, message.slotKey, message.slotValue, message.confirmedAt, message.confirmedSequence)
+        if not applied and applyErr == "confirmed-sequence-gap-advanced" then return "sequence-floor-advanced", nil end
+        return nil, applyErr or "record-missing"
+    end
+    if record.complete ~= true then return nil, "record-missing" end
     local applied, applyErr = GGM.ApplyReceivedCharacterSlot(sync.db, message.identity.key, message.slotKey, message.slotValue, message.confirmedAt, message.confirmedSequence)
     if not applied then return nil, applyErr end
     return "slot-applied", nil
@@ -159,12 +166,21 @@ local function handleSnapshotRequest(sync, sender, message)
             return
         end
         local settleOk, settleTimer = pcall(sync.api.C_Timer.NewTimer, GGM.SYNC_SNAPSHOT_RESPONSE_OFFER_SETTLE_SECONDS, function()
-            if not removePendingSnapshotResponse(sync, responseKey, pending) then return end
-            local queued, queueErr = GGM.SendSyncPayload(sync.transport, payload)
+            if sync.pendingSnapshotResponses[responseKey] ~= pending then return end
+            local function responseFinished(sent, sendErr)
+                if not removePendingSnapshotResponse(sync, responseKey, pending) then return end
+                if sent then
+                    local sentAt = getResponseTime(sync)
+                    rememberResponse(sync, message.requester.key, message.target.key, sentAt or now)
+                else
+                    sync.transport.lastSendError = sendErr
+                end
+            end
+            local queued, queueErr, sendToken = GGM.SendSyncPayload(sync.transport, payload, responseFinished)
             if queued then
-                local sentAt = getResponseTime(sync)
-                rememberResponse(sync, message.requester.key, message.target.key, sentAt or now)
+                pending.sendToken = sendToken
             else
+                removePendingSnapshotResponse(sync, responseKey, pending)
                 sync.transport.lastSendError = queueErr
             end
         end)

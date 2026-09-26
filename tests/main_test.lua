@@ -238,6 +238,7 @@ T.test("equipment change routes the changed inventory slot to the active tracker
         CreateFrame = function()
             return frame
         end,
+        C_Timer = { After = function(_, callback) callback() end },
         GuildGearMemoryDB = NIL,
     }, function()
         local GGM = {

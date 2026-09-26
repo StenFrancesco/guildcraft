@@ -40,8 +40,60 @@ T.test("database initialization creates the Phase 1 schema on first run", functi
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 1)
+    T.assertEqual(db.schemaVersion, 2)
     T.assertEqual(type(db.characters), "table")
+    T.assertEqual(type(db.localCharacters), "table")
+    T.assertNil(next(db.localCharacters))
+end)
+
+T.test("database initialization backfills local ownership for supported existing schemas", function()
+    local GGM = loadModules()
+    for _, schemaVersion in ipairs({ 1, 2 }) do
+        local existing = { schemaVersion = schemaVersion, characters = {} }
+
+        local db, err = GGM.InitializeDatabase(existing)
+
+        T.assertNil(err)
+        T.assertTrue(db == existing)
+        T.assertEqual(type(db.localCharacters), "table")
+        T.assertNil(next(db.localCharacters))
+    end
+end)
+
+T.test("database initialization rejects invalid existing local ownership metadata", function()
+    local GGM = loadModules()
+    local existing = { schemaVersion = 2, characters = {}, localCharacters = false }
+
+    local db, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(db)
+    T.assertEqual(err, "database-local-characters-invalid")
+    T.assertFalse(existing.localCharacters == nil)
+end)
+
+T.test("local ownership marks and queries only valid marked keys", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+
+    T.assertFalse(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertTrue(GGM.MarkLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertTrue(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertFalse(GGM.IsLocalCharacter(db, "Bob-Silvermoon"))
+    for _, key in ipairs({ "", 42, false, {} }) do
+        local ok = GGM.MarkLocalCharacter(db, key)
+        T.assertFalse(ok)
+        T.assertNil(db.localCharacters[key])
+    end
+end)
+
+T.test("received complete records do not become locally owned", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+
+    assert(GGM.SaveReceivedCompleteCharacterRecord(db, makeIdentity(), makeSnapshot(GGM), 0))
+
+    T.assertFalse(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
+    T.assertNil(db.localCharacters["Alice-Silvermoon"])
 end)
 
 T.test("database initialization reuses a valid existing SavedVariables table", function()
@@ -272,7 +324,7 @@ T.test("new complete records persist confirmed sequence zero without a schema bu
 
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
-    T.assertEqual(db.schemaVersion, 1)
+    T.assertEqual(db.schemaVersion, 2)
     T.assertEqual(db.characters[identity.key].confirmedSequence, 0)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(GGM.GetConfirmedSequence(record), 0)
@@ -382,11 +434,12 @@ T.test("received slot update rejects a sequence regression without mutation", fu
     T.assertEqual(record.gear.capturedAt, 1700000000)
 end)
 
-T.test("received slot update rejects a non-contiguous forward sequence without mutation", function()
+T.test("sequence gaps preserve values but require a full baseline before becoming complete", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = makeIdentity()
-    assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
+    local originalSnapshot = makeSnapshot(GGM)
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, originalSnapshot, 4))
 
     local ok, err = GGM.ApplyReceivedCharacterSlot(
         db,
@@ -399,10 +452,57 @@ T.test("received slot update rejects a non-contiguous forward sequence without m
 
     T.assertFalse(ok)
     T.assertEqual(err, "confirmed-sequence-gap")
-    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    local record = assert(GGM.GetCharacterRecord(db, identity.key))
+    T.assertFalse(record.complete)
+    T.assertEqual(record.completeness, "incomplete")
+    T.assertTrue(record.refreshNeeded)
+    T.assertEqual(record.incompleteReason, "sequence-gap")
+    T.assertEqual(record.requiredBaselineSequence, 6)
+    T.assertFalse(record.gear.complete)
     T.assertEqual(record.gear.slots.HEAD.itemID, 2001)
     T.assertEqual(record.confirmedSequence, 4)
     T.assertEqual(record.gear.capturedAt, 1700000000)
+
+    local advanced, advancedErr = GGM.ApplyReceivedCharacterSlot(
+        db,
+        identity.key,
+        "HEAD",
+        { inventorySlotID = 1, itemID = 9408, itemLink = "|Hitem:9408|h[Later Update]|h" },
+        1700000902,
+        8
+    )
+    T.assertFalse(advanced)
+    T.assertEqual(advancedErr, "confirmed-sequence-gap-advanced")
+    local stillStale = assert(GGM.GetCharacterRecord(db, identity.key))
+    T.assertEqual(stillStale.requiredBaselineSequence, 8)
+    T.assertEqual(stillStale.confirmedSequence, 4)
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        T.assertTrue(GGM.AreGearSlotValuesEqual(stillStale.gear.slots[trackedSlot.key], originalSnapshot.slots[trackedSlot.key]))
+    end
+
+    local baseline = makeSnapshot(GGM)
+    baseline.capturedAt = 1700001000
+    for _, belowRequiredSequence in ipairs({ 6, 7 }) do
+        baseline.slots.HEAD.itemID = 3000 + belowRequiredSequence
+        baseline.slots.HEAD.itemLink = "|Hitem:" .. (3000 + belowRequiredSequence) .. "|h[Too Old]|h"
+        local repairedEarly, earlyErr = GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, belowRequiredSequence)
+        T.assertFalse(repairedEarly)
+        T.assertEqual(earlyErr, "confirmed-sequence-before-required-baseline")
+        local stillStale = assert(GGM.GetCharacterRecord(db, identity.key))
+        T.assertTrue(stillStale.refreshNeeded)
+        T.assertEqual(stillStale.requiredBaselineSequence, 8)
+        T.assertEqual(stillStale.confirmedSequence, 4)
+        T.assertEqual(stillStale.gear.slots.HEAD.itemID, 2001)
+    end
+    baseline.slots.HEAD.itemID = 3008
+    baseline.slots.HEAD.itemLink = "|Hitem:3008|h[Repair At Required Sequence]|h"
+    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, 8))
+    local repaired = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertTrue(repaired.complete)
+    T.assertTrue(repaired.gear.complete)
+    T.assertNil(repaired.refreshNeeded)
+    T.assertNil(repaired.incompleteReason)
+    T.assertNil(repaired.requiredBaselineSequence)
 end)
 
 T.test("received slot update rejects a mismatched inventory slot id without mutation", function()
@@ -485,4 +585,76 @@ T.test("received complete snapshot rejects invalid identity before touching the 
     T.assertFalse(saved)
     T.assertEqual(err, "identity-invalid")
     T.assertNil(next(db.characters))
+end)
+
+T.test("schema one migration preserves known slots and leaves new slots unknown", function()
+    local GGM = loadModules()
+    local identity = makeIdentity()
+    local slots = {}
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        if slot.key ~= "SHIRT" and slot.key ~= "TABARD" and slot.key ~= "RANGED" then
+            slots[slot.key] = { inventorySlotID = index, itemID = 2000 + index, itemLink = "|Hitem:" .. tostring(2000 + index) .. "|h[Test]|h" }
+        end
+    end
+    local existing = { schemaVersion = 1, characters = { [identity.key] = {
+        complete = true, identity = identity, confirmedSequence = 7,
+        gear = { complete = true, capturedAt = 1700000123, slots = slots },
+    } } }
+    local db, err = GGM.InitializeDatabase(existing)
+    T.assertNil(err)
+    T.assertEqual(db.schemaVersion, 2)
+    local record = assert(GGM.GetCharacterRecord(db, identity.key))
+    T.assertFalse(record.complete)
+    T.assertEqual(record.completeness, "incomplete")
+    T.assertFalse(record.gear.complete)
+    T.assertEqual(record.gear.capturedAt, 1700000123)
+    T.assertEqual(record.confirmedSequence, 7)
+    T.assertEqual(record.gear.slots.HEAD.itemID, 2001)
+    T.assertNil(record.gear.slots.SHIRT)
+    T.assertNil(record.gear.slots.TABARD)
+    T.assertNil(record.gear.slots.RANGED)
+    T.assertNil(GGM.GetCompleteCharacterRecord(db, identity.key))
+end)
+
+T.test("incomplete records require all 16 legacy slots and allow only new slots to be unknown", function()
+    local GGM = loadModules()
+    local identity = makeIdentity()
+    local slots = {}
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        if slot.key ~= "SHIRT" and slot.key ~= "TABARD" and slot.key ~= "RANGED" then
+            slots[slot.key] = { inventorySlotID = index, itemID = 3000 + index, itemLink = "|Hitem:" .. tostring(3000 + index) .. "|h[Legacy]|h" }
+        end
+    end
+    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {
+        [identity.key] = { complete = false, completeness = "incomplete", identity = identity, gear = { complete = false, capturedAt = 1700000123, slots = slots } },
+    } }
+    local record, err = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(err)
+    T.assertNotNil(record)
+    T.assertNil(record.gear.slots.SHIRT)
+    T.assertNil(record.gear.slots.TABARD)
+    T.assertNil(record.gear.slots.RANGED)
+
+    local legacySlots = record.gear.slots
+    record.gear.slots = {}
+    local emptySubset, emptySubsetErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(emptySubset)
+    T.assertEqual(emptySubsetErr, "snapshot-slot-missing:HEAD")
+    record.gear.slots = legacySlots
+
+    record.gear.slots.HEAD = nil
+    local missing, missingErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(missing)
+    T.assertEqual(missingErr, "snapshot-slot-missing:HEAD")
+
+    record.gear.slots.HEAD = { inventorySlotID = 1, itemID = 3001, itemLink = "|Hitem:3001|h[Legacy]|h" }
+    record.gear.slots.NECK.itemID, record.gear.slots.NECK.itemLink = 3002, false
+    local invalid, invalidErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(invalid)
+    T.assertEqual(invalidErr, "snapshot-slot-value-invalid:NECK")
+    record.gear.slots.NECK.itemID, record.gear.slots.NECK.itemLink = 3002, "|Hitem:3002|h[Legacy]|h"
+    record.gear.slots.UNTRACKED = { inventorySlotID = 99, itemID = 3000, itemLink = "|Hitem:3000|h[Unknown]|h" }
+    local unknown, unknownErr = GGM.GetCharacterRecord(db, identity.key)
+    T.assertNil(unknown)
+    T.assertEqual(unknownErr, "tracked-slot-unknown:UNTRACKED")
 end)

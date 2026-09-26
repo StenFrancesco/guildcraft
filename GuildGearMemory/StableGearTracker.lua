@@ -81,29 +81,35 @@ function GGM.CreateStableGearTracker(api, db, characterKey, stabilityDelaySecond
 
     local runtimeSlotIDByKey = {}
     local seenRuntimeSlotIDs = {}
+    local unavailableOptionalSlots = {}
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local runtimeSlotID = api.GetInventorySlotInfo(trackedSlot.inventoryName)
         if type(runtimeSlotID) ~= "number" then
-            return nil, "inventory-slot-unavailable:" .. trackedSlot.key
-        end
+            if GGM.OPTIONAL_TRACKED_SLOTS[trackedSlot.key] == true then
+                unavailableOptionalSlots[trackedSlot.key] = true
+            else
+                return nil, "inventory-slot-unavailable:" .. trackedSlot.key
+            end
+        else
+            local sharedSlot = record.gear.slots[trackedSlot.key]
+            if sharedSlot and sharedSlot.unavailable ~= true
+                and sharedSlot.inventorySlotID ~= runtimeSlotID then
+                return nil, "snapshot-slot-id-mismatch:" .. trackedSlot.key
+            end
 
-        local sharedSlot = record.gear.slots[trackedSlot.key]
-        if sharedSlot.inventorySlotID ~= runtimeSlotID then
-            return nil, "snapshot-slot-id-mismatch:" .. trackedSlot.key
-        end
+            if seenRuntimeSlotIDs[runtimeSlotID] then
+                return nil, "inventory-slot-id-duplicate:" .. tostring(runtimeSlotID)
+            end
 
-        if seenRuntimeSlotIDs[runtimeSlotID] then
-            return nil, "inventory-slot-id-duplicate:" .. tostring(runtimeSlotID)
+            seenRuntimeSlotIDs[runtimeSlotID] = true
+            runtimeSlotIDByKey[trackedSlot.key] = runtimeSlotID
         end
-
-        seenRuntimeSlotIDs[runtimeSlotID] = true
-        runtimeSlotIDByKey[trackedSlot.key] = runtimeSlotID
     end
 
     local slotKeyByInventorySlotID = {}
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local runtimeSlotID = runtimeSlotIDByKey[trackedSlot.key]
-        slotKeyByInventorySlotID[runtimeSlotID] = trackedSlot.key
+        if runtimeSlotID then slotKeyByInventorySlotID[runtimeSlotID] = trackedSlot.key end
     end
 
     return {
@@ -113,6 +119,7 @@ function GGM.CreateStableGearTracker(api, db, characterKey, stabilityDelaySecond
         stabilityDelaySeconds = delay,
         pendingBySlot = {},
         slotKeyByInventorySlotID = slotKeyByInventorySlotID,
+        unavailableOptionalSlots = unavailableOptionalSlots,
         nextPendingToken = 0,
         onConfirmed = onConfirmed,
         lastError = nil,
@@ -121,6 +128,10 @@ function GGM.CreateStableGearTracker(api, db, characterKey, stabilityDelaySecond
 end
 
 function GGM.ReconcileGearSlot(tracker, slotKey)
+    if tracker.unavailableOptionalSlots[slotKey] then
+        return "unavailable", nil
+    end
+
     local record, recordErr = GGM.GetCompleteCharacterRecord(tracker.db, tracker.characterKey)
     if not record then
         tracker.lastError = recordErr
@@ -131,6 +142,13 @@ function GGM.ReconcileGearSlot(tracker, slotKey)
     if not currentSlot then
         tracker.lastError = currentErr
         return nil, currentErr
+    end
+
+    if currentSlot.unavailable == true then
+        tracker.unavailableOptionalSlots[slotKey] = true
+        clearPending(tracker, slotKey)
+        tracker.lastError = nil
+        return "unavailable", nil
     end
 
     local sharedSlot = record.gear.slots[slotKey]

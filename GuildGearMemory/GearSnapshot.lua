@@ -15,6 +15,16 @@ function GGM.ValidateGearSlotValue(slotKey, slotValue)
         return false, "snapshot-slot-missing:" .. slotKey
     end
 
+    if slotValue.unavailable == true then
+        if GGM.OPTIONAL_TRACKED_SLOTS[slotKey] == true
+            and slotValue.inventorySlotID == nil
+            and slotValue.itemID == nil
+            and slotValue.itemLink == nil then
+            return true, nil
+        end
+        return false, "snapshot-slot-unavailable-invalid:" .. slotKey
+    end
+
     if type(slotValue.inventorySlotID) ~= "number" then
         return false, "snapshot-slot-id-invalid:" .. slotKey
     end
@@ -35,6 +45,9 @@ function GGM.ValidateGearSlotValue(slotKey, slotValue)
 end
 
 function GGM.CopyGearSlotValue(slotValue)
+    if slotValue.unavailable == true then
+        return { unavailable = true }
+    end
     return {
         inventorySlotID = slotValue.inventorySlotID,
         itemID = slotValue.itemID,
@@ -45,6 +58,10 @@ end
 function GGM.AreGearSlotValuesEqual(left, right)
     if type(left) ~= "table" or type(right) ~= "table" then
         return false
+    end
+
+    if left.unavailable == true or right.unavailable == true then
+        return left.unavailable == true and right.unavailable == true
     end
 
     return left.inventorySlotID == right.inventorySlotID
@@ -60,6 +77,9 @@ function GGM.CapturePlayerGearSlot(api, slotKey)
 
     local inventorySlotID = api.GetInventorySlotInfo(trackedSlot.inventoryName)
     if type(inventorySlotID) ~= "number" then
+        if GGM.OPTIONAL_TRACKED_SLOTS[slotKey] == true then
+            return { unavailable = true }, nil
+        end
         return nil, "inventory-slot-unavailable:" .. slotKey
     end
 
@@ -105,10 +125,23 @@ function GGM.ValidateCompleteSnapshot(snapshot)
         return false, "snapshot-slots-invalid"
     end
 
+    local knownKeys = {}
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do knownKeys[slot.key] = true end
+    for slotKey in pairs(snapshot.slots) do
+        if not knownKeys[slotKey] then
+            return false, "snapshot-slot-unknown:" .. tostring(slotKey)
+        end
+    end
+
     for _, slot in ipairs(GGM.TRACKED_SLOTS) do
-        local valid, err = GGM.ValidateGearSlotValue(slot.key, snapshot.slots[slot.key])
-        if not valid then
-            return false, err
+        local slotValue = snapshot.slots[slot.key]
+        if slotValue == nil and GGM.OPTIONAL_TRACKED_SLOTS[slot.key] == true then
+            -- Missing optional slots are unavailable, not empty equipment.
+        else
+            local valid, err = GGM.ValidateGearSlotValue(slot.key, slotValue)
+            if not valid then
+                return false, err
+            end
         end
     end
 

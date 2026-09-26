@@ -80,7 +80,9 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
     local GGM = loadModules()
     local requester = makeIdentity("Bob", "Silvermoon", "Player-1234-BBBB")
     local target = makeIdentity("Alice", "Silvermoon", "Player-1234-AAAA")
-    local payload = assert(GGM.EncodeSyncSnapshotResponse(target, requester, makeIdentity("Carol", "Silvermoon", "Player-1234-CCCC"), makeSnapshot(GGM), 12, "000001"))
+    local snapshot = makeSnapshot(GGM)
+    snapshot.slots.RANGED = { unavailable = true }
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(target, requester, makeIdentity("Carol", "Silvermoon", "Player-1234-CCCC"), snapshot, 12, "000001"))
     local message, err = GGM.DecodeSyncMessage(payload)
     T.assertNil(err)
     T.assertEqual(message.type, "SNAPSHOT_RESPONSE")
@@ -93,6 +95,13 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
     T.assertEqual(message.snapshot.slots.HEAD.itemID, 5001)
     T.assertEqual(message.snapshot.slots.OFF_HAND.itemID, false)
     T.assertEqual(message.snapshot.slots.OFF_HAND.itemLink, false)
+    for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        if trackedSlot.key == "RANGED" then
+            T.assertTrue(message.snapshot.slots.RANGED.unavailable)
+        else
+            T.assertEqual(message.snapshot.slots[trackedSlot.key].inventorySlotID, index)
+        end
+    end
 end)
 
 T.test("protocol rejects identity keys that do not match name and realm", function()
@@ -118,14 +127,14 @@ T.test("protocol rejects unsupported versions and unknown message types", functi
     local versionMessage, versionErr = GGM.DecodeSyncMessage("9U")
     T.assertNil(versionMessage)
     T.assertEqual(versionErr, "sync-protocol-version-unsupported")
-    local typeMessage, typeErr = GGM.DecodeSyncMessage("1X")
+    local typeMessage, typeErr = GGM.DecodeSyncMessage(tostring(GGM.SYNC_PROTOCOL_VERSION) .. "X")
     T.assertNil(typeMessage)
     T.assertEqual(typeErr, "sync-message-type-unknown")
 end)
 
 T.test("protocol rejects malformed length prefixes and trailing data", function()
     local GGM = loadModules()
-    local malformed, malformedErr = GGM.DecodeSyncMessage("1Qx:abc")
+    local malformed, malformedErr = GGM.DecodeSyncMessage(tostring(GGM.SYNC_PROTOCOL_VERSION) .. "Qx:abc")
     T.assertNil(malformed)
     T.assertEqual(malformedErr, "sync-field-length-invalid")
     local valid = assert(GGM.EncodeSyncSnapshotRequest(makeIdentity("Bob", "Silvermoon", "Player-1234-BBBB"), makeIdentity("Alice", "Silvermoon", nil), "000001"))
@@ -139,4 +148,18 @@ T.test("protocol rejects logical payloads above the configured bound", function(
     local message, err = GGM.DecodeSyncMessage(string.rep("x", GGM.SYNC_MAX_LOGICAL_BYTES + 1))
     T.assertNil(message)
     T.assertEqual(err, "sync-payload-too-large")
+end)
+
+T.test("protocol version four rejects version two snapshot payloads", function()
+    local GGM = loadModules()
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 4)
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(
+        makeIdentity("Alice", "Silvermoon", "A"),
+        makeIdentity("Bob", "Silvermoon", "B"),
+        makeIdentity("Carol", "Silvermoon", "C"),
+        makeSnapshot(GGM), 1, "000001"
+    ))
+    local message, err = GGM.DecodeSyncMessage("2" .. payload:sub(2))
+    T.assertNil(message)
+    T.assertEqual(err, "sync-protocol-version-unsupported")
 end)

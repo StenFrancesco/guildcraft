@@ -55,6 +55,7 @@ local function validateSyncSlotValue(slotKey, slotValue)
     if not keyValid then return false, keyErr end
     local baseValid, baseErr = GGM.ValidateGearSlotValue(slotKey, slotValue)
     if not baseValid then return false, baseErr end
+    if slotValue.unavailable == true then return true, nil end
     if not isIntegerInRange(slotValue.inventorySlotID, 1, 255) then return false, "sync-inventory-slot-id-invalid" end
     if slotValue.itemID == false and slotValue.itemLink == false then return true, nil end
     if not isIntegerInRange(slotValue.itemID, 1, 2147483647) then return false, "sync-item-id-invalid" end
@@ -85,6 +86,12 @@ end
 
 local function encodeSlotFields(fields, slotKey, slotValue)
     table.insert(fields, slotKey)
+    if slotValue.unavailable == true then
+        table.insert(fields, "0")
+        table.insert(fields, "0")
+        table.insert(fields, "")
+        return
+    end
     table.insert(fields, tostring(slotValue.inventorySlotID))
     if slotValue.itemID == false then
         table.insert(fields, "0")
@@ -177,6 +184,9 @@ function GGM.EncodeSyncSnapshotResponse(target, requester, responder, snapshot, 
     table.insert(fields, tostring(snapshot.capturedAt))
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local slotValue = snapshot.slots[trackedSlot.key]
+        if slotValue == nil and GGM.OPTIONAL_TRACKED_SLOTS[trackedSlot.key] == true then
+            slotValue = { unavailable = true }
+        end
         local slotValid, slotErr = validateSyncSlotValue(trackedSlot.key, slotValue)
         if not slotValid then return nil, slotErr end
         encodeSlotFields(fields, trackedSlot.key, slotValue)
@@ -225,11 +235,17 @@ end
 local function decodeSlot(fields, offset, expectedSlotKey)
     local slotKey = fields[offset]
     if expectedSlotKey and slotKey ~= expectedSlotKey then return nil, nil, "sync-snapshot-slot-order-mismatch:" .. expectedSlotKey end
-    local inventorySlotID, inventoryErr = parseUnsignedInteger(fields[offset + 1], 1, 255, "sync-inventory-slot-id-invalid")
+    local inventorySlotID, inventoryErr = parseUnsignedInteger(fields[offset + 1], 0, 255, "sync-inventory-slot-id-invalid")
     if not inventorySlotID then return nil, nil, inventoryErr end
     local itemID, itemErr = parseUnsignedInteger(fields[offset + 2], 0, 2147483647, "sync-item-id-invalid")
     if itemID == nil then return nil, nil, itemErr end
     local itemLink = fields[offset + 3]
+    if inventorySlotID == 0 then
+        if GGM.OPTIONAL_TRACKED_SLOTS[slotKey] ~= true or itemID ~= 0 or itemLink ~= "" then
+            return nil, nil, "sync-inventory-slot-unavailable-invalid"
+        end
+        return slotKey, { unavailable = true }, nil
+    end
     local slotValue
     if itemID == 0 then
         if itemLink ~= "" then return nil, nil, "sync-empty-slot-link-invalid" end

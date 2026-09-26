@@ -86,7 +86,8 @@ T.test("incremental updates require a complete compatible baseline", function()
     local alice = identity("Alice", "Silvermoon", "A" )
     local bob = identity("Bob", "Silvermoon", "B")
     local db = assert(GGM.InitializeDatabase(nil))
-    local sync = assert(GGM.CreateGuildSync(clientApi(bob), db))
+    local api, sends = clientApi(bob)
+    local sync = assert(GGM.CreateGuildSync(api, db))
     local changed = { inventorySlotID = 1, itemID = 9901, itemLink = "|Hitem:9901|h[Remote]|h" }
     local payload = assert(GGM.EncodeSyncSlotUpdate(alice, 5, "HEAD", changed, 1700002300))
     local state, err = GGM.HandleGuildSyncPayload(sync, alice.key, payload)
@@ -96,6 +97,48 @@ T.test("incremental updates require a complete compatible baseline", function()
     T.assertEqual(state, "slot-applied"); T.assertNil(err)
     T.assertEqual(db.characters[alice.key].gear.slots.HEAD.itemID, 9901)
     T.assertEqual(db.characters[alice.key].confirmedSequence, 5)
+
+    assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 9900), 4))
+    local preservedSlots = {}
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local slotValue = db.characters[alice.key].gear.slots[trackedSlot.key]
+        preservedSlots[trackedSlot.key] = { inventorySlotID = slotValue.inventorySlotID, itemID = slotValue.itemID, itemLink = slotValue.itemLink }
+    end
+    local gapPayload = assert(GGM.EncodeSyncSlotUpdate(alice, 6, "HEAD",
+        { inventorySlotID = 1, itemID = 9903, itemLink = "|Hitem:9903|h[Gap]|h" }, 1700002302))
+    state, err = GGM.HandleGuildSyncPayload(sync, alice.key, gapPayload)
+    T.assertNil(state)
+    T.assertEqual(err, "confirmed-sequence-gap")
+    local stale = assert(GGM.GetCharacterRecord(db, alice.key))
+    T.assertFalse(stale.complete)
+    T.assertTrue(stale.refreshNeeded)
+    T.assertEqual(stale.gear.slots.HEAD.itemID, 9901)
+
+    local laterPayload = assert(GGM.EncodeSyncSlotUpdate(alice, 8, "HEAD",
+        { inventorySlotID = 1, itemID = 9908, itemLink = "|Hitem:9908|h[Later]|h" }, 1700002304))
+    state, err = GGM.HandleGuildSyncPayload(sync, alice.key, laterPayload)
+    T.assertEqual(state, "sequence-floor-advanced")
+    T.assertNil(err)
+    stale = assert(GGM.GetCharacterRecord(db, alice.key))
+    T.assertEqual(stale.requiredBaselineSequence, 8)
+    T.assertEqual(stale.confirmedSequence, 4)
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        T.assertTrue(GGM.AreGearSlotValuesEqual(stale.gear.slots[trackedSlot.key], preservedSlots[trackedSlot.key]))
+    end
+    T.assertEqual(#sends, 0)
+
+    for _, belowFloor in ipairs({ 6, 7 }) do
+        local repairedEarly, earlyErr = GGM.SaveReceivedCompleteCharacterRecord(db, alice, snapshot(GGM, 8000 + belowFloor), belowFloor)
+        T.assertFalse(repairedEarly)
+        T.assertEqual(earlyErr, "confirmed-sequence-before-required-baseline")
+        T.assertTrue(assert(GGM.GetCharacterRecord(db, alice.key)).refreshNeeded)
+        T.assertEqual(#sends, 0)
+    end
+    assert(GGM.SaveReceivedCompleteCharacterRecord(db, alice, snapshot(GGM, 8008), 8))
+    local repaired = assert(GGM.GetCompleteCharacterRecord(db, alice.key))
+    T.assertTrue(repaired.complete)
+    T.assertNil(repaired.refreshNeeded)
+    T.assertEqual(#sends, 0)
 end)
 
 T.test("incremental sender identity mismatch fails closed", function()
@@ -146,10 +189,11 @@ T.test("a snapshot request produces at most one cached response", function()
             GGM.HandleGuildSyncAddonMessage(carolSync, daveSends[deliveredDave].prefix, daveSends[deliveredDave].message, daveSends[deliveredDave].channel, dave.key)
         end
     end
-    local expectedWinnerSends = carolTimers[1].delay < daveTimers[1].delay and carolSends or daveSends
-    local expectedLoserSends = carolTimers[1].delay < daveTimers[1].delay and daveSends or carolSends
-    T.assertTrue(#expectedWinnerSends > 0)
-    T.assertEqual(#expectedLoserSends, 0)
+    -- Equal-sequence claims elect the lexicographically first responder even
+    -- when its deterministic response delay is later. The earlier client may
+    -- already have sent one bounded claim before it observes the better claim.
+    T.assertTrue(#carolSends > 1)
+    T.assertEqual(#daveSends, 1)
 end)
 
 T.test("equal sequence claims elect the lexicographically first responder", function()
@@ -216,8 +260,38 @@ T.test("a stale response does not cancel a fresher responder timer", function()
     T.assertEqual(carolSync.pendingSnapshotResponseCount, 1)
     T.assertFalse(carolTimers[1].cancelled)
     carolTimers[1]:Fire()
+    T.assertEqual(carolSync.pendingSnapshotResponseCount, 1)
+    local timerIndex = 2
+    while timerIndex <= #carolTimers do carolTimers[timerIndex]:Fire(); timerIndex = timerIndex + 1 end
     T.assertEqual(carolSync.pendingSnapshotResponseCount, 0)
     T.assertTrue(#carolSends > 0)
+end)
+
+T.test("a better claim cancels a snapshot still queued behind outbound frames", function()
+    local GGM = loadModules()
+    local alice, bob, carol, dave = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B"), identity("Carol", "Silvermoon", "C"), identity("Dave", "Silvermoon", "D")
+    local db = assert(GGM.InitializeDatabase(nil)); assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 7500), 3))
+    local api, sends, _, _, timers = clientApi(carol); local sync = assert(GGM.CreateGuildSync(api, db))
+    assert(GGM.SendSyncPayload(sync.transport, string.rep("x", 700)))
+    local request = assert(GGM.EncodeSyncSnapshotRequest(bob, alice, "000001"))
+    T.assertEqual(GGM.HandleGuildSyncPayload(sync, bob.key, request), "snapshot-response-queued")
+
+    timers[2]:Fire() -- queues the claim behind the existing multi-frame payload
+    timers[3]:Fire() -- queues the complete snapshot behind that claim
+    local fullPayload = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 7500), 3, "000001"))
+    local fullFrameCount = math.ceil(#fullPayload / GGM.SYNC_FRAME_CHUNK_BYTES)
+    T.assertEqual(sync.pendingSnapshotResponseCount, 1)
+    T.assertEqual(#sync.transport.outboundFrames, 4 + fullFrameCount)
+
+    local betterClaim = assert(GGM.EncodeSyncSnapshotResponseClaim(alice, bob, dave, 4, "000001"))
+    T.assertEqual(GGM.HandleGuildSyncPayload(sync, dave.key, betterClaim), "snapshot-response-claim-accepted")
+    T.assertEqual(sync.pendingSnapshotResponseCount, 0)
+    T.assertEqual(#sync.transport.outboundFrames, 4)
+    T.assertEqual(#sends, 1)
+    local timerIndex = 1
+    while timerIndex <= #timers do timers[timerIndex]:Fire(); timerIndex = timerIndex + 1 end
+    T.assertEqual(#sync.transport.outboundFrames, 0)
+    T.assertEqual(#sends, 5) -- four blocker frames and one claim; no snapshot frames
 end)
 
 T.test("pending delayed snapshot responses are capped", function()
@@ -238,7 +312,7 @@ T.test("pending delayed snapshot responses are capped", function()
     T.assertEqual(#timers, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES)
     T.assertEqual(#sends, 0)
     timers[1]:Fire()
-    T.assertEqual(sync.pendingSnapshotResponseCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES - 1)
+    T.assertEqual(sync.pendingSnapshotResponseCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES)
 end)
 
 T.test("repeated snapshot requests for one requester and target coalesce", function()
@@ -407,7 +481,7 @@ T.test("pending snapshot requests are bounded and expire", function()
     T.assertFalse(ok); T.assertEqual(err, "sync-pending-request-limit")
     setTime(200 + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS)
     T.assertTrue(GGM.RequestCompleteSnapshot(sync, alice))
-    T.assertEqual(sync.pendingSnapshotRequestCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_REQUESTS)
+    T.assertEqual(sync.pendingSnapshotRequestCount, 1)
     T.assertTrue(#sends > 0)
 end)
 
@@ -419,4 +493,27 @@ T.test("confirmed publication uses the persisted sequence and slot", function()
     local api, sends, drain = clientApi(alice); local sync = assert(GGM.CreateGuildSync(api, db))
     local ok, err = GGM.PublishConfirmedSlot(sync, alice.key, "HEAD", changed, 1700003300, 5)
     T.assertTrue(ok); T.assertNil(err); drain(); T.assertTrue(#sends > 0)
+end)
+
+T.test("migrated incomplete records do not answer full snapshot requests", function()
+    local GGM = loadModules()
+    local alice, bob = identity("Alice", "Silvermoon", "Player-1234-AAAA"), identity("Bob", "Silvermoon", "Player-1234-BBBB")
+    local db = assert(GGM.InitializeDatabase(nil))
+    local migratedSlots = {}
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        if slot.key ~= "SHIRT" and slot.key ~= "TABARD" and slot.key ~= "RANGED" then
+            migratedSlots[slot.key] = { inventorySlotID = index, itemID = 7000 + index, itemLink = "|Hitem:" .. tostring(7000 + index) .. "|h[Legacy]|h" }
+        end
+    end
+    db.characters[alice.key] = {
+        complete = false, completeness = "incomplete", identity = alice, confirmedSequence = 3,
+        gear = { complete = false, capturedAt = 1700002000, slots = migratedSlots },
+    }
+    local api, _, _, _, timers = clientApi(alice)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local result, err = GGM.HandleGuildSyncPayload(sync, bob.key,
+        assert(GGM.EncodeSyncSnapshotRequest(bob, alice, "000001")))
+    T.assertNil(err)
+    T.assertEqual(result, "ignored")
+    T.assertEqual(#timers, 0)
 end)

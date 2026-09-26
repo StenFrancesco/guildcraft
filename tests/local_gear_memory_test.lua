@@ -83,20 +83,17 @@ T.test("capture and store writes the local player's complete record", function()
     T.assertEqual(record.gear.capturedAt, 1700000100)
 end)
 
-T.test("failed recapture preserves the previous complete record", function()
+T.test("recapture keeps gear complete when the optional ranged slot is unavailable", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local api = makeApi(GGM)
     local first = assert(GGM.CaptureAndStoreLocalPlayer(api, db))
     T.assertEqual(first.gear.capturedAt, 1700000100)
 
-    local headSlotID = api.GetInventorySlotInfo("HeadSlot")
-    local originalLink = api.GetInventoryItemLink
-    api.GetInventoryItemLink = function(unit, slotID)
-        if slotID == headSlotID then
-            return nil
-        end
-        return originalLink(unit, slotID)
+    local originalSlotInfo = api.GetInventorySlotInfo
+    api.GetInventorySlotInfo = function(inventoryName)
+        if inventoryName == "RangedSlot" then return nil end
+        return originalSlotInfo(inventoryName)
     end
     api.GetServerTime = function()
         return 1700000200
@@ -104,11 +101,14 @@ T.test("failed recapture preserves the previous complete record", function()
 
     local record, err = GGM.CaptureAndStoreLocalPlayer(api, db)
 
-    T.assertNil(record)
-    T.assertEqual(err, "item-link-unavailable:HEAD")
+    T.assertNil(err)
+    T.assertNotNil(record)
+    T.assertTrue(record.gear.slots.RANGED.unavailable)
+    T.assertEqual(record.gear.capturedAt, 1700000200)
 
     local preserved = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(preserved.gear.capturedAt, 1700000100)
+    T.assertEqual(preserved.gear.capturedAt, 1700000200)
+    T.assertTrue(preserved.gear.slots.RANGED.unavailable)
 end)
 
 T.test("get local record returns missing when no complete snapshot exists", function()
@@ -182,4 +182,86 @@ T.test("local tracking threads the confirmation callback into the stable tracker
     T.assertNil(err)
     T.assertNotNil(tracker)
     T.assertTrue(tracker.onConfirmed == callback)
+end)
+
+T.test("starting tracking marks the current character local after tracker creation", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = makeApi(GGM)
+
+    local tracker = assert(GGM.StartLocalPlayerGearTracking(api, db, 5))
+
+    T.assertNotNil(tracker)
+    T.assertTrue(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
+end)
+
+T.test("tracking startup failures do not mark a character local", function()
+    local scenarios = {
+        {
+            name = "identity failure",
+            configure = function(GGM, api)
+                api.UnitFullName = function() return nil, "Silvermoon" end
+            end,
+        },
+        {
+            name = "initial capture failure",
+            configure = function(_, api)
+                api.GetInventorySlotInfo = function() return nil end
+            end,
+        },
+        {
+            name = "record validation failure",
+            configure = function(GGM, api, db)
+                assert(GGM.CaptureAndStoreLocalPlayer(api, db))
+                GGM.GetCompleteCharacterRecord = function() return nil, "record-invalid" end
+            end,
+        },
+        {
+            name = "tracker creation failure",
+            configure = function(GGM, api, db)
+                assert(GGM.CaptureAndStoreLocalPlayer(api, db))
+                GGM.CreateStableGearTracker = function() return nil, "tracker-failed" end
+            end,
+        },
+    }
+
+    for _, scenario in ipairs(scenarios) do
+        local GGM = loadModules()
+        local db = assert(GGM.InitializeDatabase(nil))
+        local api = makeApi(GGM)
+        scenario.configure(GGM, api, db)
+
+        local tracker = GGM.StartLocalPlayerGearTracking(api, db, 5)
+
+        T.assertNil(tracker, scenario.name)
+        T.assertFalse(GGM.IsLocalCharacter(db, "Alice-Silvermoon"), scenario.name)
+    end
+end)
+
+T.test("cached guild record is marked local only when current player tracking starts", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = makeApi(GGM)
+    local identity = assert(GGM.BuildPlayerIdentity(api))
+    local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot))
+
+    T.assertFalse(GGM.IsLocalCharacter(db, identity.key))
+
+    local tracker = assert(GGM.StartLocalPlayerGearTracking(api, db, 5))
+
+    T.assertNotNil(tracker)
+    T.assertTrue(GGM.IsLocalCharacter(db, identity.key))
+end)
+
+T.test("ownership marking failure is returned from tracking startup", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = makeApi(GGM)
+    GGM.MarkLocalCharacter = function() return nil, "ownership-write-failed" end
+
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5)
+
+    T.assertNil(tracker)
+    T.assertEqual(err, "ownership-write-failed")
 end)

@@ -168,3 +168,19 @@ T.test("gear slot comparison notices an item-link change for the same item id", 
     T.assertFalse(GGM.AreGearSlotValuesEqual(left, right))
     T.assertTrue(GGM.AreGearSlotValuesEqual(left, left))
 end)
+
+T.test("capture preserves the snapshot when the optional ranged slot is unavailable", function()
+    local GGM = loadModules()
+    local api = makeCompleteApi(GGM)
+    api.GetInventorySlotInfo = function(inventoryName)
+        if inventoryName == "RangedSlot" then return nil end
+        for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+            if slot.inventoryName == inventoryName then return index end
+        end
+    end
+    local snapshot, err = GGM.CapturePlayerGearSnapshot(api)
+    T.assertNil(err)
+    T.assertNotNil(snapshot)
+    T.assertTrue(snapshot.slots.RANGED.unavailable)
+    T.assertTrue(type(snapshot.slots.HEAD.itemID) == "number")
+end)

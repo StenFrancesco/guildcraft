@@ -57,6 +57,19 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
         return nil, trackerErr
     end
 
+    local marked, markErr = GGM.MarkLocalCharacter(db, identity.key)
+    if not marked then
+        return nil, markErr
+    end
+
+    for slotKey in pairs(tracker.unavailableOptionalSlots) do
+        local currentRecord, currentRecordErr = GGM.GetCompleteCharacterRecord(db, identity.key)
+        if not currentRecord then
+            return nil, currentRecordErr
+        end
+        currentRecord.gear.slots[slotKey] = { unavailable = true }
+    end
+
     local _, reconcileErr = GGM.ReconcileAllGearSlots(tracker)
     return tracker, reconcileErr
 end
