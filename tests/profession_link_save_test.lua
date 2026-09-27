@@ -3,6 +3,7 @@ local T = require("tests.testlib")
 local function loadModule()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionLinkSave.lua", GGM)
     return GGM
 end
@@ -94,7 +95,7 @@ T.test("save click captures and persists the active linked profession", function
     local savedSnapshot
     GGM.CaptureLinkedProfessionSnapshot = function()
         return {
-            professionID = 164, professionName = "Blacksmithing", skillLevel = 75, maxSkillLevel = 100,
+            professionID = 164, professionName = "Blacksmithing",
             capturedAt = 1700004000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
             status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
         }, nil
@@ -161,6 +162,144 @@ T.test("save button is shown only when active guild link profession is linked an
     T.assertFalse(visible)
 end)
 
+T.test("own profession context uses the player identity and shows when ready", function()
+    local GGM = loadModule()
+    local visible = false
+    local controller = GGM.CreateProfessionLinkSaveController({
+        UnitFullName = function() return "Longbusbiggus", "Silvermoon" end,
+        UnitGUID = function() return "Player-1-ABC" end,
+        GetRealmName = function() return "Silvermoon" end,
+        C_TradeSkillUI = {
+            IsTradeSkillLinked = function() return false end,
+            IsTradeSkillReady = function() return true end,
+        },
+    }, {})
+    controller.button = {
+        Show = function() visible = true end,
+        Hide = function() visible = false end,
+    }
+
+    T.assertEqual(GGM.RefreshProfessionSaveButton(controller), "shown")
+    T.assertTrue(visible)
+    T.assertEqual(controller.activeIdentity.key, "Longbusbiggus-Silvermoon")
+    T.assertEqual(controller.activeSource, "player")
+end)
+
+T.test("save click stores the open player's profession under the player identity", function()
+    local GGM = loadModule()
+    local capturedSource
+    local savedIdentity
+    local savedSnapshot
+    local controller = GGM.CreateProfessionLinkSaveController({
+        UnitFullName = function() return "Longbusbiggus", "Silvermoon" end,
+        UnitGUID = function() return "Player-1-ABC" end,
+        GetRealmName = function() return "Silvermoon" end,
+        C_TradeSkillUI = {
+            IsTradeSkillLinked = function() return false end,
+            IsTradeSkillReady = function() return true end,
+        },
+    }, {})
+    controller.button = {
+        Show = function() end,
+        Hide = function() end,
+    }
+    GGM.RefreshProfessionSaveButton(controller)
+    GGM.CaptureLinkedProfessionSnapshot = function(_, source)
+        capturedSource = source
+        return {
+            professionID = 164,
+            source = source,
+        }, nil
+    end
+    GGM.SaveProfessionSnapshot = function(_, identity, snapshot)
+        savedIdentity = identity
+        savedSnapshot = snapshot
+        return true, nil
+    end
+
+    local result, err = GGM.SaveActiveLinkedProfession(controller)
+
+    T.assertEqual(result, "saved")
+    T.assertNil(err)
+    T.assertEqual(capturedSource, GGM.PROFESSION_SOURCE_PLAYER)
+    T.assertEqual(savedIdentity.key, "Longbusbiggus-Silvermoon")
+    T.assertEqual(savedSnapshot.source, GGM.PROFESSION_SOURCE_PLAYER)
+end)
+
+T.test("save button is parented to the profession UI", function()
+    local GGM = loadModule()
+    local professionFrame = {}
+    local createAllButton = {}
+    professionFrame.CraftingPage = {
+        SchematicForm = {
+            CreateAllButton = createAllButton,
+        },
+    }
+    local createdParent
+    local button = {
+        SetSize = function() end,
+        SetPoint = function(_, point, relativeTo, relativePoint, x, y)
+            T.assertEqual(point, "RIGHT")
+            T.assertTrue(relativeTo == createAllButton)
+            T.assertEqual(relativePoint, "LEFT")
+            T.assertEqual(x, -8)
+            T.assertEqual(y, 0)
+        end,
+        SetText = function() end,
+        Hide = function() end,
+        CreateFontString = function()
+            return { SetPoint = function() end, SetText = function() end }
+        end,
+        SetScript = function() end,
+    }
+    local controller = GGM.CreateProfessionLinkSaveController({
+        UIParent = {},
+        ProfessionsFrame = professionFrame,
+        CreateFrame = function(_, _, parent)
+            createdParent = parent
+            return button
+        end,
+    }, {})
+
+    local created, err = GGM.CreateProfessionSaveButton(controller)
+
+    T.assertTrue(created)
+    T.assertNil(err)
+    T.assertTrue(createdParent == professionFrame)
+end)
+
+T.test("refresh creates the button when the profession UI becomes available later", function()
+    local GGM = loadModule()
+    local professionFrame = {}
+    local visible = false
+    local controller = GGM.CreateProfessionLinkSaveController({
+        ProfessionsFrame = professionFrame,
+        UnitFullName = function() return "Longbusbiggus", "Silvermoon" end,
+        UnitGUID = function() return "Player-1-ABC" end,
+        C_TradeSkillUI = {
+            IsTradeSkillLinked = function() return false end,
+            IsTradeSkillReady = function() return true end,
+        },
+        CreateFrame = function()
+            return {
+                SetSize = function() end,
+                SetPoint = function() end,
+                SetText = function() end,
+                Show = function() visible = true end,
+                Hide = function() end,
+                CreateFontString = function()
+                    return { SetPoint = function() end, SetText = function() end }
+                end,
+                SetScript = function() end,
+            }
+        end,
+    }, {})
+
+    T.assertEqual(GGM.RefreshProfessionSaveButton(controller), "shown")
+    T.assertTrue(controller.button ~= nil)
+    T.assertTrue(visible)
+end)
+
 T.test("saving a profession snapshot does not call guild sync or addon messaging", function()
     local GGM = loadModule()
     local publishCalls = 0
@@ -171,7 +310,7 @@ T.test("saving a profession snapshot does not call guild sync or addon messaging
     end
     GGM.CaptureLinkedProfessionSnapshot = function()
         return {
-            professionID = 171, professionName = "Alchemy", skillLevel = 50, maxSkillLevel = 100,
+            professionID = 171, professionName = "Alchemy",
             capturedAt = 1700006000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
             status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
         }, nil

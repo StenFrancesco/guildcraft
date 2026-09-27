@@ -39,8 +39,8 @@ T.test("captures only learned recipes from an open linked profession", function(
     T.assertNil(err)
     T.assertEqual(snapshot.professionID, 164)
     T.assertEqual(snapshot.professionName, "Blacksmithing")
-    T.assertEqual(snapshot.skillLevel, 75)
-    T.assertEqual(snapshot.maxSkillLevel, 100)
+    T.assertNil(snapshot.skillLevel)
+    T.assertNil(snapshot.maxSkillLevel)
     T.assertEqual(snapshot.capturedAt, 1700004000)
     T.assertEqual(snapshot.source, "guild-profession-link")
     T.assertEqual(snapshot.status, "cached")
@@ -55,6 +55,9 @@ T.test("capture fails when the open profession is not linked", function()
         C_TradeSkillUI = {
             IsTradeSkillLinked = function() return false end,
             IsTradeSkillReady = function() return true end,
+            GetBaseProfessionInfo = function() return {} end,
+            GetAllRecipeIDs = function() return {} end,
+            GetRecipeInfo = function() return nil end,
         },
     }
 
@@ -69,12 +72,92 @@ T.test("capture fails when linked profession data is not ready", function()
         C_TradeSkillUI = {
             IsTradeSkillLinked = function() return true end,
             IsTradeSkillReady = function() return false end,
+            GetBaseProfessionInfo = function() return {} end,
+            GetAllRecipeIDs = function() return {} end,
+            GetRecipeInfo = function() return nil end,
         },
     }
 
     local snapshot, err = GGM.CaptureLinkedProfessionSnapshot(api)
     T.assertNil(snapshot)
     T.assertEqual(err, "profession-data-unavailable")
+end)
+
+T.test("captures only learned recipes from the open player's profession", function()
+    local GGM = loadModule()
+    local api = {
+        time = function() return 1700004000 end,
+        C_TradeSkillUI = {
+            IsTradeSkillLinked = function() return false end,
+            IsTradeSkillReady = function() return true end,
+            GetBaseProfessionInfo = function()
+                return {
+                    professionID = 164,
+                    professionName = "Blacksmithing",
+                    skillLevel = 75,
+                    maxSkillLevel = 100,
+                }
+            end,
+            GetAllRecipeIDs = function() return { 100, 200 } end,
+            GetRecipeInfo = function(recipeID)
+                if recipeID == 100 then
+                    return { recipeID = 100, name = "Copper Bracers", learned = true }
+                end
+                return { recipeID = 200, name = "Unknown Recipe", learned = false }
+            end,
+        },
+    }
+
+    local snapshot, err = GGM.CaptureLinkedProfessionSnapshot(api, GGM.PROFESSION_SOURCE_PLAYER)
+
+    T.assertNil(err)
+    T.assertEqual(snapshot.source, GGM.PROFESSION_SOURCE_PLAYER)
+    T.assertEqual(#snapshot.recipes, 1)
+    T.assertEqual(snapshot.recipes[1].recipeID, 100)
+end)
+
+T.test("player profession capture rejects a linked profession", function()
+    local GGM = loadModule()
+    local api = {
+        C_TradeSkillUI = {
+            IsTradeSkillLinked = function() return true end,
+            IsTradeSkillReady = function() return true end,
+            GetBaseProfessionInfo = function() return {} end,
+            GetAllRecipeIDs = function() return {} end,
+            GetRecipeInfo = function() return nil end,
+        },
+    }
+
+    local snapshot, err = GGM.CaptureLinkedProfessionSnapshot(api, GGM.PROFESSION_SOURCE_PLAYER)
+
+    T.assertNil(snapshot)
+    T.assertEqual(err, "profession-not-owned")
+end)
+
+T.test("profession capture ignores skill and maximum skill levels", function()
+    local GGM = loadModule()
+    local api = {
+        C_TradeSkillUI = {
+            IsTradeSkillLinked = function() return false end,
+            IsTradeSkillReady = function() return true end,
+            GetBaseProfessionInfo = function()
+                return {
+                    professionID = 164,
+                    professionName = "Blacksmithing",
+                    skillLevel = 75,
+                    maxSkillLevel = "unavailable",
+                }
+            end,
+            GetAllRecipeIDs = function() return {} end,
+            GetRecipeInfo = function() return nil end,
+        },
+    }
+
+    local snapshot, err = GGM.CaptureLinkedProfessionSnapshot(api, GGM.PROFESSION_SOURCE_PLAYER)
+
+    T.assertNil(err)
+    T.assertNil(snapshot.maxSkillLevel)
+    T.assertNil(snapshot.skillLevel)
 end)
 
 T.test("capture fails closed when required Forever profession APIs are missing", function()

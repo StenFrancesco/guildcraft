@@ -231,6 +231,8 @@ T.test("received complete baseline still replaces model metadata from its identi
     T.assertNil(record.identity.raceID)
     T.assertNil(record.identity.sex)
     T.assertNil(record.identity.displayID)
+end)
+
 T.test("database initialization reuses a valid existing SavedVariables table", function()
     local GGM = loadModules()
     local existing = {
@@ -515,6 +517,8 @@ T.test("saving profession data creates a profession-only character entry", funct
     T.assertNotNil(db.professions[identity.key])
     T.assertEqual(db.professions[identity.key].identity.key, identity.key)
     T.assertEqual(db.professions[identity.key].snapshots[164].recipes[1].recipeID, 100)
+    T.assertNil(db.professions[identity.key].snapshots[164].skillLevel)
+    T.assertNil(db.professions[identity.key].snapshots[164].maxSkillLevel)
 end)
 
 T.test("re-saving the same profession replaces that profession snapshot predictably", function()
@@ -522,12 +526,12 @@ T.test("re-saving the same profession replaces that profession snapshot predicta
     local db = GGM.InitializeDatabase(nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
     local first = {
-        professionID = 164, professionName = "Blacksmithing", skillLevel = 70, maxSkillLevel = 100,
+        professionID = 164, professionName = "Blacksmithing",
         capturedAt = 1700004000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
         status = GGM.PROFESSION_CACHE_STATUS, recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
     local second = {
-        professionID = 164, professionName = "Blacksmithing", skillLevel = 80, maxSkillLevel = 100,
+        professionID = 164, professionName = "Blacksmithing",
         capturedAt = 1700005000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
         status = GGM.PROFESSION_CACHE_STATUS, recipes = { { recipeID = 300, name = "Iron Buckle" } },
     }
@@ -548,7 +552,7 @@ T.test("saving a second profession preserves the first profession", function()
 
     local function snapshot(id, name)
         return {
-            professionID = id, professionName = name, skillLevel = 1, maxSkillLevel = 100,
+            professionID = id, professionName = name,
             capturedAt = 1700004000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
             status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
         }
@@ -579,7 +583,7 @@ T.test("invalid replacement cannot overwrite an existing profession snapshot", f
     local db = GGM.InitializeDatabase(nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
     local valid = {
-        professionID = 171, professionName = "Alchemy", skillLevel = 50, maxSkillLevel = 100,
+        professionID = 171, professionName = "Alchemy",
         capturedAt = 1700006000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
         status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
     }
@@ -913,7 +917,7 @@ T.test("schema one migration preserves known slots and leaves new slots unknown"
     } } }
     local db, err = GGM.InitializeDatabase(existing)
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 2)
+    T.assertEqual(db.schemaVersion, 3)
     local record = assert(GGM.GetCharacterRecord(db, identity.key))
     T.assertFalse(record.complete)
     T.assertEqual(record.completeness, "incomplete")

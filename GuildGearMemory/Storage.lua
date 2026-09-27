@@ -40,8 +40,6 @@ local function copyProfessionSnapshot(snapshot)
     local copied = {
         professionID = snapshot.professionID,
         professionName = snapshot.professionName,
-        skillLevel = snapshot.skillLevel,
-        maxSkillLevel = snapshot.maxSkillLevel,
         capturedAt = snapshot.capturedAt,
         source = snapshot.source,
         status = snapshot.status,
@@ -240,10 +238,13 @@ function GGM.InitializeDatabase(existing)
     end
 
     if existing.schemaVersion == 1 or existing.schemaVersion == 2 then
+        if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
+            return nil, "database-local-characters-invalid"
+        end
+        if existing.professions ~= nil and type(existing.professions) ~= "table" then
+            return nil, "database-professions-invalid"
+        end
         if existing.schemaVersion == 1 then
-            if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
-                return nil, "database-local-characters-invalid"
-            end
             if type(existing.characters) ~= "table" then
                 return nil, "database-characters-invalid"
             end

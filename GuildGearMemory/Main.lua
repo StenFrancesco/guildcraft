@@ -1,5 +1,7 @@
 local ADDON_NAME, GGM = ...
 
+GGM.RegisterSnapshotTestSlashCommand(_G)
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -7,6 +9,7 @@ frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("CHAT_MSG_GUILD")
 frame:RegisterEvent("TRADE_SKILL_SHOW")
+frame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
 frame:RegisterEvent("TRADE_SKILL_CLOSE")
 
 local function publishConfirmedSlot(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
@@ -37,8 +40,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if arg1 ~= ADDON_NAME then
             return
         end
-
-        GGM.RegisterSnapshotTestSlashCommand(_G)
 
         local db, err = GGM.InitializeDatabase(GuildGearMemoryDB)
         if not db then
@@ -125,7 +126,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         return
     end
 
-    if event == "TRADE_SKILL_SHOW" then
+    if event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then
         if GGM.professionLinkSave and not GGM.startupError then
             GGM.RefreshProfessionSaveButton(GGM.professionLinkSave)
         end

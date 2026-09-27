@@ -76,6 +76,7 @@ function GGM.HandleProfessionHyperlinkOpened(controller, link)
 
     controller.activeLink = link
     controller.activeIdentity = source.identity
+    controller.activeSource = "guild"
     return "guild-profession-link"
 end
 
@@ -84,7 +85,12 @@ function GGM.SaveActiveLinkedProfession(controller)
         return nil, "profession-source-unavailable"
     end
 
-    local snapshot, captureErr = GGM.CaptureLinkedProfessionSnapshot(controller.api)
+    local snapshot, captureErr = GGM.CaptureLinkedProfessionSnapshot(
+        controller.api,
+        controller.activeSource == "player"
+            and GGM.PROFESSION_SOURCE_PLAYER
+            or GGM.PROFESSION_SOURCE_GUILD_LINK
+    )
     if not snapshot then return nil, captureErr end
 
     local saved, saveErr = GGM.SaveProfessionSnapshot(controller.db, controller.activeIdentity, snapshot)
@@ -98,15 +104,58 @@ local function setStatus(controller, text)
     end
 end
 
+local function findProfessionFrame(api)
+    if type(api) ~= "table" then return nil end
+    return api.ProfessionsFrame or api.TradeSkillFrame
+end
+
+local function findCreateAllButton(professionFrame)
+    local craftingPage = professionFrame and professionFrame.CraftingPage
+    local schematicForm = craftingPage and craftingPage.SchematicForm
+    return (schematicForm and schematicForm.CreateAllButton)
+        or (craftingPage and craftingPage.CreateAllButton)
+end
+
+local function establishOwnProfessionContext(controller, trade)
+    if controller.activeIdentity or type(trade) ~= "table"
+        or type(trade.IsTradeSkillLinked) ~= "function"
+        or type(GGM.BuildPlayerIdentity) ~= "function" then
+        return
+    end
+
+    local linkedOk, linked = pcall(trade.IsTradeSkillLinked)
+    if not linkedOk or linked ~= false then return end
+
+    local identityOk, identity = pcall(GGM.BuildPlayerIdentity, controller.api)
+    if identityOk and type(identity) == "table" then
+        controller.activeIdentity = identity
+        controller.activeSource = "player"
+    end
+end
+
 function GGM.CreateProfessionSaveButton(controller)
+    if controller and controller.button then
+        return true, nil
+    end
+
     local api = controller and controller.api
     if type(api) ~= "table" or type(api.CreateFrame) ~= "function" then
         return false, "profession-ui-unavailable"
     end
 
-    local button = api.CreateFrame("Button", nil, api.UIParent, "UIPanelButtonTemplate")
+    local professionFrame = findProfessionFrame(api)
+    if not professionFrame then
+        return false, "profession-frame-unavailable"
+    end
+
+    local button = api.CreateFrame("Button", nil, professionFrame, "UIPanelButtonTemplate")
     button:SetSize(150, 24)
-    button:SetPoint("TOP", api.UIParent, "TOP", 0, -120)
+    local createAllButton = findCreateAllButton(professionFrame)
+    if createAllButton then
+        button:SetPoint("RIGHT", createAllButton, "LEFT", -8, 0)
+    else
+        button:SetPoint("BOTTOMRIGHT", professionFrame, "BOTTOMRIGHT", -440, 22)
+    end
     button:SetText("Save to Variables")
     button:Hide()
 
@@ -129,8 +178,15 @@ function GGM.CreateProfessionSaveButton(controller)
 end
 
 function GGM.RefreshProfessionSaveButton(controller)
-    if type(controller) ~= "table" or not controller.button then return "unavailable" end
+    if type(controller) ~= "table" then return "unavailable" end
+    if not controller.button then
+        local created = GGM.CreateProfessionSaveButton(controller)
+        if not created then return "unavailable" end
+    end
+
     local trade = type(controller.api) == "table" and controller.api.C_TradeSkillUI or nil
+
+    establishOwnProfessionContext(controller, trade)
 
     if type(controller.activeIdentity) ~= "table"
         or type(trade) ~= "table"
@@ -142,8 +198,13 @@ function GGM.RefreshProfessionSaveButton(controller)
 
     local linkedOk, linked = pcall(trade.IsTradeSkillLinked)
     local readyOk, ready = pcall(trade.IsTradeSkillReady)
-    if linkedOk and linked == true and readyOk and ready == true then
-        setStatus(controller, "Guild link — saved data will be cached/last-known")
+    local validContext = linked == true or (linked == false and controller.activeSource == "player")
+    if linkedOk and validContext and readyOk and ready == true then
+        if controller.activeSource == "player" then
+            setStatus(controller, "Your profession — saved data will be cached")
+        else
+            setStatus(controller, "Guild link — saved data will be cached/last-known")
+        end
         controller.button:Show()
         return "shown"
     end
@@ -156,6 +217,7 @@ function GGM.ClearProfessionSaveContext(controller)
     if type(controller) ~= "table" then return end
     controller.activeLink = nil
     controller.activeIdentity = nil
+    controller.activeSource = nil
     if controller.button then controller.button:Hide() end
     setStatus(controller, "")
 end
@@ -171,7 +233,9 @@ function GGM.RegisterProfessionLinkSaveController(controller)
     end
 
     local created, createErr = GGM.CreateProfessionSaveButton(controller)
-    if not created then return false, createErr end
+    if not created and createErr ~= "profession-frame-unavailable" then
+        return false, createErr
+    end
 
     api.hooksecurefunc("SetItemRef", function(link)
         local result = GGM.HandleProfessionHyperlinkOpened(controller, link)

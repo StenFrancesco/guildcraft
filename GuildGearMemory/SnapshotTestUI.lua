@@ -480,13 +480,6 @@ local function setBrowserContentVisible(frame, visible)
     end
 end
 
-local updateBrowserList
-
-function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
-    if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then
-        return false
-    end
-
 local PROFESSIONS = {
     { key = "Alchemy", icon = "Interface\\Icons\\Trade_Alchemy" },
     { key = "Blacksmithing", icon = "Interface\\Icons\\Trade_BlackSmithing" },
@@ -591,6 +584,14 @@ local function createProfessionsPage(api, frame)
     frame.professionsPage = page
     GGM.SelectProfession(frame, "Alchemy")
 end
+
+local updateBrowserList
+
+function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
+    if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then
+        return false
+    end
+
     frame.activeTab = selectedKey
     frame.TitleText:SetText(selectedKey == "Character"
         and "Guild Gear Memory - Saved Gear"

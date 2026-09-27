@@ -29,12 +29,11 @@ function GGM.ValidateProfessionSnapshot(snapshot)
     if type(snapshot) ~= "table" then return false, "profession-snapshot-invalid" end
     if not positiveInteger(snapshot.professionID) then return false, "profession-id-invalid" end
     if not nonEmptyString(snapshot.professionName) then return false, "profession-name-invalid" end
-    if not nonNegativeInteger(snapshot.skillLevel) then return false, "profession-skill-level-invalid" end
-    if not nonNegativeInteger(snapshot.maxSkillLevel) or snapshot.skillLevel > snapshot.maxSkillLevel then
-        return false, "profession-max-skill-level-invalid"
-    end
     if not nonNegativeInteger(snapshot.capturedAt) then return false, "profession-captured-at-invalid" end
-    if snapshot.source ~= GGM.PROFESSION_SOURCE_GUILD_LINK then return false, "profession-source-invalid" end
+    if snapshot.source ~= GGM.PROFESSION_SOURCE_GUILD_LINK
+        and snapshot.source ~= GGM.PROFESSION_SOURCE_PLAYER then
+        return false, "profession-source-invalid"
+    end
     if snapshot.status ~= GGM.PROFESSION_CACHE_STATUS then return false, "profession-status-invalid" end
     if type(snapshot.recipes) ~= "table" or #snapshot.recipes > GGM.PROFESSION_MAX_RECIPES then
         return false, "profession-recipes-invalid"
@@ -53,12 +52,23 @@ function GGM.ValidateProfessionSnapshot(snapshot)
     return true, nil
 end
 
-function GGM.CaptureLinkedProfessionSnapshot(api)
+function GGM.CaptureLinkedProfessionSnapshot(api, source)
     local trade = requiredTradeSkillApi(api)
     if not trade then return nil, "profession-api-unavailable" end
 
+    source = source or GGM.PROFESSION_SOURCE_GUILD_LINK
+    if source ~= GGM.PROFESSION_SOURCE_GUILD_LINK and source ~= GGM.PROFESSION_SOURCE_PLAYER then
+        return nil, "profession-source-invalid"
+    end
+
     local linkedOk, linked = pcall(trade.IsTradeSkillLinked)
-    if not linkedOk or linked ~= true then return nil, "profession-not-linked" end
+    if not linkedOk then return nil, "profession-link-state-unavailable" end
+    if source == GGM.PROFESSION_SOURCE_GUILD_LINK and linked ~= true then
+        return nil, "profession-not-linked"
+    end
+    if source == GGM.PROFESSION_SOURCE_PLAYER and linked ~= false then
+        return nil, "profession-not-owned"
+    end
 
     local readyOk, ready = pcall(trade.IsTradeSkillReady)
     if not readyOk or ready ~= true then return nil, "profession-data-unavailable" end
@@ -96,10 +106,8 @@ function GGM.CaptureLinkedProfessionSnapshot(api)
     local snapshot = {
         professionID = info.professionID,
         professionName = info.professionName,
-        skillLevel = info.skillLevel or 0,
-        maxSkillLevel = info.maxSkillLevel or 0,
         capturedAt = capturedAt,
-        source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+        source = source,
         status = GGM.PROFESSION_CACHE_STATUS,
         recipes = recipes,
     }

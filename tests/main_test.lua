@@ -178,9 +178,44 @@ T.test("trade skill show only refreshes the local profession save control", func
     end)
 end)
 
-T.test("addon loaded registers the snapshot slash command", function()
+T.test("trade skill list update refreshes the local profession save control after linked data becomes ready", function()
+    local onEvent
+    local refreshCount = 0
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        GuildGearMemoryDB = NIL,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+        GGM.InitializeDatabase = function()
+            return { schemaVersion = 3, characters = {}, localCharacters = {}, professions = {} }, nil
+        end
+        GGM.CreateProfessionLinkSaveController = function() return {}, nil end
+        GGM.RegisterProfessionLinkSaveController = function() return true, nil end
+        GGM.RefreshProfessionSaveButton = function()
+            refreshCount = refreshCount + 1
+            return "shown"
+        end
+        GGM.StartLocalPlayerGearTracking = function() return {}, nil end
+        GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        onEvent(frame, "TRADE_SKILL_LIST_UPDATE")
+
+        T.assertEqual(refreshCount, 1)
+    end)
+end)
+
+T.test("main registers the snapshot slash command before addon loaded", function()
     local onEvent
     local registeredApi
+    local registrationCount = 0
     local frame = {
         RegisterEvent = function() end,
         SetScript = function(_, _, handler)
@@ -205,13 +240,18 @@ T.test("addon loaded registers the snapshot slash command", function()
             return "ignored", nil
         end
         stubSnapshotUI(GGM, function(api)
+            registrationCount = registrationCount + 1
             registeredApi = api
         end)
 
         T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        T.assertTrue(registeredApi == _G)
+        T.assertEqual(registrationCount, 1)
+
         onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
 
         T.assertTrue(registeredApi == _G)
+        T.assertEqual(registrationCount, 1)
     end)
 end)
 
