@@ -36,6 +36,27 @@ local function copyIdentity(identity)
     return copied
 end
 
+local function copyProfessionSnapshot(snapshot)
+    local copied = {
+        professionID = snapshot.professionID,
+        professionName = snapshot.professionName,
+        skillLevel = snapshot.skillLevel,
+        maxSkillLevel = snapshot.maxSkillLevel,
+        capturedAt = snapshot.capturedAt,
+        source = snapshot.source,
+        status = snapshot.status,
+        recipes = {},
+    }
+
+    for _, recipe in ipairs(snapshot.recipes) do
+        table.insert(copied.recipes, {
+            recipeID = recipe.recipeID,
+            name = recipe.name,
+        })
+    end
+    return copied
+end
+
 local function copySlotValue(source)
     if source == nil or source.unavailable == true then
         return { unavailable = true }
@@ -210,6 +231,7 @@ function GGM.InitializeDatabase(existing)
             schemaVersion = GGM.SCHEMA_VERSION,
             characters = {},
             localCharacters = {},
+            professions = {},
         }, nil
     end
 
@@ -217,18 +239,21 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-invalid"
     end
 
-    if existing.schemaVersion == 1 and GGM.SCHEMA_VERSION == 2 then
-        if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
-            return nil, "database-local-characters-invalid"
+    if existing.schemaVersion == 1 or existing.schemaVersion == 2 then
+        if existing.schemaVersion == 1 then
+            if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
+                return nil, "database-local-characters-invalid"
+            end
+            if type(existing.characters) ~= "table" then
+                return nil, "database-characters-invalid"
+            end
+            for characterKey, record in pairs(existing.characters) do
+                migrateSchemaOneRecord(record, characterKey)
+            end
         end
-        if type(existing.characters) ~= "table" then
-            return nil, "database-characters-invalid"
-        end
-        for characterKey, record in pairs(existing.characters) do
-            migrateSchemaOneRecord(record, characterKey)
-        end
-        existing.schemaVersion = 2
+        existing.schemaVersion = GGM.SCHEMA_VERSION
         existing.localCharacters = existing.localCharacters or {}
+        existing.professions = existing.professions or {}
         return existing, nil
     end
 
@@ -244,7 +269,11 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-local-characters-invalid"
     end
     existing.localCharacters = existing.localCharacters or {}
+    if existing.professions ~= nil and type(existing.professions) ~= "table" then
+        return nil, "database-professions-invalid"
+    end
 
+    existing.professions = existing.professions or {}
     return existing, nil
 end
 
@@ -271,6 +300,67 @@ function GGM.IsLocalCharacter(db, characterKey)
         and type(db.localCharacters) == "table"
         and type(characterKey) == "string"
         and db.localCharacters[characterKey] == true
+end
+
+function GGM.GetProfessionRecord(db, characterKey)
+    if type(db) ~= "table" or type(db.professions) ~= "table" then
+        return nil, "database-invalid"
+    end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then
+        return nil, "unsupported-schema-version:" .. tostring(db.schemaVersion)
+    end
+    if type(characterKey) ~= "string" or characterKey == "" then
+        return nil, "character-key-invalid"
+    end
+
+    local record = db.professions[characterKey]
+    if type(record) ~= "table" then return nil, "profession-record-missing" end
+
+    local identityValid, identityErr = validateIdentity(record.identity)
+    if not identityValid then return nil, identityErr end
+    if record.identity.key ~= characterKey then return nil, "record-key-mismatch" end
+    if type(record.snapshots) ~= "table" then return nil, "profession-snapshots-invalid" end
+
+    for professionID, snapshot in pairs(record.snapshots) do
+        if professionID ~= snapshot.professionID then return nil, "profession-key-mismatch" end
+        local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+        if not valid then return nil, err end
+    end
+
+    return record, nil
+end
+
+function GGM.SaveProfessionSnapshot(db, identity, snapshot)
+    if type(db) ~= "table" or type(db.professions) ~= "table" then
+        return false, "database-invalid"
+    end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then
+        return false, "unsupported-schema-version:" .. tostring(db.schemaVersion)
+    end
+    local identityValid, identityErr = validateIdentity(identity)
+    if not identityValid then return false, identityErr end
+    local snapshotValid, snapshotErr = GGM.ValidateProfessionSnapshot(snapshot)
+    if not snapshotValid then return false, snapshotErr end
+
+    local record = db.professions[identity.key]
+    if record ~= nil then
+        local existing, existingErr = GGM.GetProfessionRecord(db, identity.key)
+        if not existing then return false, existingErr end
+        if not identitiesCompatible(existing.identity, identity) then
+            return false, "identity-mismatch"
+        end
+        record = existing
+    else
+        record = {
+            identity = copyIdentity(identity),
+            snapshots = {},
+        }
+        db.professions[identity.key] = record
+    end
+
+    record.identity = copyIdentity(identity)
+    record.snapshots[snapshot.professionID] = copyProfessionSnapshot(snapshot)
+    return true, nil
 end
 
 function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequence)

@@ -4,6 +4,7 @@ local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     return GGM
 end
@@ -40,10 +41,11 @@ T.test("database initialization creates the Phase 1 schema on first run", functi
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 2)
+    T.assertEqual(db.schemaVersion, 3)
     T.assertEqual(type(db.characters), "table")
     T.assertEqual(type(db.localCharacters), "table")
     T.assertNil(next(db.localCharacters))
+    T.assertEqual(type(db.professions), "table")
 end)
 
 T.test("database initialization backfills local ownership for supported existing schemas", function()
@@ -229,13 +231,12 @@ T.test("received complete baseline still replaces model metadata from its identi
     T.assertNil(record.identity.raceID)
     T.assertNil(record.identity.sex)
     T.assertNil(record.identity.displayID)
-end)
-
 T.test("database initialization reuses a valid existing SavedVariables table", function()
     local GGM = loadModules()
     local existing = {
-        schemaVersion = 1,
+        schemaVersion = 3,
         characters = {},
+        professions = {},
     }
 
     local db, err = GGM.InitializeDatabase(existing)
@@ -459,10 +460,118 @@ T.test("new complete records persist confirmed sequence zero without a schema bu
 
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
-    T.assertEqual(db.schemaVersion, 2)
+    T.assertEqual(db.schemaVersion, 3)
     T.assertEqual(db.characters[identity.key].confirmedSequence, 0)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(GGM.GetConfirmedSequence(record), 0)
+end)
+
+T.test("schema two migrates to schema three with empty profession storage", function()
+    local GGM = loadModules()
+    local existing = {
+        schemaVersion = 2,
+        characters = {},
+        localCharacters = {},
+    }
+
+    local db, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(err)
+    T.assertTrue(db == existing)
+    T.assertEqual(db.schemaVersion, 3)
+    T.assertNotNil(db.professions)
+    T.assertNil(next(db.professions))
+end)
+
+T.test("new schema three database initializes profession storage", function()
+    local GGM = loadModules()
+    local db, err = GGM.InitializeDatabase(nil)
+
+    T.assertNil(err)
+    T.assertEqual(db.schemaVersion, 3)
+    T.assertNotNil(db.professions)
+end)
+
+T.test("saving profession data creates a profession-only character entry", function()
+    local GGM = loadModules()
+    local db = GGM.InitializeDatabase(nil)
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local snapshot = {
+        professionID = 164,
+        professionName = "Blacksmithing",
+        skillLevel = 75,
+        maxSkillLevel = 100,
+        capturedAt = 1700004000,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+
+    local saved, err = GGM.SaveProfessionSnapshot(db, identity, snapshot)
+
+    T.assertTrue(saved)
+    T.assertNil(err)
+    T.assertNil(db.characters[identity.key])
+    T.assertNotNil(db.professions[identity.key])
+    T.assertEqual(db.professions[identity.key].identity.key, identity.key)
+    T.assertEqual(db.professions[identity.key].snapshots[164].recipes[1].recipeID, 100)
+end)
+
+T.test("re-saving the same profession replaces that profession snapshot predictably", function()
+    local GGM = loadModules()
+    local db = GGM.InitializeDatabase(nil)
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local first = {
+        professionID = 164, professionName = "Blacksmithing", skillLevel = 70, maxSkillLevel = 100,
+        capturedAt = 1700004000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+        status = GGM.PROFESSION_CACHE_STATUS, recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    local second = {
+        professionID = 164, professionName = "Blacksmithing", skillLevel = 80, maxSkillLevel = 100,
+        capturedAt = 1700005000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+        status = GGM.PROFESSION_CACHE_STATUS, recipes = { { recipeID = 300, name = "Iron Buckle" } },
+    }
+
+    T.assertTrue(GGM.SaveProfessionSnapshot(db, identity, first))
+    T.assertTrue(GGM.SaveProfessionSnapshot(db, identity, second))
+
+    local record = GGM.GetProfessionRecord(db, identity.key)
+    T.assertEqual(record.snapshots[164].capturedAt, 1700005000)
+    T.assertEqual(#record.snapshots[164].recipes, 1)
+    T.assertEqual(record.snapshots[164].recipes[1].recipeID, 300)
+end)
+
+T.test("saving a second profession preserves the first profession", function()
+    local GGM = loadModules()
+    local db = GGM.InitializeDatabase(nil)
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+
+    local function snapshot(id, name)
+        return {
+            professionID = id, professionName = name, skillLevel = 1, maxSkillLevel = 100,
+            capturedAt = 1700004000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+            status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
+        }
+    end
+
+    T.assertTrue(GGM.SaveProfessionSnapshot(db, identity, snapshot(164, "Blacksmithing")))
+    T.assertTrue(GGM.SaveProfessionSnapshot(db, identity, snapshot(171, "Alchemy")))
+
+    local record = GGM.GetProfessionRecord(db, identity.key)
+    T.assertNotNil(record.snapshots[164])
+    T.assertNotNil(record.snapshots[171])
+end)
+
+T.test("invalid profession snapshot writes nothing", function()
+    local GGM = loadModules()
+    local db = GGM.InitializeDatabase(nil)
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+
+    local saved, err = GGM.SaveProfessionSnapshot(db, identity, { professionID = 164 })
+
+    T.assertFalse(saved)
+    T.assertNotNil(err)
+    T.assertNil(db.professions[identity.key])
 end)
 
 T.test("legacy complete records without confirmed sequence remain valid as sequence zero", function()
