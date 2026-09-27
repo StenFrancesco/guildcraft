@@ -7,3 +7,4 @@ Task 1: Ruling: the required `lua tests/profession_snapshot_test.lua` and consta
 Task 2: Ruling: the base checkout has schema 1 storage and no schema-1→2 migration block, so schema 1 and 2 records are promoted directly to schema 3 while preserving characters/localCharacters and initializing professions; cost if wrong: an undocumented legacy migration field could need follow-up.
 Task 2: Ruling: `lua tests/storage_test.lua` could not execute because no Lua interpreter is installed; `git diff --check` passed.
 Task 3: Ruling: `lua tests/profession_link_save_test.lua` could not execute because no Lua interpreter is installed; static diff validation passed.
+Task 4: Ruling: `lua tests/profession_link_save_test.lua` could not execute because no Lua interpreter is installed; static diff validation passed. The controller uses only the normal hyperlink post-hook and never opens or refreshes a profession.
