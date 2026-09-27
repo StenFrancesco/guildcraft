@@ -1,12 +1,39 @@
 local _, GGM = ...
 
+local function isPositiveInteger(value, maximum)
+    return type(value) == "number" and value > 0 and value <= maximum and value == math.floor(value)
+end
+
+local function copyModelIdentity(source, target)
+    local pairCheckOk, validPair, raceID, sex = pcall(function()
+        if isPositiveInteger(source.raceID, GGM.SYNC_MAX_RACE_ID) and (source.sex == 2 or source.sex == 3) then
+            return true, source.raceID, source.sex
+        end
+        return false
+    end)
+    if pairCheckOk and validPair then
+        target.raceID = raceID
+        target.sex = sex
+    else
+        return
+    end
+
+    local displayCheckOk, validDisplay, displayID = pcall(function()
+        if isPositiveInteger(source.displayID, GGM.SYNC_MAX_DISPLAY_ID) then return true, source.displayID end
+        return false
+    end)
+    if displayCheckOk and validDisplay then target.displayID = displayID end
+end
+
 local function copyIdentity(identity)
-    return {
+    local copied = {
         key = identity.key,
         name = identity.name,
         realm = identity.realm,
         guid = identity.guid,
     }
+    copyModelIdentity(identity, copied)
+    return copied
 end
 
 local function copySlotValue(source)
@@ -95,6 +122,41 @@ local function identitiesCompatible(left, right)
     end
 
     return true
+end
+
+function GGM.UpdateLocalCharacterModelIdentity(db, identity)
+    if type(db) ~= "table" or type(db.characters) ~= "table" then
+        return false, "database-invalid"
+    end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then
+        return false, "unsupported-schema-version:" .. tostring(db.schemaVersion)
+    end
+
+    local identityValid, identityErr = validateIdentity(identity)
+    if not identityValid then return false, identityErr end
+
+    local record, recordErr = GGM.GetCharacterRecord(db, identity.key)
+    if not record then return false, recordErr end
+    if not identitiesCompatible(record.identity, identity) then
+        return false, "identity-mismatch"
+    end
+
+    local updatedIdentity = copyIdentity(identity)
+    local previousIdentity = copyIdentity(record.identity)
+    if updatedIdentity.raceID == nil then
+        if previousIdentity.raceID ~= nil then
+            updatedIdentity.raceID = previousIdentity.raceID
+            updatedIdentity.sex = previousIdentity.sex
+            updatedIdentity.displayID = previousIdentity.displayID
+        end
+    elseif updatedIdentity.raceID == previousIdentity.raceID
+        and updatedIdentity.sex == previousIdentity.sex
+        and updatedIdentity.displayID == nil then
+        updatedIdentity.displayID = previousIdentity.displayID
+    end
+
+    record.identity = updatedIdentity
+    return true, nil
 end
 
 local schemaOneSlotKeys = {

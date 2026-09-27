@@ -96,6 +96,141 @@ T.test("received complete records do not become locally owned", function()
     T.assertNil(db.localCharacters["Alice-Silvermoon"])
 end)
 
+T.test("complete records copy valid model identity fields and old identities remain readable", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+    identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
+    local snapshot = makeSnapshot(GGM)
+
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 6))
+    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(record.identity.raceID, 1)
+    T.assertEqual(record.identity.sex, 3)
+    T.assertEqual(record.identity.displayID, 12345)
+
+    local oldIdentity = makeIdentity()
+    local oldKey = "Bob-Silvermoon"
+    oldIdentity.key, oldIdentity.name = oldKey, "Bob"
+    assert(GGM.SaveCompleteCharacterRecord(db, oldIdentity, makeSnapshot(GGM), 2))
+    local oldRecord = assert(GGM.GetCompleteCharacterRecord(db, oldKey))
+    T.assertNil(oldRecord.identity.raceID)
+    T.assertNil(oldRecord.identity.sex)
+    T.assertNil(oldRecord.identity.displayID)
+    T.assertEqual(oldRecord.gear.slots.HEAD.itemID, 2001)
+end)
+
+T.test("half-present or invalid model identity pairs are omitted without changing gear", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+    identity.raceID, identity.sex, identity.displayID = 1, nil, 12345
+    local snapshot = makeSnapshot(GGM)
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 9))
+    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertNil(record.identity.raceID)
+    T.assertNil(record.identity.sex)
+    T.assertNil(record.identity.displayID)
+    T.assertEqual(record.gear.capturedAt, snapshot.capturedAt)
+    T.assertEqual(record.gear.slots.HEAD.itemID, snapshot.slots.HEAD.itemID)
+    T.assertEqual(record.confirmedSequence, 9)
+
+    identity.raceID, identity.sex = -1, 4
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 10))
+    record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertNil(record.identity.raceID)
+    T.assertNil(record.identity.sex)
+    T.assertNil(record.identity.displayID)
+    T.assertEqual(record.gear.slots.HEAD.itemID, snapshot.slots.HEAD.itemID)
+
+    local receivedDB = assert(GGM.InitializeDatabase(nil))
+    identity.raceID, identity.sex, identity.displayID = 1, nil, 12345
+    assert(GGM.SaveReceivedCompleteCharacterRecord(receivedDB, identity, snapshot, 11))
+    local received = assert(GGM.GetCompleteCharacterRecord(receivedDB, identity.key))
+    T.assertNil(received.identity.raceID)
+    T.assertNil(received.identity.sex)
+    T.assertNil(received.identity.displayID)
+    T.assertEqual(received.gear.slots.HEAD.itemID, snapshot.slots.HEAD.itemID)
+end)
+
+T.test("local model identity update changes metadata only", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 12))
+    local before = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    local capturedAt = before.gear.capturedAt
+    local slots = {}
+    for key, value in pairs(before.gear.slots) do slots[key] = value end
+    local updatedIdentity = makeIdentity()
+    updatedIdentity.raceID, updatedIdentity.sex, updatedIdentity.displayID = 2, 2, 54321
+
+    local ok, err = GGM.UpdateLocalCharacterModelIdentity(db, updatedIdentity)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    local after = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(after.identity.raceID, 2)
+    T.assertEqual(after.identity.sex, 2)
+    T.assertEqual(after.identity.displayID, 54321)
+    T.assertEqual(after.gear.capturedAt, capturedAt)
+    T.assertEqual(after.confirmedSequence, 12)
+    T.assertTrue(after.complete)
+    T.assertTrue(after.gear.complete)
+    for key, value in pairs(slots) do T.assertTrue(after.gear.slots[key] == value) end
+end)
+
+T.test("local model identity refresh preserves valid last-known metadata conservatively", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+    identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
+    local snapshot = makeSnapshot(GGM)
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 12))
+
+    local unavailable = makeIdentity()
+    assert(GGM.UpdateLocalCharacterModelIdentity(db, unavailable))
+    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(record.identity.raceID, 1)
+    T.assertEqual(record.identity.sex, 3)
+    T.assertEqual(record.identity.displayID, 12345)
+
+    local samePairWithoutDisplay = makeIdentity()
+    samePairWithoutDisplay.raceID, samePairWithoutDisplay.sex = 1, 3
+    assert(GGM.UpdateLocalCharacterModelIdentity(db, samePairWithoutDisplay))
+    record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(record.identity.displayID, 12345)
+
+    local changedPairWithoutDisplay = makeIdentity()
+    changedPairWithoutDisplay.raceID, changedPairWithoutDisplay.sex = 2, 2
+    assert(GGM.UpdateLocalCharacterModelIdentity(db, changedPairWithoutDisplay))
+    record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(record.identity.raceID, 2)
+    T.assertEqual(record.identity.sex, 2)
+    T.assertNil(record.identity.displayID)
+    T.assertEqual(record.gear.capturedAt, snapshot.capturedAt)
+    T.assertEqual(record.confirmedSequence, 12)
+    T.assertEqual(record.gear.slots.HEAD.itemID, snapshot.slots.HEAD.itemID)
+end)
+
+T.test("received complete baseline still replaces model metadata from its identity", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+    identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
+
+    local receivedIdentity = makeIdentity()
+    local replacement = makeSnapshot(GGM)
+    replacement.capturedAt = 1700000100
+    assert(GGM.SaveReceivedCompleteCharacterRecord(db, receivedIdentity, replacement, 5))
+
+    local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertNil(record.identity.raceID)
+    T.assertNil(record.identity.sex)
+    T.assertNil(record.identity.displayID)
+end)
+
 T.test("database initialization reuses a valid existing SavedVariables table", function()
     local GGM = loadModules()
     local existing = {
@@ -390,6 +525,7 @@ T.test("received slot update requires a complete baseline and stores the transmi
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = makeIdentity()
+    identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
     local changedHead = { inventorySlotID = 1, itemID = 9100, itemLink = "|Hitem:9100|h[Remote]|h" }
 
     local missingOk, missingErr = GGM.ApplyReceivedCharacterSlot(
@@ -409,6 +545,9 @@ T.test("received slot update requires a complete baseline and stores the transmi
     T.assertEqual(record.gear.slots.HEAD.itemID, 9100)
     T.assertEqual(record.gear.capturedAt, 1700000400)
     T.assertEqual(record.confirmedSequence, 1)
+    T.assertEqual(record.identity.raceID, 1)
+    T.assertEqual(record.identity.sex, 3)
+    T.assertEqual(record.identity.displayID, 12345)
 end)
 
 T.test("received slot update rejects a sequence regression without mutation", function()
@@ -566,6 +705,32 @@ T.test("received complete snapshot may replace at equal or higher sequence", fun
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(record.confirmedSequence, 4)
     T.assertEqual(record.gear.slots.HEAD.itemID, 9999)
+end)
+
+T.test("newer received baselines replace or clear saved target model identity", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+    identity.raceID, identity.sex, identity.displayID = 1, 2, 1111
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 3))
+
+    local replacementIdentity = makeIdentity()
+    replacementIdentity.raceID, replacementIdentity.sex, replacementIdentity.displayID = 2, 3, 2222
+    local replacement = makeSnapshot(GGM)
+    replacement.capturedAt = 1700000700
+    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, replacementIdentity, replacement, 4))
+    local updated = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(updated.identity.raceID, 2)
+    T.assertEqual(updated.identity.sex, 3)
+    T.assertEqual(updated.identity.displayID, 2222)
+
+    local noModelIdentity = makeIdentity()
+    replacement.capturedAt = 1700000800
+    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, noModelIdentity, replacement, 5))
+    local cleared = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertNil(cleared.identity.raceID)
+    T.assertNil(cleared.identity.sex)
+    T.assertNil(cleared.identity.displayID)
 end)
 
 T.test("received complete snapshot rejects invalid identity before touching the database", function()

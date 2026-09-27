@@ -6,6 +6,7 @@ local function loadUI()
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
     return GGM
 end
@@ -346,8 +347,10 @@ local function newControl()
     function control:RegisterForClicks() end
     function control:SetDesaturated(value) self.desaturated = value end
     function control:SetAlpha(value) self.alpha = value end
-    function control:SetTexture(value) self.texture = value end
-    function control:SetColorTexture(...) self.color = { ... } end
+    function control:SetTexture(value) self.texture = value; self.atlas = nil end
+    function control:SetColorTexture(...) self.color = { ... }; self.texture = nil; self.atlas = nil end
+    function control:SetAtlas(value) self.atlas = value; self.texture = nil end
+    function control:SetTexCoord(...) self.texCoord = { ... } end
     function control:CreateFontString() return newControl() end
     function control:CreateTexture() return newControl() end
     return control
@@ -368,6 +371,31 @@ local function makeBrowserAPI()
         GetInventorySlotInfo = function(slotName) return 1, "slot-icon:" .. slotName end,
     }
     return api
+end
+
+local function makeModelBrowserAPI(failModelCreation)
+    local api = makeBrowserAPI()
+    api.C_CreatureInfo = { GetRaceInfo = function(raceID)
+        if raceID == 1 then return { raceName = "Human", clientFileString = "Human" } end
+        if raceID == 2 then return { raceName = "Orc", clientFileString = "Orc" } end
+    end }
+    api.C_Texture = { GetAtlasInfo = function(atlas)
+        if atlas == "raceicon128-human-male" or atlas == "raceicon128-orc-female" then return {} end
+    end }
+    local createFrame = api.CreateFrame
+    api.CreateFrame = function(frameType, name, parent)
+        if failModelCreation and frameType == "Frame" and parent
+            and parent.width == 570 and parent.height == 438 then return nil end
+        return createFrame(frameType, name, parent)
+    end
+    return api
+end
+
+local function setSavedModelIdentity(record)
+    record.identity.raceID, record.identity.sex, record.identity.displayID = 1, 2, 101
+    local visualSlotIDs = { HEAD = 1, SHOULDER = 3, CHEST = 5, WAIST = 6, LEGS = 7, FEET = 8,
+        WRIST = 9, HANDS = 10, BACK = 15, MAIN_HAND = 16, OFF_HAND = 17, TABARD = 19 }
+    for key, id in pairs(visualSlotIDs) do record.gear.slots[key].inventorySlotID = id end
 end
 
 local function makeDB(GGM, records)
@@ -533,6 +561,135 @@ T.test("guild gear browser rows show name and realm and selecting renders saved 
     end
 end)
 
+T.test("browser detail carries the saved record for 2D portrait rendering", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    local detail = GGM.BuildGuildGearBrowserDetail(record, makeBrowserAPI())
+
+    T.assertEqual(detail.modelState, "render-unavailable")
+    T.assertTrue(detail.modelInput == record)
+    T.assertEqual(detail.completenessText, "Complete")
+    T.assertEqual(#detail.slots, #GGM.TRACKED_SLOTS)
+end)
+
+T.test("browser portrait selection updates from A to B and clears on no selection", function()
+    local GGM = loadUI()
+    local alpha, beta = makeRecord(GGM), makeRecord(GGM)
+    beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    setSavedModelIdentity(beta)
+    beta.identity.raceID, beta.identity.sex, beta.identity.displayID = 2, 3, 202
+    beta.gear.capturedAt = 1700000200
+    local api = makeModelBrowserAPI()
+    local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
+
+    T.assertTrue(frame.characterModelView.model.visible)
+    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
+    T.assertTrue(frame.characterModelView.questionMark.visible)
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    T.assertTrue(frame.characterModelView.model.visible)
+    T.assertFalse(frame.modelUnavailableLabel.visible)
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
+    T.assertEqual(frame.characterLine.text, "Beatrice")
+    T.assertEqual(frame.capturedLine.text, "Saved capture: saved-1700000200")
+    T.assertEqual(frame.completenessLine.text, "Complete")
+    frame.searchBox:SetText("no match")
+    T.assertFalse(frame.characterModelView.model.visible)
+    T.assertFalse(frame.modelUnavailableLabel.visible)
+    T.assertNil(frame.characterModelView.portrait.atlas)
+    T.assertEqual(frame.characterModelView.raceLabel.text, "")
+    T.assertFalse(frame.characterLine.visible)
+end)
+
+T.test("browser replaces one saved race portrait with another and clears it on empty selection", function()
+    local GGM = loadUI()
+    local alpha, beta = makeRecord(GGM), makeRecord(GGM)
+    setSavedModelIdentity(alpha)
+    beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    setSavedModelIdentity(beta)
+    beta.identity.raceID, beta.identity.sex, beta.identity.displayID = 2, 3, 202
+    for _, slot in pairs(beta.gear.slots) do
+        if slot.itemID ~= false then
+            slot.itemID = slot.itemID + 1000
+            slot.itemLink = "|Hitem:" .. slot.itemID .. "|h[Distinct]|h"
+        end
+    end
+    local api = makeModelBrowserAPI()
+    local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
+    local view = frame.characterModelView.model
+    T.assertTrue(view.visible)
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
+
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    T.assertTrue(view.visible)
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
+    T.assertEqual(frame.characterModelView.raceLabel.text, "Orc")
+
+    frame.searchBox:SetText("no match")
+    T.assertFalse(view.visible)
+    T.assertNil(frame.characterModelView.portrait.atlas)
+    T.assertEqual(frame.characterModelView.raceLabel.text, "")
+end)
+
+T.test("failed 2D portrait frame creation leaves saved detail visible with unavailable label", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    setSavedModelIdentity(record)
+    local frame = showBrowser(GGM, makeModelBrowserAPI(true), makeDB(GGM, { record }))
+
+    T.assertNil(frame.characterModelView.model)
+    T.assertTrue(frame.modelUnavailableLabel.visible)
+    T.assertEqual(frame.modelUnavailableLabel.text, "2D paper doll unavailable")
+    T.assertTrue(frame.characterLine.visible)
+    T.assertTrue(frame.realmLine.visible)
+    T.assertTrue(frame.capturedLine.visible)
+    T.assertEqual(frame.capturedLine.text, "Saved capture: saved-1700000100")
+    T.assertTrue(frame.completenessLine.visible)
+    T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
+    for _, slot in ipairs(frame.slotButtons) do T.assertTrue(slot.visible) end
+end)
+
+T.test("missing saved display ID still renders the race portrait", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    setSavedModelIdentity(record)
+    record.identity.displayID = nil
+    local frame = showBrowser(GGM, makeModelBrowserAPI(), makeDB(GGM, { record }))
+
+    T.assertTrue(frame.characterModelView.model.visible)
+    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
+    T.assertFalse(frame.modelUnavailableLabel.visible)
+    T.assertTrue(frame.capturedLine.visible)
+    T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
+end)
+
+T.test("browser missing portrait data preserves incomplete and refresh-needed gear details and hides by tab", function()
+    local GGM = loadUI()
+    local legacy = makeRecord(GGM)
+    legacy.identity.raceID, legacy.identity.sex, legacy.identity.displayID = nil, nil, nil
+    legacy.complete, legacy.completeness, legacy.gear.complete = false, "incomplete", false
+    legacy.gear.slots.SHIRT, legacy.gear.slots.TABARD, legacy.gear.slots.RANGED = nil, nil, nil
+    local api = makeModelBrowserAPI()
+    local frame = showBrowser(GGM, api, makeDB(GGM, { legacy }))
+
+    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
+    T.assertEqual(frame.completenessLine.text, "Incomplete")
+    T.assertTrue(frame.capturedLine.text:find("Saved capture:", 1, true) == 1)
+    T.assertTrue(frame.slotButtons[1].visible)
+    T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
+    local refresh = makeRecord(GGM)
+    refresh.complete, refresh.completeness, refresh.gear.complete = false, "incomplete", false
+    refresh.refreshNeeded, refresh.incompleteReason, refresh.requiredBaselineSequence = true, "sequence-gap", 2
+    GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { refresh }))
+    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    T.assertFalse(frame.characterModelView.model.visible)
+    T.assertFalse(frame.modelUnavailableLabel.visible)
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
+    T.assertTrue(frame.characterModelView.model.visible)
+    T.assertFalse(frame.modelUnavailableLabel.visible)
+    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+end)
+
 T.test("guild gear browser gives a saved empty slot an explicit dimmed empty treatment", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
@@ -561,6 +718,8 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     local GGM = loadUI()
     local first, second = makeRecord(GGM), makeRecord(GGM)
     second.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    setSavedModelIdentity(first)
+    setSavedModelIdentity(second)
     local forbidden = function() error("browser interaction must remain local and read-only") end
     for _, name in ipairs({
         "InspectUnit", "NotifyInspect", "CanInspect", "RequestCompleteSnapshot", "CaptureAndStoreLocalPlayer",
@@ -570,7 +729,7 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     }) do
         GGM[name] = forbidden
     end
-    local api = makeBrowserAPI()
+    local api = makeModelBrowserAPI()
     api.NotifyInspect = forbidden
     api.InspectUnit = forbidden
     api.CanInspect = forbidden
@@ -603,6 +762,9 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     T.assertEqual(frame.filteredEntries[1].key, "Beatrice-ArgentDawn")
 
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
+
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
 
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
     T.assertTrue(tablesEqual(db, before), "browser interaction must not mutate any SavedVariables data")

@@ -35,6 +35,7 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
     end
 
     local record, recordErr = GGM.GetCompleteCharacterRecord(db, identity.key)
+    local hasExistingRecord = record ~= nil
     if not record then
         if recordErr ~= "record-missing" then
             return nil, recordErr
@@ -43,6 +44,13 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
         local capturedRecord, captureErr = GGM.CaptureAndStoreLocalPlayer(api, db)
         if not capturedRecord then
             return nil, captureErr
+        end
+    end
+
+    if hasExistingRecord then
+        local identityUpdated, updateErr = GGM.UpdateLocalCharacterModelIdentity(db, identity)
+        if not identityUpdated then
+            return nil, updateErr
         end
     end
 

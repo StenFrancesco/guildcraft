@@ -206,6 +206,8 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         refreshNeeded = record.refreshNeeded == true,
         completenessText = record.complete == true and "Complete"
             or (record.refreshNeeded == true and "Refresh needed" or "Incomplete"),
+        modelInput = record,
+        modelState = "render-unavailable",
         slots = slots,
     }
 end
@@ -346,6 +348,12 @@ local function createClassicGearPanel(api, parent)
 end
 
 local function renderBrowserDetail(frame, entry, api)
+    if type(GGM.ClearSavedCharacterModel) == "function" then
+        GGM.ClearSavedCharacterModel(frame.characterModelView)
+    elseif frame.characterModelView and frame.characterModelView.model then
+        frame.characterModelView.model:Hide()
+    end
+    if frame.modelUnavailableLabel then frame.modelUnavailableLabel:Hide() end
     frame.detailModel = nil
     for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do control:Hide() end
     frame.detailEmpty:Hide()
@@ -368,6 +376,17 @@ local function renderBrowserDetail(frame, entry, api)
         frame.detailEmpty:SetText("No saved guild gear")
         frame.detailEmpty:Show()
         return
+    end
+    local renderState = type(GGM.RenderSavedCharacterModel) == "function"
+        and GGM.RenderSavedCharacterModel(frame.characterModelView, model.modelInput)
+        or "render-unavailable"
+    model.modelState = renderState
+    if renderState == "shown" then
+        if frame.characterModelView.model then frame.characterModelView.model:Show() end
+    else
+        if frame.characterModelView.model then frame.characterModelView.model:Hide() end
+        frame.modelUnavailableLabel:SetText("2D paper doll unavailable")
+        frame.modelUnavailableLabel:Show()
     end
     setText(frame.characterLine, model.characterName)
     setText(frame.realmLine, model.realm)
@@ -433,10 +452,16 @@ local function setBrowserContentVisible(frame, visible)
         frame.capturedLine,
         frame.completenessLine,
         frame.detailEmpty,
+        frame.modelUnavailableLabel,
     }
     if not visible then
         for _, control in ipairs(conditionalControls) do
             if control then control:Hide() end
+        end
+        if type(GGM.ClearSavedCharacterModel) == "function" then
+            GGM.ClearSavedCharacterModel(frame.characterModelView)
+        elseif frame.characterModelView and frame.characterModelView.model then
+            frame.characterModelView.model:Hide()
         end
     end
 
@@ -445,6 +470,13 @@ local function setBrowserContentVisible(frame, visible)
     end
     for _, button in ipairs(frame.slotButtons) do
         if not visible then button:Hide() end
+    end
+    if frame.characterModelView and frame.characterModelView.model then
+        if visible and frame.detailModel and frame.detailModel.modelState == "shown" then
+            frame.characterModelView.model:Show()
+        else
+            frame.characterModelView.model:Hide()
+        end
     end
 end
 
@@ -785,13 +817,26 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.completenessLine:SetTextColor(CF.accent[1], CF.accent[2], CF.accent[3])
     frame.gearPanel = createClassicGearPanel(api, frame)
 
+    frame.characterModelView = GGM.CreateSavedCharacterModel(api, frame.gearPanel)
+    if frame.characterModelView.model then
+        frame.characterModelView.model:SetSize(220, 252)
+        frame.characterModelView.model:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, 6)
+        frame.characterModelView.model:Hide()
+    end
+    frame.modelUnavailableLabel = createText(frame.gearPanel, "OVERLAY", "GameFontDisableSmall")
+    frame.modelUnavailableLabel:SetSize(220, 36)
+    frame.modelUnavailableLabel:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, 6)
+    frame.modelUnavailableLabel:SetJustifyH("CENTER")
+    frame.modelUnavailableLabel:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+    frame.modelUnavailableLabel:Hide()
+
     frame.detailEmpty = createText(frame.gearPanel, "OVERLAY", "GameFontNormalLarge")
     frame.detailEmpty:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, -12)
     frame.detailEmpty:Hide()
 
-    -- Classic paper-doll arrangement: eight slots on each side and weapons along
-    -- the bottom.  Slot names sit beside the icons instead of underneath them,
-    -- which leaves the center uncluttered and makes the silhouette easier to read.
+    -- Classic 2D paper-doll arrangement: eight slots on each side and weapons
+    -- along the bottom. The center prefers a verified race+sex icon atlas and
+    -- falls back without affecting the saved gear display.
     local sideX = { left = 32, right = 538 }
     local sideStartY, sidePitch = -68, 46
     local bottomX = { 210, 285, 360 }
