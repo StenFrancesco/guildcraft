@@ -12,6 +12,22 @@ local function positiveInteger(value)
     return type(value) == "number" and value > 0 and value == math.floor(value)
 end
 
+local function denseRecipeArrayLength(recipes)
+    local count = 0
+    local highestIndex = 0
+
+    for key in pairs(recipes) do
+        if not positiveInteger(key) or key > GGM.PROFESSION_MAX_RECIPES then
+            return nil
+        end
+        count = count + 1
+        if key > highestIndex then highestIndex = key end
+    end
+
+    if count ~= highestIndex then return nil end
+    return count
+end
+
 local function requiredTradeSkillApi(api)
     local trade = type(api) == "table" and api.C_TradeSkillUI or nil
     if type(trade) ~= "table"
@@ -35,12 +51,15 @@ function GGM.ValidateProfessionSnapshot(snapshot)
         return false, "profession-source-invalid"
     end
     if snapshot.status ~= GGM.PROFESSION_CACHE_STATUS then return false, "profession-status-invalid" end
-    if type(snapshot.recipes) ~= "table" or #snapshot.recipes > GGM.PROFESSION_MAX_RECIPES then
+    if type(snapshot.recipes) ~= "table" then
         return false, "profession-recipes-invalid"
     end
+    local recipeCount = denseRecipeArrayLength(snapshot.recipes)
+    if recipeCount == nil then return false, "profession-recipes-invalid" end
 
     local previousID = 0
-    for _, recipe in ipairs(snapshot.recipes) do
+    for index = 1, recipeCount do
+        local recipe = snapshot.recipes[index]
         if type(recipe) ~= "table" or not positiveInteger(recipe.recipeID) then
             return false, "profession-recipe-id-invalid"
         end

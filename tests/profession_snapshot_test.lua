@@ -189,3 +189,40 @@ T.test("capture rejects an oversized learned recipe set", function()
     T.assertNil(snapshot)
     T.assertEqual(err, "profession-recipe-limit-exceeded")
 end)
+
+T.test("profession validation rejects non-array recipe keys", function()
+    local GGM = loadModule()
+    local snapshot = {
+        professionID = 164,
+        professionName = "Blacksmithing",
+        capturedAt = 1700004000,
+        source = GGM.PROFESSION_SOURCE_PLAYER,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { garbage = true },
+    }
+
+    local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+
+    T.assertFalse(valid)
+    T.assertEqual(err, "profession-recipes-invalid")
+end)
+
+T.test("profession validation rejects sparse recipe arrays", function()
+    local GGM = loadModule()
+    local snapshot = {
+        professionID = 164,
+        professionName = "Blacksmithing",
+        capturedAt = 1700004000,
+        source = GGM.PROFESSION_SOURCE_PLAYER,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = {
+            [1] = { recipeID = 100, name = "Copper Bracers" },
+            [3] = { recipeID = 300, name = "Iron Buckle" },
+        },
+    }
+
+    local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+
+    T.assertFalse(valid)
+    T.assertEqual(err, "profession-recipes-invalid")
+end)

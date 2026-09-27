@@ -4,6 +4,11 @@ local function nonEmptyString(value)
     return type(value) == "string" and value ~= ""
 end
 
+local function professionOwnerGUID(link)
+    if type(link) ~= "string" then return nil end
+    return link:match("^trade:([^:|]+):")
+end
+
 local function senderIdentity(api, sender)
     if not nonEmptyString(sender) then return nil, "profession-sender-invalid" end
 
@@ -27,6 +32,38 @@ local function senderIdentity(api, sender)
     }, nil
 end
 
+local function guildIdentityForGUID(api, ownerGUID)
+    if not nonEmptyString(ownerGUID)
+        or type(api) ~= "table"
+        or type(api.GetNumGuildMembers) ~= "function"
+        or type(api.GetGuildRosterInfo) ~= "function" then
+        return nil, "profession-owner-unavailable"
+    end
+
+    local countOk, count = pcall(api.GetNumGuildMembers, true)
+    if not countOk or type(count) ~= "number" or count < 0 then
+        return nil, "profession-roster-unavailable"
+    end
+
+    local matchedIdentity
+    for index = 1, count do
+        local infoOk, info = pcall(function()
+            return { api.GetGuildRosterInfo(index) }
+        end)
+        if not infoOk then return nil, "profession-roster-unavailable" end
+
+        if info[17] == ownerGUID then
+            local identity, identityErr = senderIdentity(api, info[1])
+            if not identity then return nil, identityErr end
+            if matchedIdentity then return nil, "profession-owner-ambiguous" end
+            matchedIdentity = identity
+        end
+    end
+
+    if not matchedIdentity then return nil, "profession-owner-not-in-guild" end
+    return matchedIdentity, nil
+end
+
 function GGM.ExtractProfessionTradeLinks(message)
     local links = {}
     if type(message) ~= "string" then return links end
@@ -44,6 +81,7 @@ function GGM.CreateProfessionLinkSaveController(api, db)
         sourceByLink = {},
         activeLink = nil,
         activeIdentity = nil,
+        activeOwnerGUID = nil,
         button = nil,
         status = nil,
     }
@@ -58,7 +96,10 @@ function GGM.ObserveGuildProfessionMessage(controller, message, sender)
     if not identity then return nil, identityErr end
 
     for _, link in ipairs(links) do
-        controller.sourceByLink[link] = { identity = identity }
+        controller.sourceByLink[link] = {
+            reportedBy = identity,
+            ownerGUID = professionOwnerGUID(link),
+        }
     end
     return "observed", nil
 end
@@ -68,32 +109,53 @@ function GGM.HandleProfessionHyperlinkOpened(controller, link)
     if not link:match("^trade:") then return "ignored" end
 
     local source = controller.sourceByLink[link]
-    if type(source) ~= "table" or type(source.identity) ~= "table" then
+    if type(source) ~= "table" or type(source.reportedBy) ~= "table" then
         controller.activeLink = nil
         controller.activeIdentity = nil
+        controller.activeOwnerGUID = nil
+        controller.activeReportedBy = nil
+        controller.activeSource = nil
         return "ignored"
     end
 
+    local ownerIdentity = guildIdentityForGUID(controller.api, source.ownerGUID)
     controller.activeLink = link
-    controller.activeIdentity = source.identity
+    controller.activeIdentity = ownerIdentity
+    controller.activeOwnerGUID = source.ownerGUID
+    controller.activeReportedBy = source.reportedBy
     controller.activeSource = "guild"
     return "guild-profession-link"
 end
 
 function GGM.SaveActiveLinkedProfession(controller)
-    if type(controller) ~= "table" or type(controller.activeIdentity) ~= "table" then
+    if type(controller) ~= "table" then
+        return nil, "profession-source-unavailable"
+    end
+
+    local identity
+    local snapshotSource
+    if controller.activeSource == "guild" then
+        if professionOwnerGUID(controller.activeLink) ~= controller.activeOwnerGUID then
+            return nil, "profession-owner-unavailable"
+        end
+        local ownerIdentity, ownerErr = guildIdentityForGUID(controller.api, controller.activeOwnerGUID)
+        if not ownerIdentity then return nil, ownerErr end
+        identity = ownerIdentity
+        snapshotSource = GGM.PROFESSION_SOURCE_GUILD_LINK
+    elseif controller.activeSource == "player" and type(controller.activeIdentity) == "table" then
+        identity = controller.activeIdentity
+        snapshotSource = GGM.PROFESSION_SOURCE_PLAYER
+    else
         return nil, "profession-source-unavailable"
     end
 
     local snapshot, captureErr = GGM.CaptureLinkedProfessionSnapshot(
         controller.api,
-        controller.activeSource == "player"
-            and GGM.PROFESSION_SOURCE_PLAYER
-            or GGM.PROFESSION_SOURCE_GUILD_LINK
+        snapshotSource
     )
     if not snapshot then return nil, captureErr end
 
-    local saved, saveErr = GGM.SaveProfessionSnapshot(controller.db, controller.activeIdentity, snapshot)
+    local saved, saveErr = GGM.SaveProfessionSnapshot(controller.db, identity, snapshot)
     if not saved then return nil, saveErr end
     return "saved", nil
 end
@@ -117,7 +179,9 @@ local function findCreateAllButton(professionFrame)
 end
 
 local function establishOwnProfessionContext(controller, trade)
-    if controller.activeIdentity or type(trade) ~= "table"
+    if controller.activeSource == "guild"
+        or controller.activeIdentity
+        or type(trade) ~= "table"
         or type(trade.IsTradeSkillLinked) ~= "function"
         or type(GGM.BuildPlayerIdentity) ~= "function" then
         return
@@ -188,6 +252,10 @@ function GGM.RefreshProfessionSaveButton(controller)
 
     establishOwnProfessionContext(controller, trade)
 
+    if controller.activeSource == "guild" then
+        controller.activeIdentity = guildIdentityForGUID(controller.api, controller.activeOwnerGUID)
+    end
+
     if type(controller.activeIdentity) ~= "table"
         or type(trade) ~= "table"
         or type(trade.IsTradeSkillLinked) ~= "function"
@@ -217,6 +285,8 @@ function GGM.ClearProfessionSaveContext(controller)
     if type(controller) ~= "table" then return end
     controller.activeLink = nil
     controller.activeIdentity = nil
+    controller.activeOwnerGUID = nil
+    controller.activeReportedBy = nil
     controller.activeSource = nil
     if controller.button then controller.button:Hide() end
     setStatus(controller, "")
@@ -239,7 +309,7 @@ function GGM.RegisterProfessionLinkSaveController(controller)
 
     api.hooksecurefunc("SetItemRef", function(link)
         local result = GGM.HandleProfessionHyperlinkOpened(controller, link)
-        if result == "guild-profession-link" then
+        if result == "guild-profession-link" or (type(link) == "string" and link:match("^trade:")) then
             GGM.RefreshProfessionSaveButton(controller)
         end
     end)

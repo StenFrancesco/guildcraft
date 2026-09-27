@@ -73,6 +73,21 @@ T.test("database initialization rejects invalid existing local ownership metadat
     T.assertFalse(existing.localCharacters == nil)
 end)
 
+T.test("database initialization rejects schema 2 without characters before upgrading", function()
+    local GGM = loadModules()
+    local existing = {
+        schemaVersion = 2,
+        localCharacters = {},
+        professions = {},
+    }
+
+    local db, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(db)
+    T.assertEqual(err, "database-characters-invalid")
+    T.assertEqual(existing.schemaVersion, 2)
+end)
+
 T.test("local ownership marks and queries only valid marked keys", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

@@ -238,6 +238,9 @@ function GGM.InitializeDatabase(existing)
     end
 
     if existing.schemaVersion == 1 or existing.schemaVersion == 2 then
+        if type(existing.characters) ~= "table" then
+            return nil, "database-characters-invalid"
+        end
         if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
             return nil, "database-local-characters-invalid"
         end
@@ -245,9 +248,6 @@ function GGM.InitializeDatabase(existing)
             return nil, "database-professions-invalid"
         end
         if existing.schemaVersion == 1 then
-            if type(existing.characters) ~= "table" then
-                return nil, "database-characters-invalid"
-            end
             for characterKey, record in pairs(existing.characters) do
                 migrateSchemaOneRecord(record, characterKey)
             end
