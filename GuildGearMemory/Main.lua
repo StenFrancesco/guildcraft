@@ -1,10 +1,16 @@
 local ADDON_NAME, GGM = ...
 
+GGM.RegisterSnapshotTestSlashCommand(_G)
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("CHAT_MSG_ADDON")
+frame:RegisterEvent("CHAT_MSG_GUILD")
+frame:RegisterEvent("TRADE_SKILL_SHOW")
+frame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
+frame:RegisterEvent("TRADE_SKILL_CLOSE")
 
 local function publishConfirmedSlot(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
     if not GGM.guildSync then
@@ -35,8 +41,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
-        GGM.RegisterSnapshotTestSlashCommand(_G)
-
         local db, err = GGM.InitializeDatabase(GuildGearMemoryDB)
         if not db then
             GGM.startupError = err
@@ -46,6 +50,21 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildGearMemoryDB = db
         GGM.db = db
         GGM.startupError = nil
+
+        local professionLinkSave, professionControllerErr = GGM.CreateProfessionLinkSaveController(_G, db)
+        if professionLinkSave then
+            local professionRegistered, professionRegisterErr = GGM.RegisterProfessionLinkSaveController(professionLinkSave)
+            if professionRegistered then
+                GGM.professionLinkSave = professionLinkSave
+                GGM.lastProfessionSaveError = nil
+            else
+                GGM.professionLinkSave = nil
+                GGM.lastProfessionSaveError = professionRegisterErr
+            end
+        else
+            GGM.professionLinkSave = nil
+            GGM.lastProfessionSaveError = professionControllerErr
+        end
 
         local sync, syncErr = GGM.CreateGuildSync(_G, db)
         if not sync then
@@ -96,6 +115,28 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
         local _, err = GGM.HandlePlayerEquipmentChanged(GGM.gearTracker, arg1)
         GGM.lastGearTrackingError = err
+        return
+    end
+
+    if event == "CHAT_MSG_GUILD" then
+        if not GGM.professionLinkSave or GGM.startupError then return end
+        local message, sender = ...
+        local _, err = GGM.ObserveGuildProfessionMessage(GGM.professionLinkSave, message, sender)
+        GGM.lastProfessionSaveError = err
+        return
+    end
+
+    if event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then
+        if GGM.professionLinkSave and not GGM.startupError then
+            GGM.RefreshProfessionSaveButton(GGM.professionLinkSave)
+        end
+        return
+    end
+
+    if event == "TRADE_SKILL_CLOSE" then
+        if GGM.professionLinkSave then
+            GGM.ClearProfessionSaveContext(GGM.professionLinkSave)
+        end
         return
     end
 
