@@ -100,17 +100,25 @@ function GGM.CaptureLinkedProfessionSnapshot(api, source)
 
     local recipes = {}
     for _, recipeID in ipairs(recipeIDs) do
-        if positiveInteger(recipeID) then
-            local recipeOk, recipeInfo = pcall(trade.GetRecipeInfo, recipeID)
-            if recipeOk and type(recipeInfo) == "table" and recipeInfo.learned == true then
-                if #recipes >= GGM.PROFESSION_MAX_RECIPES then
-                    return nil, "profession-recipe-limit-exceeded"
-                end
-                table.insert(recipes, {
-                    recipeID = recipeInfo.recipeID or recipeID,
-                    name = recipeInfo.name,
-                })
+        if not positiveInteger(recipeID) then
+            return nil, "profession-recipe-id-invalid"
+        end
+
+        local recipeOk, recipeInfo = pcall(trade.GetRecipeInfo, recipeID)
+        if not recipeOk or type(recipeInfo) ~= "table" then
+            return nil, "profession-recipe-info-unavailable"
+        end
+
+        if recipeInfo.learned == true then
+            if #recipes >= GGM.PROFESSION_MAX_RECIPES then
+                return nil, "profession-recipe-limit-exceeded"
             end
+            table.insert(recipes, {
+                recipeID = recipeInfo.recipeID or recipeID,
+                name = recipeInfo.name,
+            })
+        elseif recipeInfo.learned ~= false then
+            return nil, "profession-recipe-learned-state-unavailable"
         end
     end
 
