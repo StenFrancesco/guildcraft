@@ -487,6 +487,110 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
         return false
     end
 
+local PROFESSIONS = {
+    { key = "Alchemy", icon = "Interface\\Icons\\Trade_Alchemy" },
+    { key = "Blacksmithing", icon = "Interface\\Icons\\Trade_BlackSmithing" },
+    { key = "Enchanting", icon = "Interface\\Icons\\Trade_Engraving" },
+    { key = "Engineering", icon = "Interface\\Icons\\Trade_Engineering" },
+    { key = "Leatherworking", icon = "Interface\\Icons\\Trade_LeatherWorking" },
+    { key = "Tailoring", icon = "Interface\\Icons\\Trade_Tailoring" },
+}
+
+local function professionButtonColor(button, selected)
+    if selected then
+        button.background:SetColorTexture(0.25, 0.18, 0.055, 0.98)
+    else
+        button.background:SetColorTexture(0.055, 0.055, 0.065, 0.96)
+    end
+end
+
+function GGM.SelectProfession(frame, selectedKey)
+    local selectedProfession
+    for _, profession in ipairs(PROFESSIONS) do
+        if profession.key == selectedKey then
+            selectedProfession = profession
+            break
+        end
+    end
+    if not selectedProfession then return false end
+
+    frame.selectedProfession = selectedKey
+    frame.professionHeading:SetText(selectedKey)
+    for _, button in ipairs(frame.professionButtons) do
+        local selected = button.key == selectedKey
+        professionButtonColor(button, selected)
+        if selected then button.label:SetTextColor(1, 0.82, 0) else button.label:SetTextColor(0.9, 0.9, 0.9) end
+    end
+    return true
+end
+
+local function createProfessionButton(api, page, profession, offset)
+    local button = api.CreateFrame("Button", nil, page)
+    button:SetSize(178, 52)
+    button:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -offset)
+
+    local background = button:CreateTexture(nil, "BACKGROUND")
+    background:SetAllPoints(button)
+    button.background = background
+
+    local icon = button:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(38, 38)
+    icon:SetPoint("LEFT", button, "LEFT", 8, 0)
+    icon:SetTexture(profession.icon)
+
+    local label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    label:SetPoint("LEFT", icon, "RIGHT", 10, 0)
+    label:SetPoint("RIGHT", button, "RIGHT", -6, 0)
+    label:SetJustifyH("LEFT")
+    label:SetText(profession.key)
+
+    button.key = profession.key
+    button.label = label
+    button:RegisterForClicks("LeftButtonUp")
+    button:SetScript("OnClick", function() GGM.SelectProfession(page.owner, profession.key) end)
+    button:SetScript("OnEnter", function()
+        if page.owner.selectedProfession ~= profession.key then
+            background:SetColorTexture(0.11, 0.11, 0.12, 0.98)
+        end
+    end)
+    button:SetScript("OnLeave", function()
+        professionButtonColor(button, page.owner.selectedProfession == profession.key)
+    end)
+    professionButtonColor(button, false)
+    return button
+end
+
+local function createProfessionsPage(api, frame)
+    local page = api.CreateFrame("Frame", nil, frame)
+    page:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -48)
+    page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -18, 18)
+    page.owner = frame
+    page:Hide()
+
+    local panel = page:CreateTexture(nil, "BACKGROUND")
+    panel:SetPoint("TOPLEFT", page, "TOPLEFT", 190, 0)
+    panel:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+    panel:SetColorTexture(0.035, 0.035, 0.04, 0.8)
+
+    frame.professionButtons = {}
+    for index, profession in ipairs(PROFESSIONS) do
+        frame.professionButtons[index] = createProfessionButton(api, page, profession, (index - 1) * 58)
+    end
+
+    frame.professionHeading = page:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    frame.professionHeading:SetPoint("TOPLEFT", page, "TOPLEFT", 210, -30)
+    frame.professionHeading:SetPoint("RIGHT", page, "RIGHT", -18, 0)
+    frame.professionHeading:SetJustifyH("LEFT")
+
+    local placeholder = page:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    placeholder:SetPoint("TOPLEFT", frame.professionHeading, "BOTTOMLEFT", 0, -18)
+    placeholder:SetPoint("RIGHT", page, "RIGHT", -18, 0)
+    placeholder:SetJustifyH("LEFT")
+    placeholder:SetText("Details will be added later.")
+
+    frame.professionsPage = page
+    GGM.SelectProfession(frame, "Alchemy")
+end
     frame.activeTab = selectedKey
     frame.TitleText:SetText(selectedKey == "Character"
         and "Guild Gear Memory - Saved Gear"
@@ -508,8 +612,9 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     end
 
     local showCharacter = selectedKey == "Character"
+    if selectedKey == "Professions" then frame.professionsPage:Show() else frame.professionsPage:Hide() end
     for pageKey, page in pairs(frame.placeholderPages) do
-        if pageKey == selectedKey then page:Show() else page:Hide() end
+        if pageKey == selectedKey and pageKey ~= "Professions" then page:Show() else page:Hide() end
     end
     if showCharacter then
         setBrowserContentVisible(frame, true)
@@ -909,7 +1014,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     end
 
     frame.placeholderPages = {}
-    for _, pageKey in ipairs({ "Professions", "Bank" }) do
+    for _, pageKey in ipairs({ "Bank" }) do
         local page = createText(frame, "OVERLAY", "GameFontNormalLarge")
         page:SetPoint("CENTER", frame, "CENTER", 0, 0)
         page:SetText(pageKey .. " content will be added later.")
@@ -917,6 +1022,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
         page:Hide()
         frame.placeholderPages[pageKey] = page
     end
+    createProfessionsPage(api, frame)
     frame.navigationTabs = {
         createNavigationTab(api, frame, "Character", "Character", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", 0),
         createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", 122),
