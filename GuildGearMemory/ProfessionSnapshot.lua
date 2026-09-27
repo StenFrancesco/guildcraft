@@ -1,0 +1,110 @@
+local _, GGM = ...
+
+local function nonEmptyString(value)
+    return type(value) == "string" and value ~= "" and #value <= GGM.PROFESSION_MAX_NAME_BYTES
+end
+
+local function nonNegativeInteger(value)
+    return type(value) == "number" and value >= 0 and value == math.floor(value)
+end
+
+local function positiveInteger(value)
+    return type(value) == "number" and value > 0 and value == math.floor(value)
+end
+
+local function requiredTradeSkillApi(api)
+    local trade = type(api) == "table" and api.C_TradeSkillUI or nil
+    if type(trade) ~= "table"
+        or type(trade.IsTradeSkillLinked) ~= "function"
+        or type(trade.IsTradeSkillReady) ~= "function"
+        or type(trade.GetBaseProfessionInfo) ~= "function"
+        or type(trade.GetAllRecipeIDs) ~= "function"
+        or type(trade.GetRecipeInfo) ~= "function" then
+        return nil
+    end
+    return trade
+end
+
+function GGM.ValidateProfessionSnapshot(snapshot)
+    if type(snapshot) ~= "table" then return false, "profession-snapshot-invalid" end
+    if not positiveInteger(snapshot.professionID) then return false, "profession-id-invalid" end
+    if not nonEmptyString(snapshot.professionName) then return false, "profession-name-invalid" end
+    if not nonNegativeInteger(snapshot.skillLevel) then return false, "profession-skill-level-invalid" end
+    if not nonNegativeInteger(snapshot.maxSkillLevel) or snapshot.skillLevel > snapshot.maxSkillLevel then
+        return false, "profession-max-skill-level-invalid"
+    end
+    if not nonNegativeInteger(snapshot.capturedAt) then return false, "profession-captured-at-invalid" end
+    if snapshot.source ~= GGM.PROFESSION_SOURCE_GUILD_LINK then return false, "profession-source-invalid" end
+    if snapshot.status ~= GGM.PROFESSION_CACHE_STATUS then return false, "profession-status-invalid" end
+    if type(snapshot.recipes) ~= "table" or #snapshot.recipes > GGM.PROFESSION_MAX_RECIPES then
+        return false, "profession-recipes-invalid"
+    end
+
+    local previousID = 0
+    for _, recipe in ipairs(snapshot.recipes) do
+        if type(recipe) ~= "table" or not positiveInteger(recipe.recipeID) then
+            return false, "profession-recipe-id-invalid"
+        end
+        if recipe.recipeID <= previousID then return false, "profession-recipes-unsorted" end
+        if not nonEmptyString(recipe.name) then return false, "profession-recipe-name-invalid" end
+        previousID = recipe.recipeID
+    end
+
+    return true, nil
+end
+
+function GGM.CaptureLinkedProfessionSnapshot(api)
+    local trade = requiredTradeSkillApi(api)
+    if not trade then return nil, "profession-api-unavailable" end
+
+    local linkedOk, linked = pcall(trade.IsTradeSkillLinked)
+    if not linkedOk or linked ~= true then return nil, "profession-not-linked" end
+
+    local readyOk, ready = pcall(trade.IsTradeSkillReady)
+    if not readyOk or ready ~= true then return nil, "profession-data-unavailable" end
+
+    local infoOk, info = pcall(trade.GetBaseProfessionInfo)
+    if not infoOk or type(info) ~= "table" then return nil, "profession-info-unavailable" end
+
+    local idsOk, recipeIDs = pcall(trade.GetAllRecipeIDs)
+    if not idsOk or type(recipeIDs) ~= "table" then return nil, "profession-recipes-unavailable" end
+
+    local recipes = {}
+    for _, recipeID in ipairs(recipeIDs) do
+        if positiveInteger(recipeID) then
+            local recipeOk, recipeInfo = pcall(trade.GetRecipeInfo, recipeID)
+            if recipeOk and type(recipeInfo) == "table" and recipeInfo.learned == true then
+                if #recipes >= GGM.PROFESSION_MAX_RECIPES then
+                    return nil, "profession-recipe-limit-exceeded"
+                end
+                table.insert(recipes, {
+                    recipeID = recipeInfo.recipeID or recipeID,
+                    name = recipeInfo.name,
+                })
+            end
+        end
+    end
+
+    table.sort(recipes, function(left, right) return left.recipeID < right.recipeID end)
+
+    local capturedAt = 0
+    if type(api.time) == "function" then
+        local timeOk, value = pcall(api.time)
+        if timeOk and nonNegativeInteger(value) then capturedAt = value end
+    end
+
+    local snapshot = {
+        professionID = info.professionID,
+        professionName = info.professionName,
+        skillLevel = info.skillLevel or 0,
+        maxSkillLevel = info.maxSkillLevel or 0,
+        capturedAt = capturedAt,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = recipes,
+    }
+
+    local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+    if not valid then return nil, err end
+    return snapshot, nil
+end

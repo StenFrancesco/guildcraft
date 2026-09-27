@@ -42,10 +42,20 @@ T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", fun
     end
 end)
 
-T.test("schema version starts at two", function()
+T.test("schema version is three", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.assertEqual(GGM.SCHEMA_VERSION, 2)
+    T.assertEqual(GGM.SCHEMA_VERSION, 3)
+end)
+
+T.test("profession snapshot limits are conservative", function()
+    local GGM = {}
+    T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+
+    T.assertEqual(GGM.PROFESSION_MAX_RECIPES, 4096)
+    T.assertEqual(GGM.PROFESSION_MAX_NAME_BYTES, 128)
+    T.assertEqual(GGM.PROFESSION_SOURCE_GUILD_LINK, "guild-profession-link")
+    T.assertEqual(GGM.PROFESSION_CACHE_STATUS, "cached")
 end)
 
 T.test("default stability delay is five minutes", function()
