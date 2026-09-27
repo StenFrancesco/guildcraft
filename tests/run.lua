@@ -11,6 +11,8 @@ local suites = {
     "tests.sync_protocol_test",
     "tests.sync_transport_test",
     "tests.guild_sync_test",
+    "tests.profession_snapshot_test",
+    "tests.profession_link_save_test",
     "tests.main_test",
     "tests.saved_character_model_test",
 }

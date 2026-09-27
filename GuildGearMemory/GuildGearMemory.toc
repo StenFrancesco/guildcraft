@@ -16,4 +16,6 @@ SyncTransport.lua
 GuildSync.lua
 SavedCharacterModel.lua
 SnapshotTestUI.lua
+ProfessionSnapshot.lua
+ProfessionLinkSave.lua
 Main.lua

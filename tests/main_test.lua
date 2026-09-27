@@ -47,6 +47,19 @@ local function stubSnapshotUI(GGM, registerFn)
     GGM.HandleGuildSyncAddonMessage = GGM.HandleGuildSyncAddonMessage or function()
         return "ignored", nil
     end
+    GGM.CreateProfessionLinkSaveController = GGM.CreateProfessionLinkSaveController or function(_, db)
+        return { db = db }, nil
+    end
+    GGM.RegisterProfessionLinkSaveController = GGM.RegisterProfessionLinkSaveController or function()
+        return true, nil
+    end
+    GGM.ObserveGuildProfessionMessage = GGM.ObserveGuildProfessionMessage or function()
+        return "ignored", nil
+    end
+    GGM.RefreshProfessionSaveButton = GGM.RefreshProfessionSaveButton or function()
+        return "hidden"
+    end
+    GGM.ClearProfessionSaveContext = GGM.ClearProfessionSaveContext or function() end
 end
 
 T.test("main registers Phase 4 local gear and addon-message events", function()
@@ -86,7 +99,82 @@ T.test("main registers Phase 4 local gear and addon-message events", function()
         T.assertTrue(registered.PLAYER_LOGIN == true)
         T.assertTrue(registered.PLAYER_EQUIPMENT_CHANGED == true)
         T.assertTrue(registered.CHAT_MSG_ADDON == true)
+        T.assertTrue(registered.CHAT_MSG_GUILD == true)
+        T.assertTrue(registered.TRADE_SKILL_SHOW == true)
+        T.assertTrue(registered.TRADE_SKILL_CLOSE == true)
         T.assertNotNil(onEvent)
+    end)
+end)
+
+T.test("guild chat routes message and sender only to profession provenance", function()
+    local onEvent
+    local observed
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        GuildGearMemoryDB = NIL,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+        GGM.InitializeDatabase = function()
+            return { schemaVersion = 3, characters = {}, localCharacters = {}, professions = {} }, nil
+        end
+        GGM.CreateProfessionLinkSaveController = function(_, db)
+            return { db = db }, nil
+        end
+        GGM.RegisterProfessionLinkSaveController = function() return true, nil end
+        GGM.ObserveGuildProfessionMessage = function(controller, message, sender)
+            observed = { controller = controller, message = message, sender = sender }
+            return "observed", nil
+        end
+        GGM.StartLocalPlayerGearTracking = function() return {}, nil end
+        GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        onEvent(frame, "CHAT_MSG_GUILD", "|Htrade:abc|h[Alchemy]|h", "Alice-Silvermoon")
+
+        T.assertTrue(observed.controller == GGM.professionLinkSave)
+        T.assertEqual(observed.message, "|Htrade:abc|h[Alchemy]|h")
+        T.assertEqual(observed.sender, "Alice-Silvermoon")
+    end)
+end)
+
+T.test("trade skill show only refreshes the local profession save control", function()
+    local onEvent
+    local refreshCount = 0
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        GuildGearMemoryDB = NIL,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+        GGM.InitializeDatabase = function()
+            return { schemaVersion = 3, characters = {}, localCharacters = {}, professions = {} }, nil
+        end
+        GGM.CreateProfessionLinkSaveController = function() return {}, nil end
+        GGM.RegisterProfessionLinkSaveController = function() return true, nil end
+        GGM.RefreshProfessionSaveButton = function()
+            refreshCount = refreshCount + 1
+            return "shown"
+        end
+        GGM.StartLocalPlayerGearTracking = function() return {}, nil end
+        GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        onEvent(frame, "TRADE_SKILL_SHOW")
+
+        T.assertEqual(refreshCount, 1)
     end)
 end)
 
