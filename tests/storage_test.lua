@@ -595,6 +595,22 @@ T.test("invalid replacement cannot overwrite an existing profession snapshot", f
     T.assertEqual(db.professions[identity.key].snapshots[171].capturedAt, 1700006000)
 end)
 
+T.test("malformed profession snapshot records fail closed without raising", function()
+    local GGM = loadModules()
+    local db = GGM.InitializeDatabase(nil)
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    db.professions[identity.key] = {
+        identity = identity,
+        snapshots = { [171] = false },
+    }
+
+    local callOk, record, err = pcall(GGM.GetProfessionRecord, db, identity.key)
+
+    T.assertTrue(callOk)
+    T.assertNil(record)
+    T.assertEqual(err, "profession-snapshot-invalid")
+end)
+
 T.test("legacy complete records without confirmed sequence remain valid as sequence zero", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

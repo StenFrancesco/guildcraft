@@ -322,6 +322,7 @@ function GGM.GetProfessionRecord(db, characterKey)
     if type(record.snapshots) ~= "table" then return nil, "profession-snapshots-invalid" end
 
     for professionID, snapshot in pairs(record.snapshots) do
+        if type(snapshot) ~= "table" then return nil, "profession-snapshot-invalid" end
         if professionID ~= snapshot.professionID then return nil, "profession-key-mismatch" end
         local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
         if not valid then return nil, err end
