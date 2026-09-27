@@ -574,6 +574,27 @@ T.test("invalid profession snapshot writes nothing", function()
     T.assertNil(db.professions[identity.key])
 end)
 
+T.test("invalid replacement cannot overwrite an existing profession snapshot", function()
+    local GGM = loadModules()
+    local db = GGM.InitializeDatabase(nil)
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local valid = {
+        professionID = 171, professionName = "Alchemy", skillLevel = 50, maxSkillLevel = 100,
+        capturedAt = 1700006000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+        status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
+    }
+    T.assertTrue(GGM.SaveProfessionSnapshot(db, identity, valid))
+
+    local saved = GGM.SaveProfessionSnapshot(db, identity, {
+        professionID = 171,
+        professionName = "Alchemy",
+        recipes = false,
+    })
+
+    T.assertFalse(saved)
+    T.assertEqual(db.professions[identity.key].snapshots[171].capturedAt, 1700006000)
+end)
+
 T.test("legacy complete records without confirmed sequence remain valid as sequence zero", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

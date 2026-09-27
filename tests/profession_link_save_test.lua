@@ -160,3 +160,51 @@ T.test("save button is shown only when active guild link profession is linked an
     T.assertEqual(GGM.RefreshProfessionSaveButton(controller), "hidden")
     T.assertFalse(visible)
 end)
+
+T.test("saving a profession snapshot does not call guild sync or addon messaging", function()
+    local GGM = loadModule()
+    local publishCalls = 0
+    local sendCalls = 0
+
+    GGM.PublishConfirmedSlot = function()
+        publishCalls = publishCalls + 1
+    end
+    GGM.CaptureLinkedProfessionSnapshot = function()
+        return {
+            professionID = 171, professionName = "Alchemy", skillLevel = 50, maxSkillLevel = 100,
+            capturedAt = 1700006000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
+            status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
+        }, nil
+    end
+    GGM.SaveProfessionSnapshot = function() return true, nil end
+
+    local controller = GGM.CreateProfessionLinkSaveController({
+        C_ChatInfo = {
+            SendAddonMessage = function() sendCalls = sendCalls + 1 end,
+        },
+    }, {})
+    controller.activeIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+
+    T.assertEqual(GGM.SaveActiveLinkedProfession(controller), "saved")
+    T.assertEqual(publishCalls, 0)
+    T.assertEqual(sendCalls, 0)
+end)
+
+T.test("observing guild profession links is local-only", function()
+    local GGM = loadModule()
+    local sendCalls = 0
+    local controller = GGM.CreateProfessionLinkSaveController({
+        GetRealmName = function() return "Silvermoon" end,
+        C_ChatInfo = {
+            SendAddonMessage = function() sendCalls = sendCalls + 1 end,
+        },
+    }, {})
+
+    GGM.ObserveGuildProfessionMessage(
+        controller,
+        "|Htrade:Player-1-ABC:171:50:100|h[Alchemy]|h",
+        "Alice-Silvermoon"
+    )
+
+    T.assertEqual(sendCalls, 0)
+end)
