@@ -819,6 +819,19 @@ local function createNavigationTab(api, frame, key, label, iconPath, offset)
 end
 
 function GGM.CreateGuildGearBrowserWindow(api)
+    api.UISpecialFrames = api.UISpecialFrames or {}
+    local frameName = "GuildGearMemoryBrowserFrame"
+    local isRegistered = false
+    for _, registeredName in ipairs(api.UISpecialFrames) do
+        if registeredName == frameName then
+            isRegistered = true
+            break
+        end
+    end
+    if not isRegistered then
+        table.insert(api.UISpecialFrames, frameName)
+    end
+
     local frame = api.CreateFrame("Frame", "GuildGearMemoryBrowserFrame", api.UIParent, "BasicFrameTemplateWithInset")
     frame:SetSize(900, 610)
     frame:SetPoint("CENTER")
