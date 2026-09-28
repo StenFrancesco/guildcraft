@@ -256,94 +256,220 @@ local CF = {
     window = { 0.045, 0.045, 0.052, 0.99 },
     topbar = { 0.070, 0.070, 0.080, 1.00 },
     panel = { 0.082, 0.082, 0.092, 0.98 },
+    panelInner = { 0.068, 0.068, 0.076, 0.82 },
     panelRaised = { 0.105, 0.105, 0.118, 1.00 },
-    panelHover = { 0.145, 0.145, 0.158, 0.92 },
+    slotBackground = { 0.030, 0.030, 0.035, 1.00 },
+    panelHover = { 0.145, 0.145, 0.158, 0.34 },
     border = { 0.205, 0.205, 0.225, 1.00 },
     borderSoft = { 0.145, 0.145, 0.160, 1.00 },
     accent = { 0.945, 0.310, 0.125, 1.00 },
     accentSoft = { 0.370, 0.120, 0.055, 0.78 },
+    accentHover = { 0.945, 0.310, 0.125, 0.24 },
+    success = { 0.350, 0.760, 0.500 },
+    warning = { 0.930, 0.680, 0.260 },
     text = { 0.955, 0.955, 0.965 },
+    textSecondary = { 0.860, 0.860, 0.880 },
+    textSlot = { 0.800, 0.800, 0.830 },
     muted = { 0.650, 0.650, 0.685 },
 }
+
+local UI = {
+    space1 = 4,
+    space2 = 8,
+    space3 = 12,
+    space4 = 16,
+    space5 = 24,
+    space6 = 32,
+    controlHeightCompact = 30,
+    controlHeightDefault = 36,
+    rowHeightCompact = 32,
+    navigationTabWidth = 120,
+    professionSidebarWidth = 178,
+    browserColumnWidth = 258,
+    searchLabelWidth = 132,
+    ownershipButtonWidth = 45,
+    professionRowHeight = 40,
+    listScrollWidth = 242,
+    listScrollHeight = 406,
+    borderWidth = 1,
+}
+GGM.UIStyleTokens = UI
+
+local function space(index)
+    return UI["space" .. tostring(index)]
+end
+
+function GGM.SetUITextTone(text, tone)
+    if not text or type(text.SetTextColor) ~= "function" then return false end
+    local color = tone == "success" and CF.success
+        or (tone == "warning" and CF.warning)
+        or (tone == "primary" and CF.text)
+        or CF.muted
+    text:SetTextColor(color[1], color[2], color[3])
+    return true
+end
 
 local function setColor(texture, color)
     texture:SetColorTexture(color[1], color[2], color[3], color[4] or 1)
 end
 
 local function createFlatBorder(panel, color)
+    local edges = {}
     local top = panel:CreateTexture(nil, "BORDER")
     top:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
     top:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
-    top:SetHeight(1)
+    top:SetHeight(UI.borderWidth)
     setColor(top, color)
+    edges[#edges + 1] = top
 
     local bottom = panel:CreateTexture(nil, "BORDER")
     bottom:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
     bottom:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
-    bottom:SetHeight(1)
+    bottom:SetHeight(UI.borderWidth)
     setColor(bottom, color)
+    edges[#edges + 1] = bottom
 
     local left = panel:CreateTexture(nil, "BORDER")
     left:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
     left:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 0, 0)
-    left:SetWidth(1)
+    left:SetWidth(UI.borderWidth)
     setColor(left, color)
+    edges[#edges + 1] = left
 
     local right = panel:CreateTexture(nil, "BORDER")
     right:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, 0)
     right:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
-    right:SetWidth(1)
+    right:SetWidth(UI.borderWidth)
     setColor(right, color)
+    edges[#edges + 1] = right
+    return edges
+end
+
+local function createFlatPanel(api, parent)
+    local panel = api.CreateFrame("Frame", nil, parent)
+    panel.background = panel:CreateTexture(nil, "BACKGROUND")
+    panel.background:SetAllPoints(panel)
+    setColor(panel.background, CF.panel)
+    panel.border = createFlatBorder(panel, CF.border)
+    return panel
+end
+
+local buttonVariantColors = {
+    primary = { background = CF.accentSoft, border = CF.accent, text = CF.text },
+    secondary = { background = CF.panelRaised, border = CF.border, text = CF.muted },
+}
+
+function GGM.SetFlatButtonState(button, state)
+    if not button or not button.background then return false end
+    local variant = buttonVariantColors[button.variant] or buttonVariantColors.secondary
+    local background, border, labelColor = variant.background, variant.border, variant.text
+    if state == "selected" then
+        background, border, labelColor = CF.accentSoft, CF.accent, CF.text
+        button.selected = true
+    elseif state == "pressed" then
+        background, border, labelColor = CF.accent, CF.accent, CF.text
+    elseif state == "disabled" then
+        background, border, labelColor = CF.panel, CF.borderSoft, CF.muted
+    else
+        button.selected = false
+        state = "idle"
+    end
+    button.visualState = state
+    setColor(button.background, background)
+    for _, edge in ipairs(button.border or {}) do setColor(edge, border) end
+    if button.label and button.label.SetTextColor then
+        button.label:SetTextColor(labelColor[1], labelColor[2], labelColor[3])
+    end
+    if button.pressed then
+        if state == "pressed" then button.pressed:Show() else button.pressed:Hide() end
+    end
+    if button.disabled then
+        if state == "disabled" then button.disabled:Show() else button.disabled:Hide() end
+    end
+    return true
+end
+
+function GGM.CreateFlatButton(api, parent, label, width, height, variant)
+    if type(api) ~= "table" or type(api.CreateFrame) ~= "function" then return nil end
+    local button = api.CreateFrame("Button", nil, parent)
+    button:SetSize(width, height)
+    button.variant = buttonVariantColors[variant] and variant or "secondary"
+    button.background = button:CreateTexture(nil, "BACKGROUND")
+    button.background:SetAllPoints(button)
+    button.border = createFlatBorder(button, CF.border)
+    button.borderEdges = button.border
+    button.hover = button:CreateTexture(nil, "HIGHLIGHT")
+    button.hover:SetAllPoints(button)
+    setColor(button.hover, button.variant == "primary" and CF.accentHover or CF.panelHover)
+    if button.SetHighlightTexture then button:SetHighlightTexture(button.hover) end
+    button.pressed = button:CreateTexture(nil, "HIGHLIGHT")
+    button.pressed:SetAllPoints(button)
+    setColor(button.pressed, CF.accent)
+    button.pressed:Hide()
+    button.disabled = button:CreateTexture(nil, "HIGHLIGHT")
+    button.disabled:SetAllPoints(button)
+    setColor(button.disabled, CF.panel)
+    button.disabled:Hide()
+    button.label = createText(button, "OVERLAY", "GameFontHighlight")
+    button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+    button.label:SetText(label or "")
+    button:RegisterForClicks("LeftButtonUp")
+    button:SetScript("OnMouseDown", function(self, mouseButton)
+        if mouseButton == "LeftButton" and self.visualState ~= "disabled" then
+            GGM.SetFlatButtonState(self, "pressed")
+        end
+    end)
+    button:SetScript("OnMouseUp", function(self)
+        if self.visualState == "pressed" then
+            GGM.SetFlatButtonState(self, self.selected and "selected" or "idle")
+        end
+    end)
+    button:SetScript("OnDisable", function(self) GGM.SetFlatButtonState(self, "disabled") end)
+    button:SetScript("OnEnable", function(self)
+        GGM.SetFlatButtonState(self, self.selected and "selected" or "idle")
+    end)
+    GGM.SetFlatButtonState(button, "idle")
+    return button
 end
 
 -- Flat content card used for search/list areas.  Kept on basic textures only so it
 -- remains safe across Classic clients while shedding the older leather/inset look.
 local function createClassicInsetPanel(api, parent, width, height)
-    local panel = api.CreateFrame("Frame", nil, parent)
+    local panel = createFlatPanel(api, parent)
     panel:SetSize(width, height)
 
-    panel.background = panel:CreateTexture(nil, "BACKGROUND")
-    panel.background:SetAllPoints(panel)
-    setColor(panel.background, CF.panel)
-
     panel.inner = panel:CreateTexture(nil, "BACKGROUND")
-    panel.inner:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -2)
-    panel.inner:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -2, 2)
-    panel.inner:SetColorTexture(0.068, 0.068, 0.076, 0.82)
+    panel.inner:SetPoint("TOPLEFT", panel, "TOPLEFT", UI.borderWidth, -UI.borderWidth)
+    panel.inner:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -UI.borderWidth, UI.borderWidth)
+    setColor(panel.inner, CF.panelInner)
 
-    createFlatBorder(panel, CF.border)
     return panel
 end
 
--- Equipment content card.  The paper-doll slot layout is unchanged; only the
--- presentation is flattened into a CurseForge-like dark card with an orange rule.
+-- Equipment content card. The paper-doll layout is unchanged; the heading divider
+-- uses the shared neutral border so the accent remains reserved for active states.
 local function createClassicGearPanel(api, parent)
-    local panel = api.CreateFrame("Frame", nil, parent)
+    local panel = createFlatPanel(api, parent)
     panel:SetSize(570, 438)
     panel:SetPoint("TOPLEFT", parent, "TOPLEFT", 292, -156)
 
-    panel.background = panel:CreateTexture(nil, "BACKGROUND")
-    panel.background:SetAllPoints(panel)
-    setColor(panel.background, CF.panel)
-
     panel.headerBackground = panel:CreateTexture(nil, "BORDER")
-    panel.headerBackground:SetPoint("TOPLEFT", panel, "TOPLEFT", 1, -1)
-    panel.headerBackground:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -1, -1)
-    panel.headerBackground:SetHeight(36)
+    panel.headerBackground:SetPoint("TOPLEFT", panel, "TOPLEFT", UI.borderWidth, -UI.borderWidth)
+    panel.headerBackground:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -UI.borderWidth, -UI.borderWidth)
+    panel.headerBackground:SetHeight(UI.controlHeightDefault)
     setColor(panel.headerBackground, CF.panelRaised)
 
     panel.headerLine = panel:CreateTexture(nil, "BORDER")
     panel.headerLine:SetPoint("BOTTOMLEFT", panel.headerBackground, "BOTTOMLEFT", 0, 0)
     panel.headerLine:SetPoint("BOTTOMRIGHT", panel.headerBackground, "BOTTOMRIGHT", 0, 0)
-    panel.headerLine:SetHeight(2)
-    setColor(panel.headerLine, CF.accent)
+    panel.headerLine:SetHeight(UI.borderWidth)
+    setColor(panel.headerLine, CF.borderSoft)
 
     panel.title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    panel.title:SetPoint("LEFT", panel.headerBackground, "LEFT", 14, 1)
+    panel.title:SetPoint("LEFT", panel.headerBackground, "LEFT", space(4), 1)
     panel.title:SetText("Equipment")
     panel.title:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
 
-    createFlatBorder(panel, CF.border)
     return panel
 end
 
@@ -392,6 +518,8 @@ local function renderBrowserDetail(frame, entry, api)
     setText(frame.realmLine, model.realm)
     setText(frame.capturedLine, "Saved capture: " .. model.capturedAtText)
     setText(frame.completenessLine, model.completenessText)
+    local completenessColor = model.complete and CF.success or CF.warning
+    frame.completenessLine:SetTextColor(completenessColor[1], completenessColor[2], completenessColor[3])
     for index, slot in ipairs(model.slots) do
         local button = frame.slotButtons[index]
         button.key = slot.key
@@ -490,11 +618,7 @@ local PROFESSIONS = {
 }
 
 local function professionButtonColor(button, selected)
-    if selected then
-        button.background:SetColorTexture(0.25, 0.18, 0.055, 0.98)
-    else
-        button.background:SetColorTexture(0.055, 0.055, 0.065, 0.96)
-    end
+    GGM.SetFlatButtonState(button, selected and "selected" or "idle")
 end
 
 function GGM.SelectProfession(frame, selectedKey)
@@ -512,74 +636,59 @@ function GGM.SelectProfession(frame, selectedKey)
     for _, button in ipairs(frame.professionButtons) do
         local selected = button.key == selectedKey
         professionButtonColor(button, selected)
-        if selected then button.label:SetTextColor(1, 0.82, 0) else button.label:SetTextColor(0.9, 0.9, 0.9) end
     end
     return true
 end
 
 local function createProfessionButton(api, page, profession, offset)
-    local button = api.CreateFrame("Button", nil, page)
-    button:SetSize(178, 52)
+    local button = GGM.CreateFlatButton(api, page, profession.key, UI.professionSidebarWidth, UI.professionRowHeight, "secondary")
     button:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -offset)
 
-    local background = button:CreateTexture(nil, "BACKGROUND")
-    background:SetAllPoints(button)
-    button.background = background
-
     local icon = button:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(38, 38)
-    icon:SetPoint("LEFT", button, "LEFT", 8, 0)
+    icon:SetSize(24, 24)
+    icon:SetPoint("LEFT", button, "LEFT", space(2), 0)
     icon:SetTexture(profession.icon)
-
-    local label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    label:SetPoint("LEFT", icon, "RIGHT", 10, 0)
-    label:SetPoint("RIGHT", button, "RIGHT", -6, 0)
-    label:SetJustifyH("LEFT")
-    label:SetText(profession.key)
+    if button.label.ClearAllPoints then button.label:ClearAllPoints() end
+    button.label:SetPoint("LEFT", icon, "RIGHT", space(2), 0)
+    button.label:SetPoint("RIGHT", button, "RIGHT", -space(2), 0)
+    button.label:SetJustifyH("LEFT")
 
     button.key = profession.key
-    button.label = label
-    button:RegisterForClicks("LeftButtonUp")
     button:SetScript("OnClick", function() GGM.SelectProfession(page.owner, profession.key) end)
-    button:SetScript("OnEnter", function()
-        if page.owner.selectedProfession ~= profession.key then
-            background:SetColorTexture(0.11, 0.11, 0.12, 0.98)
-        end
-    end)
-    button:SetScript("OnLeave", function()
-        professionButtonColor(button, page.owner.selectedProfession == profession.key)
-    end)
     professionButtonColor(button, false)
     return button
 end
 
 local function createProfessionsPage(api, frame)
     local page = api.CreateFrame("Frame", nil, frame)
-    page:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -48)
-    page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -18, 18)
+    page:SetPoint("TOPLEFT", frame, "TOPLEFT", space(4), -90)
+    page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -space(4), space(4))
     page.owner = frame
     page:Hide()
 
-    local panel = page:CreateTexture(nil, "BACKGROUND")
-    panel:SetPoint("TOPLEFT", page, "TOPLEFT", 190, 0)
+    local panel = createFlatPanel(api, page)
+    panel:SetPoint("TOPLEFT", page, "TOPLEFT", UI.professionSidebarWidth + space(3), 0)
     panel:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
-    panel:SetColorTexture(0.035, 0.035, 0.04, 0.8)
+    frame.professionDetailPanel = panel
 
     frame.professionButtons = {}
     for index, profession in ipairs(PROFESSIONS) do
-        frame.professionButtons[index] = createProfessionButton(api, page, profession, (index - 1) * 58)
+        frame.professionButtons[index] = createProfessionButton(api, page, profession,
+            (index - 1) * (UI.professionRowHeight + space(2)))
     end
 
     frame.professionHeading = page:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    frame.professionHeading:SetPoint("TOPLEFT", page, "TOPLEFT", 210, -30)
-    frame.professionHeading:SetPoint("RIGHT", page, "RIGHT", -18, 0)
+    frame.professionHeading:SetPoint("TOPLEFT", panel, "TOPLEFT", space(4), -space(4))
+    frame.professionHeading:SetPoint("RIGHT", panel, "RIGHT", -space(4), 0)
     frame.professionHeading:SetJustifyH("LEFT")
+    frame.professionHeading:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
 
     local placeholder = page:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    placeholder:SetPoint("TOPLEFT", frame.professionHeading, "BOTTOMLEFT", 0, -18)
-    placeholder:SetPoint("RIGHT", page, "RIGHT", -18, 0)
+    placeholder:SetPoint("TOPLEFT", frame.professionHeading, "BOTTOMLEFT", 0, -space(4))
+    placeholder:SetPoint("RIGHT", panel, "RIGHT", -space(4), 0)
     placeholder:SetJustifyH("LEFT")
     placeholder:SetText("Details will be added later.")
+    placeholder:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
 
     frame.professionsPage = page
     GGM.SelectProfession(frame, "Alchemy")
@@ -600,7 +709,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     for _, tab in ipairs(frame.navigationTabs) do
         local selected = tab.key == selectedKey
         if selected then
-            setColor(tab.background, CF.panelRaised)
+            setColor(tab.background, CF.accentSoft)
             tab.label:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
             if tab.accent then tab.accent:Show() end
             if tab.icon then tab.icon:SetAlpha(1) end
@@ -640,12 +749,12 @@ updateBrowserList = function(frame, api)
         local row = rows[index]
         if not row then
             row = api.CreateFrame("Button", nil, frame.listContent)
-            row:SetSize(224, 32)
+            row:SetSize(224, UI.rowHeightCompact)
 
             row.base = row:CreateTexture(nil, "BACKGROUND")
             row.base:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
             row.base:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
-            row.base:SetColorTexture(0.072, 0.072, 0.080, 0.70)
+            setColor(row.base, CF.panelInner)
 
             row.selection = row:CreateTexture(nil, "BACKGROUND")
             row.selection:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
@@ -664,15 +773,22 @@ updateBrowserList = function(frame, api)
             row.hover:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
             row.hover:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
             setColor(row.hover, CF.panelHover)
+            if row.SetHighlightTexture then row:SetHighlightTexture(row.hover) end
+
+            row.pressed = row:CreateTexture(nil, "HIGHLIGHT")
+            row.pressed:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+            row.pressed:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+            setColor(row.pressed, CF.accentSoft)
+            row.pressed:Hide()
 
             row.separator = row:CreateTexture(nil, "BORDER")
-            row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 8, 0)
-            row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -8, 0)
-            row.separator:SetHeight(1)
+            row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", space(2), 0)
+            row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -space(2), 0)
+            row.separator:SetHeight(UI.borderWidth)
             setColor(row.separator, CF.borderSoft)
 
             row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            row.label:SetPoint("LEFT", row, "LEFT", 12, 0)
+            row.label:SetPoint("LEFT", row, "LEFT", space(3), 0)
             row.label:SetWidth(204)
             row.label:SetJustifyH("LEFT")
             row:RegisterForClicks("LeftButtonUp")
@@ -680,7 +796,7 @@ updateBrowserList = function(frame, api)
         end
         row.entry = entry
         row.label:SetText(entry.name .. " - " .. entry.realm)
-        row:SetPoint("TOPLEFT", frame.listContent, "TOPLEFT", 0, -(index - 1) * 32)
+        row:SetPoint("TOPLEFT", frame.listContent, "TOPLEFT", 0, -(index - 1) * UI.rowHeightCompact)
         row.selected = frame.selectedEntry ~= nil and frame.selectedEntry.key == entry.key
         if row.selected then
             row.selection:Show()
@@ -693,7 +809,7 @@ updateBrowserList = function(frame, api)
             if row.selected then
                 row.label:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
             else
-                row.label:SetTextColor(0.86, 0.86, 0.88)
+                row.label:SetTextColor(CF.textSecondary[1], CF.textSecondary[2], CF.textSecondary[3])
             end
         end
         local selectedRow = row
@@ -702,10 +818,14 @@ updateBrowserList = function(frame, api)
             updateBrowserList(frame, api)
             renderBrowserDetail(frame, frame.selectedEntry, api)
         end)
+        row:SetScript("OnMouseDown", function(self, mouseButton)
+            if mouseButton == "LeftButton" then self.pressed:Show() end
+        end)
+        row:SetScript("OnMouseUp", function(self) self.pressed:Hide() end)
         row:Show()
     end
     for index = #frame.filteredEntries + 1, #rows do rows[index]:Hide() end
-    frame.listContent:SetHeight(math.max(#frame.filteredEntries * 32, 1))
+    frame.listContent:SetHeight(math.max(#frame.filteredEntries * UI.rowHeightCompact, 1))
 
     if #frame.activeEntries == 0 then
         frame.listEmpty:SetText(frame.browserView == "Mine" and "No saved personal gear" or "No saved guild gear")
@@ -725,48 +845,13 @@ end
 local function updateBrowserViewButtonStyles(frame)
     for _, button in ipairs({ frame.mineButton, frame.guildButton }) do
         local selected = button.key == frame.browserView
-        button.selected = selected
-        if selected then
-            setColor(button.background, CF.accentSoft)
-            for _, border in ipairs(button.border) do setColor(border, CF.accent) end
-            button.label:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
-        else
-            setColor(button.background, CF.panelRaised)
-            for _, border in ipairs(button.border) do setColor(border, CF.border) end
-            button.label:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
-        end
+        GGM.SetFlatButtonState(button, selected and "selected" or "idle")
     end
 end
 
 local function createBrowserViewButton(api, frame, key, label, x)
-    local button = api.CreateFrame("Button", nil, frame.searchPanel)
-    button:SetSize(45, 21)
-    button:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", x, -6)
-    button.background = button:CreateTexture(nil, "BACKGROUND")
-    button.background:SetAllPoints(button)
-    setColor(button.background, CF.panelRaised)
-    button.border = {}
-    local edges = {
-        { "TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", 0, 0, 0, 0, "height" },
-        { "BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0, 0, 0, "height" },
-        { "TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", 0, 0, 0, 0, "width" },
-        { "TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", 0, 0, 0, 0, "width" },
-    }
-    for index, edge in ipairs(edges) do
-        local border = button:CreateTexture(nil, "BORDER")
-        border:SetPoint(edge[1], button, edge[2], edge[5], edge[6])
-        border:SetPoint(edge[3], button, edge[4], edge[7], edge[8])
-        if edge[9] == "height" then border:SetHeight(1) else border:SetWidth(1) end
-        setColor(border, CF.border)
-        button.border[index] = border
-    end
-    button.hover = button:CreateTexture(nil, "HIGHLIGHT")
-    button.hover:SetAllPoints(button)
-    setColor(button.hover, CF.panelHover)
-    button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
-    button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
-    button.label:SetText(label)
-    button:RegisterForClicks("LeftButtonUp")
+    local button = GGM.CreateFlatButton(api, frame.searchPanel, label, UI.ownershipButtonWidth, UI.controlHeightCompact, "secondary")
+    button:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", x, -space(1))
     button.key = key
     button:SetScript("OnClick", function()
         frame.browserView = key
@@ -778,8 +863,8 @@ end
 
 local function createNavigationTab(api, frame, key, label, iconPath, offset)
     local tab = api.CreateFrame("Button", nil, frame)
-    tab:SetSize(116, 34)
-    tab:SetPoint("TOPLEFT", frame, "TOPLEFT", 16 + offset, -48)
+    tab:SetSize(UI.navigationTabWidth, UI.controlHeightDefault)
+    tab:SetPoint("TOPLEFT", frame, "TOPLEFT", space(4) + offset, -48)
 
     local background = tab:CreateTexture(nil, "BACKGROUND")
     background:SetAllPoints(tab)
@@ -795,15 +880,21 @@ local function createNavigationTab(api, frame, key, label, iconPath, offset)
     local hover = tab:CreateTexture(nil, "HIGHLIGHT")
     hover:SetAllPoints(tab)
     setColor(hover, CF.panelHover)
+    if tab.SetHighlightTexture then tab:SetHighlightTexture(hover) end
+
+    local pressed = tab:CreateTexture(nil, "HIGHLIGHT")
+    pressed:SetAllPoints(tab)
+    setColor(pressed, CF.accentSoft)
+    pressed:Hide()
 
     local icon = tab:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(18, 18)
-    icon:SetPoint("LEFT", tab, "LEFT", 10, 0)
+    icon:SetSize(16, 16)
+    icon:SetPoint("LEFT", tab, "LEFT", space(3), 0)
     icon:SetTexture(iconPath)
     icon:SetAlpha(0.72)
 
     local text = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    text:SetPoint("LEFT", icon, "RIGHT", 7, 0)
+    text:SetPoint("LEFT", icon, "RIGHT", space(2), 0)
     text:SetText(label)
     text:SetJustifyH("LEFT")
     text:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
@@ -811,9 +902,14 @@ local function createNavigationTab(api, frame, key, label, iconPath, offset)
     tab.key = key
     tab.background = background
     tab.accent = accent
+    tab.pressed = pressed
     tab.icon = icon
     tab.label = text
     tab:RegisterForClicks("LeftButtonUp")
+    tab:SetScript("OnMouseDown", function(self, mouseButton)
+        if mouseButton == "LeftButton" then self.pressed:Show() end
+    end)
+    tab:SetScript("OnMouseUp", function(self) self.pressed:Hide() end)
     tab:SetScript("OnClick", function() GGM.SelectGuildGearBrowserTab(frame, key) end)
     return tab
 end
@@ -858,83 +954,102 @@ function GGM.CreateGuildGearBrowserWindow(api)
     setColor(frame.cfBackground, CF.window)
 
     frame.cfTopbar = frame:CreateTexture(nil, "BORDER")
-    frame.cfTopbar:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
-    frame.cfTopbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
+    frame.cfTopbar:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.borderWidth, -UI.borderWidth)
+    frame.cfTopbar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -UI.borderWidth, -UI.borderWidth)
     frame.cfTopbar:SetHeight(39)
     setColor(frame.cfTopbar, CF.topbar)
 
-    frame.cfTopbarAccent = frame:CreateTexture(nil, "BORDER")
-    frame.cfTopbarAccent:SetPoint("BOTTOMLEFT", frame.cfTopbar, "BOTTOMLEFT", 0, 0)
-    frame.cfTopbarAccent:SetPoint("BOTTOMRIGHT", frame.cfTopbar, "BOTTOMRIGHT", 0, 0)
-    frame.cfTopbarAccent:SetHeight(2)
-    setColor(frame.cfTopbarAccent, CF.accent)
+    frame.cfTopbarRule = frame:CreateTexture(nil, "BORDER")
+    frame.cfTopbarRule:SetPoint("BOTTOMLEFT", frame.cfTopbar, "BOTTOMLEFT", 0, 0)
+    frame.cfTopbarRule:SetPoint("BOTTOMRIGHT", frame.cfTopbar, "BOTTOMRIGHT", 0, 0)
+    frame.cfTopbarRule:SetHeight(UI.borderWidth)
+    setColor(frame.cfTopbarRule, CF.borderSoft)
     createFlatBorder(frame, CF.border)
 
     if frame.TitleText.ClearAllPoints then
         frame.TitleText:ClearAllPoints()
-        frame.TitleText:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -12)
+        frame.TitleText:SetPoint("TOPLEFT", frame, "TOPLEFT", space(4), -space(3))
     end
     if frame.TitleText.SetTextColor then
         frame.TitleText:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
     end
 
     -- Left browser column: compact filter card over a dense, table-like result list.
-    frame.searchPanel = createClassicInsetPanel(api, frame, 258, 66)
-    frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -90)
+    frame.searchPanel = createClassicInsetPanel(api, frame, UI.browserColumnWidth, 80)
+    frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", space(4), -90)
 
     frame.searchLabel = createText(frame.searchPanel, "OVERLAY", "GameFontNormal")
     frame.searchLabel:SetText("Search characters")
-    frame.searchLabel:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 12, -9)
+    frame.searchLabel:SetPoint("LEFT", frame.searchPanel, "LEFT", space(3), -(space(1) + UI.controlHeightCompact / 2))
     frame.searchLabel:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
 
-    frame.searchLabel:SetWidth(132)
-    frame.mineButton = createBrowserViewButton(api, frame, "Mine", "Mine", 154)
-    frame.guildButton = createBrowserViewButton(api, frame, "Guild", "Guild", 204)
+    frame.searchLabel:SetWidth(UI.searchLabelWidth)
+    frame.mineButton = createBrowserViewButton(api, frame, "Mine", "Mine", space(3) + UI.searchLabelWidth + space(2))
+    frame.guildButton = createBrowserViewButton(api, frame, "Guild", "Guild", UI.browserColumnWidth - space(2) - UI.ownershipButtonWidth)
     updateBrowserViewButtonStyles(frame)
 
     frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel, "InputBoxTemplate")
-    frame.searchBox:SetSize(232, 25)
-    frame.searchBox:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 12, -32)
+    frame.searchBox:SetSize(UI.browserColumnWidth - (2 * space(3)), UI.controlHeightCompact)
+    frame.searchBox:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", space(3), -(space(1) + UI.controlHeightCompact + space(2)))
 
     frame.searchBoxBackground = frame.searchBox:CreateTexture(nil, "BACKGROUND")
-    frame.searchBoxBackground:SetPoint("TOPLEFT", frame.searchBox, "TOPLEFT", -3, 2)
-    frame.searchBoxBackground:SetPoint("BOTTOMRIGHT", frame.searchBox, "BOTTOMRIGHT", 3, -2)
-    frame.searchBoxBackground:SetColorTexture(0.040, 0.040, 0.046, 1)
-    createFlatBorder(frame.searchBox, CF.border)
+    frame.searchBoxBackground:SetPoint("TOPLEFT", frame.searchBox, "TOPLEFT", -space(1), space(1))
+    frame.searchBoxBackground:SetPoint("BOTTOMRIGHT", frame.searchBox, "BOTTOMRIGHT", space(1), -space(1))
+    setColor(frame.searchBoxBackground, CF.panelInner)
+    frame.searchBoxBorder = createFlatBorder(frame.searchBox, CF.border)
     if frame.searchBox.Left and frame.searchBox.Left.Hide then frame.searchBox.Left:Hide() end
     if frame.searchBox.Middle and frame.searchBox.Middle.Hide then frame.searchBox.Middle:Hide() end
     if frame.searchBox.Right and frame.searchBox.Right.Hide then frame.searchBox.Right:Hide() end
     frame.searchBox:SetAutoFocus(false)
+    frame.searchBox:SetScript("OnEnter", function(self)
+        self.mouseOver = true
+        if not self.hasFocus then setColor(frame.searchBoxBackground, CF.panelRaised) end
+    end)
+    frame.searchBox:SetScript("OnLeave", function(self)
+        self.mouseOver = false
+        if not self.hasFocus then setColor(frame.searchBoxBackground, CF.panelInner) end
+    end)
+    frame.searchBox:SetScript("OnEditFocusGained", function()
+        frame.searchBox.hasFocus = true
+        setColor(frame.searchBoxBackground, CF.panelRaised)
+        for _, edge in ipairs(frame.searchBoxBorder) do setColor(edge, CF.accent) end
+    end)
+    frame.searchBox:SetScript("OnEditFocusLost", function()
+        frame.searchBox.hasFocus = false
+        setColor(frame.searchBoxBackground, frame.searchBox.mouseOver and CF.panelRaised or CF.panelInner)
+        for _, edge in ipairs(frame.searchBoxBorder) do setColor(edge, CF.border) end
+    end)
     frame.searchBox:SetScript("OnTextChanged", function()
         updateBrowserList(frame, api)
     end)
 
-    frame.listPanel = createClassicInsetPanel(api, frame, 258, 430)
-    frame.listPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -164)
+    frame.listPanel = createClassicInsetPanel(api, frame, UI.browserColumnWidth, 420)
+    frame.listPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", space(4), -178)
 
     frame.listScroll = api.CreateFrame("ScrollFrame", nil, frame.listPanel, "UIPanelScrollFrameTemplate")
-    frame.listScroll:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 7, -7)
-    frame.listScroll:SetSize(242, 416)
+    frame.listScroll:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", space(2), -space(2))
+    frame.listScroll:SetSize(UI.listScrollWidth, UI.listScrollHeight)
     frame.listContent = api.CreateFrame("Frame", nil, frame.listScroll)
     frame.listContent:SetSize(224, 1)
     frame.listScroll:SetScrollChild(frame.listContent)
     frame.listEmpty = createText(frame.listPanel, "OVERLAY", "GameFontNormal")
-    frame.listEmpty:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 14, -16)
+    frame.listEmpty:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", space(4), -space(4))
+    frame.listEmpty:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
     frame.listEmpty:Hide()
 
+    frame.gearPanel = createClassicGearPanel(api, frame)
     frame.characterLine = createText(frame, "OVERLAY", "GameFontNormalLarge")
-    frame.characterLine:SetPoint("TOPLEFT", frame, "TOPLEFT", 300, -94)
+    frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", space(2), 62)
     frame.realmLine = createText(frame, "OVERLAY", "GameFontHighlight")
-    frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 0, -4)
+    frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 0, -space(1))
     frame.capturedLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
-    frame.capturedLine:SetPoint("TOPLEFT", frame.realmLine, "BOTTOMLEFT", 0, -5)
+    frame.capturedLine:SetPoint("TOPLEFT", frame.realmLine, "BOTTOMLEFT", 0, -space(1))
     frame.completenessLine = createText(frame, "OVERLAY", "GameFontHighlightSmall")
-    frame.completenessLine:SetPoint("LEFT", frame.capturedLine, "RIGHT", 16, 0)
+    frame.completenessLine:SetPoint("LEFT", frame.capturedLine, "RIGHT", space(4), 0)
     frame.characterLine:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
     frame.realmLine:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
     frame.capturedLine:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
-    frame.completenessLine:SetTextColor(CF.accent[1], CF.accent[2], CF.accent[3])
-    frame.gearPanel = createClassicGearPanel(api, frame)
+    frame.completenessLine:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
 
     frame.characterModelView = GGM.CreateSavedCharacterModel(api, frame.gearPanel)
     if frame.characterModelView.model then
@@ -951,6 +1066,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     frame.detailEmpty = createText(frame.gearPanel, "OVERLAY", "GameFontNormalLarge")
     frame.detailEmpty:SetPoint("CENTER", frame.gearPanel, "CENTER", 0, -12)
+    frame.detailEmpty:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
     frame.detailEmpty:Hide()
 
     -- Classic 2D paper-doll arrangement: eight slots on each side and weapons
@@ -978,7 +1094,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
         button.slotBackground = button:CreateTexture(nil, "BACKGROUND")
         button.slotBackground:SetSize(38, 38)
         button.slotBackground:SetPoint("CENTER", button, "CENTER", 0, 0)
-        button.slotBackground:SetColorTexture(0.030, 0.030, 0.035, 1)
+        setColor(button.slotBackground, CF.slotBackground)
 
         button.icon = button:CreateTexture(nil, "ARTWORK")
         button.icon:SetSize(36, 36)
@@ -992,28 +1108,29 @@ function GGM.CreateGuildGearBrowserWindow(api)
         button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
         button.highlight:SetSize(42, 42)
         button.highlight:SetPoint("CENTER", button, "CENTER", 0, 0)
-        button.highlight:SetColorTexture(CF.accent[1], CF.accent[2], CF.accent[3], 0.28)
+        setColor(button.highlight, CF.accentHover)
+        if button.SetHighlightTexture then button:SetHighlightTexture(button.highlight) end
 
         button.label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         button.label:SetText(slotDisplayNames[trackedSlot.key])
-        button.label:SetTextColor(0.80, 0.80, 0.83)
+        button.label:SetTextColor(CF.textSlot[1], CF.textSlot[2], CF.textSlot[3])
 
         button.status = button:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 
         if layout.group == "left" then
             button.label:SetWidth(92)
             button.label:SetJustifyH("LEFT")
-            button.label:SetPoint("LEFT", button, "RIGHT", 7, 6)
+            button.label:SetPoint("LEFT", button, "RIGHT", space(2), 6)
             button.status:SetWidth(92)
             button.status:SetJustifyH("LEFT")
-            button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -1)
+            button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -UI.borderWidth)
         elseif layout.group == "right" then
             button.label:SetWidth(92)
             button.label:SetJustifyH("RIGHT")
-            button.label:SetPoint("RIGHT", button, "LEFT", -7, 6)
+            button.label:SetPoint("RIGHT", button, "LEFT", -space(2), 6)
             button.status:SetWidth(92)
             button.status:SetJustifyH("RIGHT")
-            button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -1)
+            button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -UI.borderWidth)
         else
             button.label:SetWidth(70)
             button.label:SetJustifyH("CENTER")
@@ -1029,18 +1146,25 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     frame.placeholderPages = {}
     for _, pageKey in ipairs({ "Bank" }) do
-        local page = createText(frame, "OVERLAY", "GameFontNormalLarge")
-        page:SetPoint("CENTER", frame, "CENTER", 0, 0)
-        page:SetText(pageKey .. " content will be added later.")
-        page:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
+        local page = createFlatPanel(api, frame)
+        page:SetPoint("TOPLEFT", frame, "TOPLEFT", space(4), -90)
+        page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -space(4), space(4))
+        page.heading = createText(page, "OVERLAY", "GameFontNormalLarge")
+        page.heading:SetPoint("TOPLEFT", page, "TOPLEFT", space(4), -space(4))
+        page.heading:SetText(pageKey)
+        page.heading:SetTextColor(CF.text[1], CF.text[2], CF.text[3])
+        page.message = createText(page, "OVERLAY", "GameFontNormal")
+        page.message:SetPoint("CENTER", page, "CENTER", 0, 0)
+        page.message:SetText(pageKey .. " content will be added later.")
+        page.message:SetTextColor(CF.muted[1], CF.muted[2], CF.muted[3])
         page:Hide()
         frame.placeholderPages[pageKey] = page
     end
     createProfessionsPage(api, frame)
     frame.navigationTabs = {
         createNavigationTab(api, frame, "Character", "Character", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", 0),
-        createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", 122),
-        createNavigationTab(api, frame, "Bank", "Bank", "Interface\\Icons\\INV_Misc_Bag_10", 244),
+        createNavigationTab(api, frame, "Professions", "Professions", "Interface\\Icons\\Trade_BlackSmithing", UI.navigationTabWidth + space(2)),
+        createNavigationTab(api, frame, "Bank", "Bank", "Interface\\Icons\\INV_Misc_Bag_10", 2 * (UI.navigationTabWidth + space(2))),
     }
     GGM.SelectGuildGearBrowserTab(frame, "Character")
     return frame

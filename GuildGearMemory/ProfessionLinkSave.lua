@@ -160,9 +160,12 @@ function GGM.SaveActiveLinkedProfession(controller)
     return "saved", nil
 end
 
-local function setStatus(controller, text)
+local function setStatus(controller, text, tone)
     if controller.status and type(controller.status.SetText) == "function" then
         controller.status:SetText(text or "")
+        if type(GGM.SetUITextTone) == "function" then
+            GGM.SetUITextTone(controller.status, tone or "secondary")
+        end
     end
 end
 
@@ -212,27 +215,35 @@ function GGM.CreateProfessionSaveButton(controller)
         return false, "profession-frame-unavailable"
     end
 
-    local button = api.CreateFrame("Button", nil, professionFrame, "UIPanelButtonTemplate")
-    button:SetSize(150, 24)
+    local button
+    if type(GGM.CreateFlatButton) == "function" then
+        button = GGM.CreateFlatButton(api, professionFrame, "Save to Variables", 150, 30, "primary")
+    else
+        button = api.CreateFrame("Button", nil, professionFrame, "UIPanelButtonTemplate")
+        button:SetSize(150, 24)
+    end
+    local buttonGap = GGM.UIStyleTokens and GGM.UIStyleTokens.space2 or 8
     local createAllButton = findCreateAllButton(professionFrame)
     if createAllButton then
-        button:SetPoint("RIGHT", createAllButton, "LEFT", -8, 0)
+        button:SetPoint("RIGHT", createAllButton, "LEFT", -buttonGap, 0)
     else
         button:SetPoint("BOTTOMRIGHT", professionFrame, "BOTTOMRIGHT", -440, 22)
     end
-    button:SetText("Save to Variables")
+    if not button.label then button:SetText("Save to Variables") end
     button:Hide()
 
     local status = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    status:SetPoint("TOP", button, "BOTTOM", 0, -4)
+    local statusGap = GGM.UIStyleTokens and GGM.UIStyleTokens.space1 or 4
+    status:SetPoint("TOP", button, "BOTTOM", 0, -statusGap)
     status:SetText("")
+    if type(GGM.SetUITextTone) == "function" then GGM.SetUITextTone(status, "secondary") end
 
     button:SetScript("OnClick", function()
         local result, err = GGM.SaveActiveLinkedProfession(controller)
         if result == "saved" then
-            setStatus(controller, "Saved as cached profession data")
+            setStatus(controller, "Saved as cached profession data", "success")
         else
-            setStatus(controller, "Not saved: " .. tostring(err or "unavailable"))
+            setStatus(controller, "Not saved: " .. tostring(err or "unavailable"), "warning")
         end
     end)
 
