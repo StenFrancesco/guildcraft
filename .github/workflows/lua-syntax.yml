@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '**/*.lua'
+      - 'tests/**'
       - '.github/workflows/lua-syntax.yml'
   workflow_dispatch:
 
@@ -55,3 +56,6 @@ jobs:
           fi
 
           echo "All ${#lua_files[@]} Lua files passed syntax validation."
+
+      - name: Run Lua test suite
+        run: lua5.1 tests/run.lua

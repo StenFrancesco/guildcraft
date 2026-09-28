@@ -17,16 +17,8 @@ local suites = {
     "tests.saved_character_model_test",
 }
 
-local function modulePath(moduleName)
-    return moduleName:gsub("%.", "/") .. ".lua"
-end
-
 for _, moduleName in ipairs(suites) do
-    local file = io.open(modulePath(moduleName), "r")
-    if file then
-        file:close()
-        require(moduleName)
-    end
+    require(moduleName)
 end
 
 local T = require("tests.testlib")
