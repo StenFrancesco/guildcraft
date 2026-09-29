@@ -28,6 +28,38 @@ function GGM.GetLocalPlayerRecord(api, db)
     return GGM.GetCompleteCharacterRecord(db, identity.key)
 end
 
+local function makeConfirmedSlotHandler(db, publishConfirmed)
+    return function(characterKey, slotKey, slotValue, confirmedAt)
+        local saved, saveErr, confirmedSequence = GGM.UpdateConfirmedCharacterSlot(
+            db,
+            characterKey,
+            slotKey,
+            slotValue,
+            confirmedAt
+        )
+        if not saved then
+            return false, saveErr
+        end
+
+        local notificationError
+        if publishConfirmed then
+            local callbackOk, callbackErr = pcall(
+                publishConfirmed,
+                characterKey,
+                slotKey,
+                GGM.CopyGearSlotValue(slotValue),
+                confirmedAt,
+                confirmedSequence
+            )
+            if not callbackOk then
+                notificationError = tostring(callbackErr)
+            end
+        end
+
+        return true, nil, notificationError
+    end
+end
+
 function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConfirmed)
     local identity, identityErr = GGM.BuildPlayerIdentity(api)
     if not identity then
@@ -35,19 +67,16 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
     end
 
     local record, recordErr = GGM.GetCompleteCharacterRecord(db, identity.key)
-    local hasExistingRecord = record ~= nil
     if not record then
         if recordErr ~= "record-missing" then
             return nil, recordErr
         end
 
-        local capturedRecord, captureErr = GGM.CaptureAndStoreLocalPlayer(api, db)
-        if not capturedRecord then
-            return nil, captureErr
+        record, recordErr = GGM.CaptureAndStoreLocalPlayer(api, db)
+        if not record then
+            return nil, recordErr
         end
-    end
-
-    if hasExistingRecord then
+    else
         local identityUpdated, updateErr = GGM.UpdateLocalCharacterModelIdentity(db, identity)
         if not identityUpdated then
             return nil, updateErr
@@ -56,10 +85,10 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
 
     local tracker, trackerErr = GGM.CreateStableGearTracker(
         api,
-        db,
         identity.key,
+        record.gear,
         stabilityDelaySeconds,
-        onConfirmed
+        makeConfirmedSlotHandler(db, onConfirmed)
     )
     if not tracker then
         return nil, trackerErr
@@ -76,6 +105,7 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
             return nil, currentRecordErr
         end
         currentRecord.gear.slots[slotKey] = { unavailable = true }
+        tracker.confirmedSlots[slotKey] = { unavailable = true }
     end
 
     local _, reconcileErr = GGM.ReconcileAllGearSlots(tracker)

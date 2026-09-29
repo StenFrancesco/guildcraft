@@ -100,10 +100,51 @@ local function makeEnvironment(GGM)
     return api, db, timers, slotKeysByID, setSlot, setTime
 end
 
+local function createTracker(GGM, api, db, stabilityDelaySeconds, onPublished)
+    local characterKey = "Alice-Silvermoon"
+    local record = assert(GGM.GetCompleteCharacterRecord(db, characterKey))
+    local function persistConfirmedSlot(key, slotKey, slotValue, confirmedAt)
+        local saved, saveErr, confirmedSequence = GGM.UpdateConfirmedCharacterSlot(
+            db,
+            key,
+            slotKey,
+            slotValue,
+            confirmedAt
+        )
+        if not saved then
+            return false, saveErr
+        end
+
+        if onPublished then
+            local callbackOk, callbackErr = pcall(
+                onPublished,
+                key,
+                slotKey,
+                slotValue,
+                confirmedAt,
+                confirmedSequence
+            )
+            if not callbackOk then
+                return true, nil, tostring(callbackErr)
+            end
+        end
+
+        return true, nil
+    end
+
+    return GGM.CreateStableGearTracker(
+        api,
+        characterKey,
+        record.gear,
+        stabilityDelaySeconds,
+        persistConfirmedSlot
+    )
+end
+
 T.test("a changed slot becomes pending without changing shared state", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
 
     setSlot("HEAD", 9001, "|Hitem:9001|h[Candidate Head]|h")
     local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
@@ -121,7 +162,7 @@ end)
 T.test("a repeated event for the same pending item does not restart its timer", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
 
     setSlot("HEAD", 9001, "|Hitem:9001|h[Candidate Head]|h")
     assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
@@ -134,7 +175,7 @@ end)
 T.test("reverting to shared gear cancels and removes pending state", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
 
     setSlot("HEAD", 9001, "|Hitem:9001|h[Candidate Head]|h")
     assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
@@ -155,7 +196,7 @@ end)
 T.test("changing a pending slot to another new item restarts only that slot", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
 
     setSlot("HEAD", 9001, "|Hitem:9001|h[First Candidate]|h")
     assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
@@ -179,7 +220,7 @@ end)
 T.test("different slots keep independent pending timers", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
 
     setSlot("HEAD", 9001, "|Hitem:9001|h[Candidate Head]|h")
     assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
@@ -211,7 +252,7 @@ end)
 T.test("timer expiry re-reads current gear and never confirms a stale candidate", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
 
     setSlot("HEAD", 9001, "|Hitem:9001|h[First Candidate]|h")
     assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
@@ -231,7 +272,7 @@ T.test("tracker creation rejects a persisted slot id that disagrees with the cur
     local api, db = makeEnvironment(GGM)
     db.characters["Alice-Silvermoon"].gear.slots.HEAD.inventorySlotID = 999
 
-    local tracker, err = GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300)
+    local tracker, err = createTracker(GGM, api, db, 300)
 
     T.assertNil(tracker)
     T.assertEqual(err, "snapshot-slot-id-mismatch:HEAD")
@@ -244,7 +285,7 @@ T.test("timer creation returning nil fails closed without publishing pending sta
         return nil
     end
 
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
     setSlot("HEAD", 9001, "|Hitem:9001|h[Candidate Head]|h")
 
     local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
@@ -265,7 +306,7 @@ T.test("timer creation throwing fails closed without publishing pending state", 
         error("timer unavailable")
     end
 
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
     setSlot("HEAD", 9001, "|Hitem:9001|h[Candidate Head]|h")
 
     local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
@@ -286,7 +327,7 @@ T.test("timer creation returning a non-cancelable handle fails closed", function
         return {}
     end
 
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
     setSlot("HEAD", 9001, "|Hitem:9001|h[Candidate Head]|h")
 
     local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
@@ -303,7 +344,7 @@ end)
 T.test("an untracked equipment slot is ignored", function()
     local GGM = loadModules()
     local api, db, timers = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300))
+    local tracker = assert(createTracker(GGM, api, db, 300))
 
     local state, err = GGM.HandlePlayerEquipmentChanged(tracker, 999)
 
@@ -317,10 +358,10 @@ T.test("confirmed slot callback fires once after sequence and slot are persisted
     local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
     local calls = {}
 
-    local tracker = assert(GGM.CreateStableGearTracker(
+    local tracker = assert(createTracker(
+        GGM,
         api,
         db,
-        "Alice-Silvermoon",
         300,
         function(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
             local record = assert(GGM.GetCompleteCharacterRecord(db, characterKey))
@@ -355,7 +396,7 @@ T.test("confirmation callback is not fired when persistence fails", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
     local callCount = 0
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300, function()
+    local tracker = assert(createTracker(GGM, api, db, 300, function()
         callCount = callCount + 1
     end))
 
@@ -370,7 +411,7 @@ end)
 T.test("confirmation callback failure never rolls back a persisted confirmation", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
-    local tracker = assert(GGM.CreateStableGearTracker(api, db, "Alice-Silvermoon", 300, function()
+    local tracker = assert(createTracker(GGM, api, db, 300, function()
         error("sync callback exploded")
     end))
 
@@ -383,4 +424,43 @@ T.test("confirmation callback failure never rolls back a persisted confirmation"
     T.assertEqual(record.gear.slots.HEAD.itemID, 9400)
     T.assertEqual(record.confirmedSequence, 1)
     T.assertNotNil(tracker.lastConfirmationCallbackError)
+end)
+
+T.test("stable tracker reports a confirmed slot without writing storage", function()
+    local GGM = loadModules()
+    local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    local confirmed
+    GGM.UpdateConfirmedCharacterSlot = function()
+        error("stable tracker must not write storage")
+    end
+
+    local tracker = assert(GGM.CreateStableGearTracker(
+        api,
+        "Alice-Silvermoon",
+        record.gear,
+        300,
+        function(characterKey, slotKey, slotValue, confirmedAt)
+            confirmed = {
+                characterKey = characterKey,
+                slotKey = slotKey,
+                itemID = slotValue.itemID,
+                confirmedAt = confirmedAt,
+            }
+            return true, nil
+        end
+    ))
+
+    setSlot("HEAD", 9500, "|Hitem:9500|h[Stable]|h")
+    assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
+    setTime(1700000300)
+    timers[1]:Fire()
+
+    local savedRecord = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    T.assertEqual(confirmed.characterKey, "Alice-Silvermoon")
+    T.assertEqual(confirmed.slotKey, "HEAD")
+    T.assertEqual(confirmed.itemID, 9500)
+    T.assertEqual(confirmed.confirmedAt, 1700000300)
+    T.assertEqual(savedRecord.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(savedRecord.confirmedSequence, 0)
 end)
