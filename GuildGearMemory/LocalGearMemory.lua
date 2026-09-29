@@ -30,13 +30,18 @@ end
 
 local function makeConfirmedSlotHandler(db, publishConfirmed)
     return function(characterKey, slotKey, slotValue, confirmedAt)
-        local saved, saveErr, confirmedSequence = GGM.UpdateConfirmedCharacterSlot(
+        local updateOk, saved, saveErr, confirmedSequence = pcall(
+            GGM.UpdateConfirmedCharacterSlot,
             db,
             characterKey,
             slotKey,
             slotValue,
             confirmedAt
         )
+        if not updateOk then
+            return false, tostring(saved)
+        end
+
         if not saved then
             return false, saveErr
         end
@@ -61,6 +66,10 @@ local function makeConfirmedSlotHandler(db, publishConfirmed)
 end
 
 function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConfirmed)
+    if onConfirmed ~= nil and type(onConfirmed) ~= "function" then
+        return nil, "confirmation-callback-invalid"
+    end
+
     local identity, identityErr = GGM.BuildPlayerIdentity(api)
     if not identity then
         return nil, identityErr
