@@ -2,7 +2,7 @@
 ## Title: Guild Gear Memory
 ## Notes: Local last-known gear memory for guild characters
 ## Author: Guild Gear Memory contributors
-## Version: 0.4.2-raceportrait-fix
+## Version: 0.5.0-blizzard-ui
 ## SavedVariables: GuildGearMemoryDB
 
 Constants.lua

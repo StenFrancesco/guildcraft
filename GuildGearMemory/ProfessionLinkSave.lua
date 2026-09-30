@@ -160,9 +160,12 @@ function GGM.SaveActiveLinkedProfession(controller)
     return "saved", nil
 end
 
-local function setStatus(controller, text)
+local function setStatus(controller, text, tone)
     if controller.status and type(controller.status.SetText) == "function" then
         controller.status:SetText(text or "")
+        if type(GGM.SetUITextTone) == "function" then
+            GGM.SetUITextTone(controller.status, tone or "secondary")
+        end
     end
 end
 
@@ -197,6 +200,23 @@ local function establishOwnProfessionContext(controller, trade)
     end
 end
 
+local function addButtonIcon(button)
+    if not button or type(button.CreateTexture) ~= "function" then return end
+    local icon = button:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(18, 18)
+    icon:SetPoint("LEFT", button, "LEFT", 11, 0)
+    icon:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
+    icon:SetAlpha(0.90)
+    button.saveIcon = icon
+
+    if button.label and button.label.ClearAllPoints then
+        button.label:ClearAllPoints()
+        button.label:SetPoint("LEFT", icon, "RIGHT", 8, 0)
+        button.label:SetPoint("RIGHT", button, "RIGHT", -12, 0)
+        button.label:SetJustifyH("CENTER")
+    end
+end
+
 function GGM.CreateProfessionSaveButton(controller)
     if controller and controller.button then
         return true, nil
@@ -212,27 +232,53 @@ function GGM.CreateProfessionSaveButton(controller)
         return false, "profession-frame-unavailable"
     end
 
-    local button = api.CreateFrame("Button", nil, professionFrame, "UIPanelButtonTemplate")
-    button:SetSize(150, 24)
+    local button
+    if type(GGM.CreateFlatButton) == "function" then
+        button = GGM.CreateFlatButton(api, professionFrame, "Save Snapshot", 172, 32, "primary")
+        addButtonIcon(button)
+    else
+        button = api.CreateFrame("Button", nil, professionFrame, "UIPanelButtonTemplate")
+        button:SetSize(172, 26)
+        button:SetText("Save Snapshot")
+    end
+
+    local buttonGap = GGM.UIStyleTokens and GGM.UIStyleTokens.space2 or 8
     local createAllButton = findCreateAllButton(professionFrame)
     if createAllButton then
-        button:SetPoint("RIGHT", createAllButton, "LEFT", -8, 0)
+        button:SetPoint("RIGHT", createAllButton, "LEFT", -buttonGap, 0)
     else
-        button:SetPoint("BOTTOMRIGHT", professionFrame, "BOTTOMRIGHT", -440, 22)
+        button:SetPoint("BOTTOMRIGHT", professionFrame, "BOTTOMRIGHT", -184, 34)
     end
-    button:SetText("Save to Variables")
     button:Hide()
 
-    local status = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    status:SetPoint("TOP", button, "BOTTOM", 0, -4)
+    local status = button:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    status:SetPoint("BOTTOMRIGHT", button, "TOPRIGHT", 0, 7)
+    status:SetWidth(340)
+    status:SetJustifyH("RIGHT")
     status:SetText("")
+    if type(GGM.SetUITextTone) == "function" then GGM.SetUITextTone(status, "secondary") end
+
+    button:SetScript("OnEnter", function(self)
+        if not api.GameTooltip then return end
+        api.GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        if type(api.GameTooltip.SetText) == "function" then
+            api.GameTooltip:SetText("Save to Guild Gear Memory")
+            if type(api.GameTooltip.AddLine) == "function" then
+                api.GameTooltip:AddLine("Stores the currently visible recipes as a last-known profession snapshot.", 0.72, 0.74, 0.78, true)
+            end
+        end
+        api.GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", function()
+        if api.GameTooltip then api.GameTooltip:Hide() end
+    end)
 
     button:SetScript("OnClick", function()
         local result, err = GGM.SaveActiveLinkedProfession(controller)
         if result == "saved" then
-            setStatus(controller, "Saved as cached profession data")
+            setStatus(controller, "Guild Gear Memory  •  snapshot saved", "success")
         else
-            setStatus(controller, "Not saved: " .. tostring(err or "unavailable"))
+            setStatus(controller, "Save failed: " .. tostring(err or "unavailable"), "warning")
         end
     end)
 
@@ -249,7 +295,6 @@ function GGM.RefreshProfessionSaveButton(controller)
     end
 
     local trade = type(controller.api) == "table" and controller.api.C_TradeSkillUI or nil
-
     establishOwnProfessionContext(controller, trade)
 
     if controller.activeSource == "guild" then
@@ -269,9 +314,9 @@ function GGM.RefreshProfessionSaveButton(controller)
     local validContext = linked == true or (linked == false and controller.activeSource == "player")
     if linkedOk and validContext and readyOk and ready == true then
         if controller.activeSource == "player" then
-            setStatus(controller, "Your profession — saved data will be cached")
+            setStatus(controller, "Guild Gear Memory  •  personal profession  •  last-known recipes")
         else
-            setStatus(controller, "Guild link — saved data will be cached/last-known")
+            setStatus(controller, "Guild Gear Memory  •  guild profession  •  last-known recipes")
         end
         controller.button:Show()
         return "shown"
