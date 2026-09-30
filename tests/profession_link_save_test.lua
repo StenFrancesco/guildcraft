@@ -282,6 +282,7 @@ T.test("save button is parented to the profession UI", function()
         },
     }
     local createdParent
+    local statusWidth
     local button = {
         SetSize = function() end,
         SetPoint = function(_, point, relativeTo, relativePoint, x, y)
@@ -294,7 +295,12 @@ T.test("save button is parented to the profession UI", function()
         SetText = function() end,
         Hide = function() end,
         CreateFontString = function()
-            return { SetPoint = function() end, SetText = function() end }
+            return {
+                SetPoint = function() end,
+                SetWidth = function(_, width) statusWidth = width end,
+                SetJustifyH = function() end,
+                SetText = function() end,
+            }
         end,
         SetScript = function() end,
     }
@@ -312,12 +318,14 @@ T.test("save button is parented to the profession UI", function()
     T.assertTrue(created)
     T.assertNil(err)
     T.assertTrue(createdParent == professionFrame)
+    T.assertEqual(statusWidth, 340)
 end)
 
 T.test("refresh creates the button when the profession UI becomes available later", function()
     local GGM = loadModule()
     local professionFrame = {}
     local visible = false
+    local statusWidth
     local controller = GGM.CreateProfessionLinkSaveController({
         ProfessionsFrame = professionFrame,
         UnitFullName = function() return "Longbusbiggus", "Silvermoon" end,
@@ -334,7 +342,12 @@ T.test("refresh creates the button when the profession UI becomes available late
                 Show = function() visible = true end,
                 Hide = function() end,
                 CreateFontString = function()
-                    return { SetPoint = function() end, SetText = function() end }
+                    return {
+                        SetPoint = function() end,
+                        SetWidth = function(_, width) statusWidth = width end,
+                        SetJustifyH = function() end,
+                        SetText = function() end,
+                    }
                 end,
                 SetScript = function() end,
             }
@@ -344,6 +357,7 @@ T.test("refresh creates the button when the profession UI becomes available late
     T.assertEqual(GGM.RefreshProfessionSaveButton(controller), "shown")
     T.assertTrue(controller.button ~= nil)
     T.assertTrue(visible)
+    T.assertEqual(statusWidth, 340)
 end)
 
 T.test("saving a profession snapshot does not call guild sync or addon messaging", function()

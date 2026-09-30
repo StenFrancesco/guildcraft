@@ -180,17 +180,32 @@ T.test("starting tracking with an existing record preserves shared gear and star
     T.assertEqual(afterConfirm.gear.capturedAt, 1700000200)
 end)
 
-T.test("local tracking threads the confirmation callback into the stable tracker", function()
+T.test("local tracking persists a confirmed update before publishing it", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
-    local api = makeApi(GGM)
-    local callback = function() end
+    local api, itemIDs, itemLinks, timers = makeApi(GGM)
+    assert(GGM.CaptureAndStoreLocalPlayer(api, db))
+
+    local headSlotID = api.GetInventorySlotInfo("HeadSlot")
+    itemIDs[headSlotID] = 9999
+    itemLinks[headSlotID] = "|Hitem:9999|h[Confirmed Head]|h"
+    local published = 0
+    local callback = function(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
+        local record = assert(GGM.GetCompleteCharacterRecord(db, characterKey))
+        T.assertEqual(record.gear.slots[slotKey].itemID, slotValue.itemID)
+        T.assertEqual(record.gear.capturedAt, confirmedAt)
+        T.assertEqual(record.confirmedSequence, confirmedSequence)
+        published = published + 1
+    end
 
     local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5, callback)
 
     T.assertNil(err)
     T.assertNotNil(tracker)
-    T.assertTrue(tracker.onConfirmed == callback)
+    T.assertNotNil(tracker.pendingBySlot.HEAD)
+    T.assertEqual(#timers, 1)
+    timers[1]:Fire()
+    T.assertEqual(published, 1)
 end)
 
 T.test("starting tracking marks the current character local after tracker creation", function()
