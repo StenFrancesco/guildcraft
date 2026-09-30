@@ -16,7 +16,7 @@ local function canAdvance(value)
     return positiveInteger(advanced) and advanced > value
 end
 
-local function highestReservedID(professionCharacters, localCharacterIDByGUID)
+local function highestReservedID(professionCharacters, localCharacterIDByGUID, repairCandidates)
     local highest = 0
     local malformed = false
 
@@ -42,6 +42,16 @@ local function highestReservedID(professionCharacters, localCharacterIDByGUID)
         end
     end
 
+    if type(repairCandidates) == "table" then
+        for _, candidate in pairs(repairCandidates) do
+            if type(candidate) == "table" then
+                reserve(candidate.localID)
+            else
+                malformed = true
+            end
+        end
+    end
+
     return highest, nil, malformed
 end
 
@@ -56,7 +66,8 @@ function GGM.InitializeProfessionIndexState(db)
 
     local highestID, highestErr, registryMalformed = highestReservedID(
         db.professionCharacters,
-        db.localCharacterIDByGUID
+        db.localCharacterIDByGUID,
+        db.professionIndexRepairCandidates
     )
     if highestID == nil then return false, highestErr end
 
@@ -609,11 +620,17 @@ end
 
 local function rebuildRegistryFromCanonical(db, oldRegistryConsistent)
     local oldEntries, oldByGUID = db.professionCharacters, db.localCharacterIDByGUID
+    local candidates = type(db.professionIndexRepairCandidates) == "table"
+        and db.professionIndexRepairCandidates or {}
     local highest = 0
     for localID in pairs(oldEntries) do
         if type(localID) == "number" and localID > highest then highest = localID end
     end
     for _, localID in pairs(oldByGUID) do
+        if type(localID) == "number" and localID > highest then highest = localID end
+    end
+    for _, candidate in pairs(candidates) do
+        local localID = type(candidate) == "table" and candidate.localID or nil
         if type(localID) == "number" and localID > highest then highest = localID end
     end
     if type(db.nextLocalCharacterID) == "number" and db.nextLocalCharacterID > highest then
@@ -629,8 +646,6 @@ local function rebuildRegistryFromCanonical(db, oldRegistryConsistent)
     end
 
     local canonicalByGUID, ambiguous = canonicalGUIDRecords(db)
-    local candidates = type(db.professionIndexRepairCandidates) == "table"
-        and db.professionIndexRepairCandidates or {}
     for guid, candidate in pairs(candidates) do
         if not ambiguous[guid] or not storedRepairCandidateIsValid(db, guid, candidate) then
             candidates[guid] = nil

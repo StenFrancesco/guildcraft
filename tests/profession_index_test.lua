@@ -478,6 +478,60 @@ T.test("verified save recovers duplicate GUID records after rebuild when registr
     T.assertEqual(recovered[1].key, destinationIdentity.key)
 end)
 
+T.test("rebuild keeps persisted repair candidate IDs reserved when counter rolls back", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local seedIdentity = indexedIdentity(GGM, "Charlie-Silvermoon", "Player-1-C")
+    assert(GGM.SaveProfessionSnapshot(db, seedIdentity, indexedSnapshot(GGM, 164, 50), {
+        guildMembershipVerified = true,
+    }))
+    local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
+    local sourceSnapshot = indexedSnapshot(GGM, 164, 100)
+    assert(GGM.SaveProfessionSnapshot(db, sourceIdentity, sourceSnapshot, {
+        guildMembershipVerified = true,
+    }))
+    local reservedID = db.localCharacterIDByGUID[sourceIdentity.guid]
+    local seedID = db.localCharacterIDByGUID[seedIdentity.guid]
+    T.assertTrue(reservedID > seedID)
+    db.professions[destinationIdentity.key] = {
+        identity = destinationIdentity,
+        snapshots = { [171] = indexedSnapshot(GGM, 171, 300) },
+    }
+    db.professionRecipeIndexVersion = 0
+    assert(GGM.EnsureProfessionIndex(db, true))
+    T.assertEqual(db.professionIndexRepairCandidates[sourceIdentity.guid].localID, reservedID)
+
+    local otherIdentity = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
+    db.professions[otherIdentity.key] = {
+        identity = otherIdentity,
+        snapshots = { [164] = indexedSnapshot(GGM, 164, 200) },
+    }
+    db.nextLocalCharacterID = 1
+    db.professionRecipeIndexVersion = 0
+    assert(GGM.EnsureProfessionIndex(db, true))
+
+    local otherID = db.localCharacterIDByGUID[otherIdentity.guid]
+    T.assertTrue(otherID ~= reservedID)
+    T.assertEqual(db.professionIndexRepairCandidates[sourceIdentity.guid].localID, reservedID)
+    T.assertTrue(db.professionIndexRepairNeeded)
+
+    local repairedSnapshot = indexedSnapshot(GGM, 164, 101)
+    repairedSnapshot.capturedAt = sourceSnapshot.capturedAt + 1
+    local saved, saveErr = GGM.SaveProfessionSnapshot(
+        db,
+        destinationIdentity,
+        repairedSnapshot,
+        { guildMembershipVerified = true }
+    )
+    T.assertTrue(saved)
+    T.assertNil(saveErr)
+    T.assertEqual(db.localCharacterIDByGUID[sourceIdentity.guid], reservedID)
+    T.assertEqual(db.localCharacterIDByGUID[otherIdentity.guid], otherID)
+    T.assertEqual(db.localCharacterIDByGUID[seedIdentity.guid], seedID)
+    T.assertNil(db.professionIndexRepairCandidates[sourceIdentity.guid])
+end)
+
 T.test("verified save cannot recover duplicate GUID records without registry provenance", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
