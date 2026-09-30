@@ -166,6 +166,23 @@ function GGM.ReconcileAllGearSlots(tracker)
     return true, nil
 end
 
+function GGM.RefreshStableGearTrackerBaseline(tracker, characterKey, snapshot)
+    if type(tracker) ~= "table" or tracker.characterKey ~= characterKey then
+        return false, "tracker-character-mismatch"
+    end
+
+    local snapshotValid, snapshotErr = GGM.ValidateCompleteSnapshot(snapshot)
+    if not snapshotValid then
+        return false, snapshotErr
+    end
+
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        tracker.confirmedSlots[trackedSlot.key] = GGM.CopyGearSlotValue(snapshot.slots[trackedSlot.key])
+    end
+
+    return GGM.ReconcileAllGearSlots(tracker)
+end
+
 function GGM.HandlePlayerEquipmentChanged(tracker, equipmentSlotID)
     local slotKey = tracker.slotKeyByInventorySlotID[equipmentSlotID]
     if not slotKey then

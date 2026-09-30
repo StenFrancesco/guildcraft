@@ -591,6 +591,7 @@ T.test("player login passes a post-persistence publisher into local tracking but
         deferredStartup()
         T.assertEqual(publishCount, 0)
         T.assertNotNil(confirmationCallback)
+        T.assertTrue(sync.localGearTracker == tracker)
 
         confirmationCallback(
             "Alice-Silvermoon",

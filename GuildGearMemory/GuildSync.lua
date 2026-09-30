@@ -243,6 +243,10 @@ local function handleSnapshotResponse(sync, sender, message)
         sync.pendingSnapshotRequestCount = sync.pendingSnapshotRequestCount - 1
         return nil, saveErr
     end
+    local tracker = sync.localGearTracker
+    if tracker and tracker.characterKey == message.target.key then
+        GGM.RefreshStableGearTrackerBaseline(tracker, message.target.key, message.snapshot)
+    end
     sync.pendingSnapshotRequests[message.requestID] = nil
     if sync.pendingSnapshotRequestTargets[message.target.key] == message.requestID then
         sync.pendingSnapshotRequestTargets[message.target.key] = nil

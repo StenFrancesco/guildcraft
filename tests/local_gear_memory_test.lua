@@ -194,6 +194,7 @@ T.test("local tracking persists a confirmed slot before invoking its sync callba
             confirmedSequence = confirmedSequence,
             persistedItemID = record.gear.slots[slotKey].itemID,
             persistedSequence = record.confirmedSequence,
+            persistedAt = record.gear.capturedAt,
         })
     end
 
@@ -213,6 +214,7 @@ T.test("local tracking persists a confirmed slot before invoking its sync callba
     T.assertEqual(calls[1].persistedItemID, 3999)
     T.assertEqual(calls[1].confirmedSequence, 1)
     T.assertEqual(calls[1].persistedSequence, 1)
+    T.assertEqual(calls[1].persistedAt, calls[1].confirmedAt)
 end)
 
 T.test("tracking startup rejects an invalid confirmation callback", function()

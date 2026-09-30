@@ -338,6 +338,7 @@ local function newControl()
         self.point = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
     end
     function control:SetAllPoints(relativeTo) self.allPointsTo = relativeTo end
+    function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end
     function control:SetClampedToScreen() end
     function control:SetJustifyH() end
     function control:SetAutoFocus() end
@@ -347,6 +348,8 @@ local function newControl()
     function control:RegisterForClicks() end
     function control:SetDesaturated(value) self.desaturated = value end
     function control:SetAlpha(value) self.alpha = value end
+    function control:SetBlendMode(value) self.blendMode = value end
+    function control:SetVertexColor(...) self.vertexColor = { ... } end
     function control:SetTexture(value) self.texture = value; self.atlas = nil end
     function control:SetColorTexture(...) self.color = { ... }; self.texture = nil; self.atlas = nil end
     function control:SetAtlas(value) self.atlas = value; self.texture = nil end
@@ -385,7 +388,7 @@ local function makeModelBrowserAPI(failModelCreation)
     local createFrame = api.CreateFrame
     api.CreateFrame = function(frameType, name, parent)
         if failModelCreation and frameType == "Frame" and parent
-            and parent.width == 570 and parent.height == 438 then return nil end
+            and parent.width == 238 and parent.height == 336 then return nil end
         return createFrame(frameType, name, parent)
     end
     return api
@@ -416,8 +419,8 @@ T.test("guild gear browser shows the no saved guild gear state for an empty data
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM))
 
     T.assertTrue(frame.visible)
-    T.assertEqual(frame.listEmpty.text, "No saved guild gear")
-    T.assertEqual(frame.detailEmpty.text, "No saved guild gear")
+    T.assertEqual(frame.listEmpty.text, "No guild snapshots yet")
+    T.assertEqual(frame.detailEmpty.text, "No guild snapshots yet")
     T.assertEqual(#frame.slotButtons, #GGM.TRACKED_SLOTS)
     T.assertNotNil(frame.navigationTabs)
     T.assertNotNil(frame.placeholderPages)
@@ -435,11 +438,10 @@ T.test("guild gear browser ownership toggle defaults to Guild and switches filte
     T.assertEqual(frame.browserView, "Guild")
     T.assertNotNil(frame.guildButton)
     T.assertNotNil(frame.mineButton)
-    T.assertNotNil(frame.mineButton.hover)
-    T.assertEqual(#frame.mineButton.border, 4)
+    T.assertNotNil(frame.mineButton.label)
+    T.assertEqual(frame.mineButton.variant, "ghost")
     for _, button in ipairs({ frame.mineButton, frame.guildButton }) do
-        T.assertTrue(button.point.x >= frame.searchLabel.point.x + frame.searchLabel.width + 8,
-            "view controls must sit beyond the search label region")
+        T.assertTrue(button.point.x >= 0, "view controls must remain inside the search panel")
         T.assertTrue(button.point.x + button.width <= frame.searchPanel.width,
             "view controls must stay inside the search panel")
     end
@@ -454,7 +456,7 @@ T.test("guild gear browser ownership toggle defaults to Guild and switches filte
     T.assertEqual(#frame.filteredEntries, 1)
     T.assertEqual(frame.selectedEntry.key, mineA.identity.key)
     T.assertTrue(frame.mineButton.selected)
-    T.assertTrue(frame.mineButton.label.text == "Mine")
+    T.assertTrue(frame.mineButton.label.text == "My Characters")
 
     frame.searchBox:SetText("")
     local selectSecond
@@ -478,40 +480,65 @@ T.test("guild gear browser distinguishes empty Mine and Guild views from unmatch
     frame.mineButton.scripts.OnClick(frame.mineButton)
     T.assertEqual(#frame.filteredEntries, 1)
     frame.guildButton.scripts.OnClick(frame.guildButton)
-    T.assertEqual(frame.listEmpty.text, "No saved guild gear")
-    T.assertEqual(frame.detailEmpty.text, "No saved guild gear")
+    T.assertEqual(frame.listEmpty.text, "No guild snapshots yet")
+    T.assertEqual(frame.detailEmpty.text, "No guild snapshots yet")
     frame.mineButton.scripts.OnClick(frame.mineButton)
     frame.searchBox:SetText("missing")
-    T.assertEqual(frame.listEmpty.text, "No characters found")
-    T.assertEqual(frame.detailEmpty.text, "No characters found")
+    T.assertEqual(frame.listEmpty.text, "No characters match your search")
+    T.assertEqual(frame.detailEmpty.text, "No characters match your search")
 
     local emptyFrame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM))
     emptyFrame.mineButton.scripts.OnClick(emptyFrame.mineButton)
-    T.assertEqual(emptyFrame.listEmpty.text, "No saved personal gear")
-    T.assertEqual(emptyFrame.detailEmpty.text, "No saved personal gear")
+    T.assertEqual(emptyFrame.listEmpty.text, "No personal snapshots yet")
+    T.assertEqual(emptyFrame.detailEmpty.text, "No personal snapshots yet")
+end)
+
+T.test("guild gear browser hides the model stage when detail has no valid record", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
+
+    -- WoW frames are shown by default; model that initial state in the UI stub.
+    frame.modelStage.visible = true
+    T.assertTrue(frame.modelStage.visible)
+    frame.searchBox:SetText("missing")
+    T.assertFalse(frame.modelStage.visible)
+    T.assertTrue(frame.detailEmpty.visible)
+
+    frame.searchBox:SetText("")
+    T.assertTrue(frame.modelStage.visible)
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
+    record.gear.slots.HEAD.itemLink = false
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
+    T.assertFalse(frame.modelStage.visible)
+    T.assertEqual(frame.detailEmpty.text, "No saved gear is available for this character")
 end)
 
 T.test("guild gear browser slot buttons fit inside the detail panel with a gap after the list", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
-    local listRight = 20 + 250
-    local detailRight = 900 - 20
-    local gutter = 12
-    local topInset, bottomInset = 32, 20
+    local ui = GGM.UIStyleTokens
+    local panelLeft = ui.railWidth + ui.pageMargin + ui.browserColumnWidth + ui.contentGap
+    local listRight = ui.railWidth + ui.pageMargin + ui.browserColumnWidth
+    local panelHeight = ui.windowHeight - ui.contentTop - ui.contentBottom
+    local panelWidth = ui.detailColumnWidth
+    local footerTop = panelHeight - 14 - 32
 
     for index, button in ipairs(frame.slotButtons) do
         local point = button.point
         T.assertTrue(point ~= nil, "slot button must have a recorded layout point")
         T.assertTrue(point.relativeTo == frame.gearPanel, "slot button must be positioned relative to the equipment panel")
         T.assertEqual(point.point, "CENTER")
-        local left = 292 + point.x - button.width / 2
-        local right = 292 + point.x + button.width / 2
-        local top = 156 - point.y - button.height / 2
-        local bottom = 156 - point.y + button.height / 2
-        T.assertTrue(left >= listRight + gutter, "slot " .. index .. " overlaps or crowds the character list")
-        T.assertTrue(right <= detailRight, "slot " .. index .. " exceeds the detail panel right edge")
-        T.assertTrue(top >= topInset, "slot " .. index .. " exceeds the detail panel top edge")
-        T.assertTrue(bottom <= 610 - bottomInset, "slot " .. index .. " exceeds the detail panel bottom edge")
+        T.assertEqual(point.relativePoint, "TOPLEFT")
+        local left = point.x - button.width / 2
+        local right = point.x + button.width / 2
+        local top = -point.y - button.height / 2
+        local bottom = -point.y + button.height / 2
+        T.assertTrue(panelLeft + left >= listRight + ui.contentGap,
+            "slot " .. index .. " overlaps or crowds the character list")
+        T.assertTrue(right <= panelWidth, "slot " .. index .. " exceeds the detail panel right edge")
+        T.assertTrue(top >= 88, "slot " .. index .. " overlaps the detail panel header")
+        T.assertTrue(bottom <= footerTop - 12, "slot " .. index .. " overlaps the detail panel footer")
     end
 end)
 
@@ -523,13 +550,13 @@ T.test("guild gear browser keeps search text and shows no characters found after
 
     frame.searchBox:SetText("missing-name")
     T.assertEqual(frame.searchBox:GetText(), "missing-name")
-    T.assertEqual(frame.listEmpty.text, "No characters found")
-    T.assertEqual(frame.detailEmpty.text, "No characters found")
+    T.assertEqual(frame.listEmpty.text, "No characters match your search")
+    T.assertEqual(frame.detailEmpty.text, "No characters match your search")
     T.assertNil(frame.selectedEntry)
 
     GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { record }))
     T.assertEqual(frame.searchBox:GetText(), "missing-name")
-    T.assertEqual(frame.listEmpty.text, "No characters found")
+    T.assertEqual(frame.listEmpty.text, "No characters match your search")
 end)
 
 T.test("guild gear browser rows show name and realm and selecting renders saved identity time and slots", function()
@@ -541,8 +568,10 @@ T.test("guild gear browser rows show name and realm and selecting renders saved 
     local api = makeBrowserAPI()
     local frame = showBrowser(GGM, api, makeDB(GGM, { beta, alpha }))
 
-    T.assertEqual(frame.listRows[1].label.text, "Alice - Silvermoon")
-    T.assertEqual(frame.listRows[2].label.text, "Beatrice - ArgentDawn")
+    T.assertEqual(frame.listRows[1].label.text, "Alice")
+    T.assertEqual(frame.listRows[1].realm.text, "Silvermoon")
+    T.assertEqual(frame.listRows[2].label.text, "Beatrice")
+    T.assertEqual(frame.listRows[2].realm.text, "ArgentDawn")
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
     T.assertEqual(frame.selectedEntry.key, "Alice-Silvermoon")
     T.assertEqual(frame.characterLine.text, "Alice")
@@ -551,7 +580,7 @@ T.test("guild gear browser rows show name and realm and selecting renders saved 
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
     T.assertEqual(frame.characterLine.text, "Beatrice")
     T.assertEqual(frame.realmLine.text, "ArgentDawn")
-    T.assertEqual(frame.capturedLine.text, "Saved capture: saved-1700000200")
+    T.assertEqual(frame.capturedLine.text, "saved-1700000200")
     T.assertEqual(frame.detailModel.key, "Beatrice-ArgentDawn")
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     for index, slot in ipairs(frame.detailModel.slots) do
@@ -590,7 +619,7 @@ T.test("browser portrait selection updates from A to B and clears on no selectio
     T.assertFalse(frame.modelUnavailableLabel.visible)
     T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
     T.assertEqual(frame.characterLine.text, "Beatrice")
-    T.assertEqual(frame.capturedLine.text, "Saved capture: saved-1700000200")
+    T.assertEqual(frame.capturedLine.text, "saved-1700000200")
     T.assertEqual(frame.completenessLine.text, "Complete")
     frame.searchBox:SetText("no match")
     T.assertFalse(frame.characterModelView.model.visible)
@@ -638,11 +667,11 @@ T.test("failed 2D portrait frame creation leaves saved detail visible with unava
 
     T.assertNil(frame.characterModelView.model)
     T.assertTrue(frame.modelUnavailableLabel.visible)
-    T.assertEqual(frame.modelUnavailableLabel.text, "2D paper doll unavailable")
+    T.assertEqual(frame.modelUnavailableLabel.text, "Saved character model unavailable")
     T.assertTrue(frame.characterLine.visible)
     T.assertTrue(frame.realmLine.visible)
     T.assertTrue(frame.capturedLine.visible)
-    T.assertEqual(frame.capturedLine.text, "Saved capture: saved-1700000100")
+    T.assertEqual(frame.capturedLine.text, "saved-1700000100")
     T.assertTrue(frame.completenessLine.visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     for _, slot in ipairs(frame.slotButtons) do T.assertTrue(slot.visible) end
@@ -673,7 +702,7 @@ T.test("browser missing portrait data preserves incomplete and refresh-needed ge
 
     T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
     T.assertEqual(frame.completenessLine.text, "Incomplete")
-    T.assertTrue(frame.capturedLine.text:find("Saved capture:", 1, true) == 1)
+    T.assertEqual(frame.capturedLine.text, "saved-1700000100")
     T.assertTrue(frame.slotButtons[1].visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     local refresh = makeRecord(GGM)
@@ -705,7 +734,7 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     T.assertTrue(emptySlot.visible)
     T.assertTrue(emptySlot.empty)
     T.assertTrue(emptySlot.icon.desaturated)
-    T.assertEqual(emptySlot.icon.alpha, 0.42)
+    T.assertEqual(emptySlot.icon.alpha, 0.32)
     T.assertEqual(emptySlot.key, "OFF_HAND")
     T.assertEqual(emptySlot.label.text, "Off hand")
     T.assertEqual(emptySlot.status.text, "Empty")
@@ -883,8 +912,8 @@ T.test("incomplete detail marks migrated missing slots unavailable, not empty", 
     T.assertTrue(frame.slotButtons[shirtIndex].unavailable)
     T.assertEqual(frame.slotButtons[shirtIndex].label.text, "Shirt")
     T.assertEqual(frame.slotButtons[shirtIndex].status.text, "No data")
-    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 92)
-    T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 92)
+    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 98)
+    T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 98)
 end)
 
 T.test("sequence-gap browser records remain refresh-needed with all values and bounded captions", function()
@@ -905,8 +934,9 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     for index, row in ipairs(frame.detailModel.slots) do
         local button = frame.slotButtons[index]
         T.assertFalse(row.unavailable)
-        T.assertTrue(button.label.width <= 92)
-        T.assertTrue(button.status.width <= 92)
+        local expectedWidth = button.paperDollGroup == "bottom" and 92 or 98
+        T.assertTrue(button.label.width <= expectedWidth)
+        T.assertTrue(button.status.width <= expectedWidth)
         T.assertTrue(#button.label.text <= 9)
         T.assertTrue(#(button.status.text or "") <= 7)
         T.assertEqual(button.key, row.key)
