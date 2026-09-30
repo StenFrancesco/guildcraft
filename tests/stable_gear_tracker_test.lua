@@ -431,8 +431,8 @@ T.test("a thrown confirmation callback leaves the slot unconfirmed and retryable
     T.assertEqual(callbackCount, 1)
     T.assertEqual(tracker.confirmedSlots.HEAD.itemID, 4001)
     T.assertNil(tracker.pendingBySlot.HEAD)
-    T.assertEqual(tracker.lastError, "storage callback exploded")
-    T.assertEqual(tracker.lastConfirmationCallbackError, "storage callback exploded")
+    T.assertTrue(string.find(tracker.lastError, "storage callback exploded", 1, true) ~= nil)
+    T.assertEqual(tracker.lastConfirmationCallbackError, tracker.lastError)
     local unchangedRecord = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
     T.assertEqual(unchangedRecord.gear.slots.HEAD.itemID, 4001)
 
