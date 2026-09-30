@@ -22,3 +22,58 @@ T.test("first-run database creates profession index state", function()
     T.assertFalse(db.professionIndexDataIncomplete)
     T.assertFalse(db.professionIndexRepairNeeded)
 end)
+
+T.test("profession index state never reuses assigned local character IDs", function()
+    local GGM = loadModules()
+    local counters = { 3, false }
+
+    for _, nextLocalCharacterID in ipairs(counters) do
+        local db = {
+            professions = {},
+            professionCharacters = {
+                [4] = { guid = "Player-1-A" },
+                [12] = { guid = "Player-2-B" },
+            },
+            localCharacterIDByGUID = {
+                ["Player-1-A"] = 4,
+                ["Player-2-B"] = 12,
+            },
+            nextLocalCharacterID = nextLocalCharacterID,
+        }
+
+        local ok, err = GGM.InitializeProfessionIndexState(db)
+
+        T.assertTrue(ok)
+        T.assertNil(err)
+        T.assertEqual(db.nextLocalCharacterID, 13)
+    end
+
+    local db = {
+        professions = {},
+        professionCharacters = { [12] = { guid = "Player-2-B" } },
+        localCharacterIDByGUID = { ["Player-2-B"] = 12 },
+        nextLocalCharacterID = 20,
+    }
+
+    local ok, err = GGM.InitializeProfessionIndexState(db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertEqual(db.nextLocalCharacterID, 20)
+end)
+
+T.test("profession index state fails closed when no monotonic next ID can be represented", function()
+    local GGM = loadModules()
+    local db = {
+        professions = {},
+        professionCharacters = { [1e100] = { guid = "Player-Overflow" } },
+        localCharacterIDByGUID = { ["Player-Overflow"] = 1e100 },
+        nextLocalCharacterID = false,
+    }
+
+    local ok, err = GGM.InitializeProfessionIndexState(db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-character-id-exhausted")
+    T.assertFalse(db.professionCharacters[1e100] == nil)
+end)
