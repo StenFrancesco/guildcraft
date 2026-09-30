@@ -533,6 +533,10 @@ T.test("profession messages preserve unavailable and empty base states and disti
         if mode == "unavailable" then return professionCatalog("unavailable", {}, "Current guild membership could not be confirmed.", nil) end
         if mode == "identities" then return professionCatalog("unavailable", {}, "Current guild member identities could not be confirmed.", nil) end
         if mode == "incomplete" then return professionCatalog("incomplete", {}, "Some saved profession data is incomplete.", true) end
+        if mode == "incomplete-safe" then
+            return professionCatalog("incomplete", { { recipeID = 22, name = "Azure Dye", knownBy = {} } },
+                "Some saved profession data is incomplete.", true)
+        end
         if mode == "no-snapshot" then return professionCatalog("empty", {}, "No saved Alchemy snapshots for current guild members.", false) end
         if mode == "no-recipes" then return professionCatalog("empty", {}, "Saved Alchemy snapshots contain no learned recipes.", true) end
         return professionCatalog("ready", { { recipeID = 22, name = "Azure Dye", knownBy = {} } })
@@ -548,6 +552,10 @@ T.test("profession messages preserve unavailable and empty base states and disti
     T.assertEqual(frame.professionStatus.text, "No saved Alchemy snapshots for current guild members.")
     mode = "no-recipes"; GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(frame.professionStatus.text, "Saved Alchemy snapshots contain no learned recipes.")
+    mode = "incomplete-safe"; GGM.SelectProfession(frame, "Alchemy")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    frame.professionSearchBox:SetText("missing")
+    T.assertEqual(frame.professionStatus.text, "Some saved profession data is incomplete.")
     mode = "ready"; GGM.SelectProfession(frame, "Alchemy")
     frame.professionSearchBox:SetText("missing")
     T.assertEqual(frame.professionStatus.text, "No recipes match this search.")

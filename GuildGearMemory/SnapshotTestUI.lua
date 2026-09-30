@@ -788,7 +788,7 @@ updateProfessionRecipeBrowser = function(frame)
     frame.professionCount:SetText(#filtered .. (#filtered == 1 and " recipe" or " recipes"))
 
     local status = catalog.message
-    if #recipes > 0 and #filtered == 0 then
+    if catalog.state == "ready" and #recipes > 0 and #filtered == 0 then
         local noMatch = "No recipes match this search."
         status = status and (status .. " " .. noMatch) or noMatch
     elseif catalog.state == "ready" and #recipes == 0 then
