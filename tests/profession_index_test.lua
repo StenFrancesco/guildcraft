@@ -254,6 +254,88 @@ T.test("duplicate canonical GUIDs are preserved and omitted from the index", fun
     T.assertNil(next(db.professionRecipeIndex))
 end)
 
+T.test("registry disagreement is repaired from unambiguous canonical GUIDs without reusing old IDs", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    db.professions["Alice-Silvermoon"] = {
+        identity = {
+            key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
+        },
+        snapshots = {},
+    }
+    db.professionCharacters = {
+        [7] = { guid = "Player-1-BAD", key = "Bad-Silvermoon", active = true },
+    }
+    db.localCharacterIDByGUID = { ["Player-1-A"] = 7 }
+    db.nextLocalCharacterID = 8
+    db.professionRecipeIndexVersion = 0
+
+    local ok, err = GGM.EnsureProfessionIndex(db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    local repairedID = db.localCharacterIDByGUID["Player-1-A"]
+    T.assertTrue(repairedID >= 8)
+    T.assertTrue(repairedID >= 9)
+    T.assertEqual(db.professionCharacters[repairedID].guid, "Player-1-A")
+    T.assertTrue(db.nextLocalCharacterID > repairedID)
+end)
+
+T.test("overlapping canonical snapshots for one GUID remain excluded and flagged for repair", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local sharedGUID = "Player-1-A"
+    db.professions = {
+        ["Alice-Silvermoon"] = {
+            identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = sharedGUID },
+            snapshots = { [164] = indexedSnapshot(GGM, 164, 100) },
+        },
+        ["Alicia-Silvermoon"] = {
+            identity = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = sharedGUID },
+            snapshots = { [164] = indexedSnapshot(GGM, 164, 101) },
+        },
+    }
+    db.professionRecipeIndexVersion = 0
+
+    assert(GGM.EnsureProfessionIndex(db))
+
+    T.assertTrue(db.professionIndexRepairNeeded)
+    T.assertNil(db.localCharacterIDByGUID[sharedGUID])
+    T.assertNotNil(db.professions["Alice-Silvermoon"])
+    T.assertNotNil(db.professions["Alicia-Silvermoon"])
+end)
+
+T.test("duplicate canonical records with disjoint professions remain untouched and unavailable", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local sharedGUID = "Player-1-A"
+    db.professions = {
+        ["Alice-Silvermoon"] = {
+            identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = sharedGUID },
+            snapshots = { [164] = indexedSnapshot(GGM, 164, 100) },
+        },
+        ["Alicia-Silvermoon"] = {
+            identity = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = sharedGUID },
+            snapshots = { [171] = indexedSnapshot(GGM, 171, 300) },
+        },
+    }
+    db.professionRecipeIndexVersion = 0
+
+    assert(GGM.EnsureProfessionIndex(db))
+
+    T.assertNotNil(db.professions["Alicia-Silvermoon"])
+    T.assertNotNil(db.professions["Alice-Silvermoon"].snapshots[164])
+    T.assertNotNil(db.professions["Alicia-Silvermoon"].snapshots[171])
+    T.assertNil(db.localCharacterIDByGUID[sharedGUID])
+    T.assertNil(db.professionRecipeIndex[164])
+    T.assertNil(db.professionRecipeIndex[171])
+    T.assertTrue(db.professionIndexRepairNeeded)
+    GGM.professionRosterMembershipCurrent = true
+    local results, queryErr = GGM.GetProfessionRecipeCharacters(db, 164, 100)
+    T.assertNil(results)
+    T.assertEqual(queryErr, "profession-index-repair-needed")
+end)
+
 T.test("recipe queries stay unavailable until guild membership is current", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

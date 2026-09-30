@@ -486,9 +486,15 @@ end)
 
 T.test("schema two migrates to schema four with empty profession storage", function()
     local GGM = loadModules()
+    local identity = makeIdentity()
     local existing = {
         schemaVersion = 2,
-        characters = {},
+        characters = { [identity.key] = {
+            complete = true,
+            identity = identity,
+            confirmedSequence = 4,
+            gear = makeSnapshot(GGM),
+        } },
         localCharacters = {},
     }
 
@@ -499,6 +505,10 @@ T.test("schema two migrates to schema four with empty profession storage", funct
     T.assertEqual(db.schemaVersion, 4)
     T.assertNotNil(db.professions)
     T.assertNil(next(db.professions))
+    local migratedRecord = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(migratedRecord.identity.guid, identity.guid)
+    T.assertEqual(migratedRecord.confirmedSequence, 4)
+    T.assertEqual(migratedRecord.gear.slots.HEAD.itemID, 2001)
 end)
 
 T.test("new schema four database initializes profession storage", function()
