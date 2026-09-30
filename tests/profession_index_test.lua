@@ -473,3 +473,55 @@ T.test("failed roster rename preserves the old key and inactive state on a colli
     T.assertNotNil(db.professions[identity.key])
     T.assertEqual(db.professions["Bob-Silvermoon"].identity.guid, "Player-1-B")
 end)
+
+T.test("roster rename rejects a third canonical same-GUID record without mutation", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    db.professions["Alice-Argent-Dawn"] = {
+        identity = { key = "Alice-Argent-Dawn", name = "Alice", realm = "Argent-Dawn", guid = identity.guid },
+        snapshots = {
+            [171] = {
+                professionID = 171, professionName = "Alchemy", capturedAt = 2,
+                source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+                recipes = { { recipeID = 300, name = "Potion" } },
+            },
+        },
+    }
+    db.professions["Alicia-Silvermoon"] = {
+        identity = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = identity.guid },
+        snapshots = {},
+    }
+    assert(GGM.SetProfessionCharacterActive(db, localID, false))
+    local entryKey = db.professionCharacters[localID].key
+    local entryActive = db.professionCharacters[localID].active
+    local mappedID = db.localCharacterIDByGUID[identity.guid]
+    local priorIndex = db.professionRecipeIndex
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function()
+            return "Alice-Argent-Dawn", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, identity.guid
+        end,
+    }, db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-roster-rename-conflict")
+    T.assertEqual(db.professionCharacters[localID].key, entryKey)
+    T.assertEqual(db.professionCharacters[localID].active, entryActive)
+    T.assertEqual(db.localCharacterIDByGUID[identity.guid], mappedID)
+    T.assertEqual(db.professionRecipeIndex, priorIndex)
+    T.assertTrue(db.professionIndexRepairNeeded)
+    T.assertNotNil(db.professions["Alice-Silvermoon"])
+    T.assertNotNil(db.professions["Alice-Argent-Dawn"])
+    T.assertNotNil(db.professions["Alicia-Silvermoon"])
+end)

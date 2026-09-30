@@ -152,6 +152,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" then
         if not GGM.db or GGM.startupError then return end
+        GGM.professionRosterMembershipCurrent = false
         local guildOk, inGuild = pcall(_G.IsInGuild)
         if not guildOk or type(inGuild) ~= "boolean" then
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
@@ -182,7 +183,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "GUILD_ROSTER_UPDATE" then
-        if not GGM.db or GGM.startupError or not GGM.professionRosterRefreshPending then return end
+        if not GGM.db or GGM.startupError or not GGM.professionRosterRefreshIssued then return end
         GGM.professionRosterRefreshPending = false
         local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
         if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end

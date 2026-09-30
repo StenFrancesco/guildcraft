@@ -166,24 +166,57 @@ T.test("guild roster refresh is bounded to guild periods and reconciliation wait
 
         onEvent(frame, "GUILD_ROSTER_UPDATE")
         T.assertEqual(rosterRefreshCount, 1)
-        T.assertEqual(reconcileCount, 1)
+        T.assertEqual(reconcileCount, 2)
 
         isInGuild = false
         onEvent(frame, "PLAYER_GUILD_UPDATE")
-        T.assertEqual(reconcileCount, 2)
+        T.assertEqual(reconcileCount, 3)
         T.assertFalse(GGM.professionRosterRefreshIssued)
         T.assertFalse(GGM.professionRosterRefreshPending)
 
         isInGuild = true
         onEvent(frame, "PLAYER_GUILD_UPDATE")
         T.assertEqual(rosterRefreshCount, 2)
-        T.assertEqual(reconcileCount, 2)
+        T.assertEqual(reconcileCount, 3)
         T.assertTrue(GGM.professionRosterRefreshPending)
         onEvent(frame, "GUILD_ROSTER_UPDATE")
-        T.assertEqual(reconcileCount, 3)
+        T.assertEqual(reconcileCount, 4)
         T.assertEqual(rosterRefreshCount, 2)
         T.assertEqual(addonMessageCount, 0)
         T.assertEqual(publishCount, 0)
+    end)
+end)
+
+T.test("guild membership API failure clears cached roster readiness", function()
+    local onEvent
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+    withGlobals({
+        CreateFrame = function() return frame end,
+        GuildGearMemoryDB = NIL,
+        IsInGuild = function() error("guild state unavailable") end,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+        GGM.InitializeDatabase = function()
+            return { schemaVersion = 1, characters = {}, professions = {} }, nil
+        end
+        GGM.CreateGuildSync = function() return {}, nil end
+        GGM.RegisterGuildSync = function() return true, nil end
+        GGM.ReconcileProfessionGuildRoster = function()
+            error("must not reconcile when IsInGuild fails")
+        end
+        GGM.professionRosterMembershipCurrent = true
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        GGM.professionRosterMembershipCurrent = true
+        onEvent(frame, "PLAYER_ENTERING_WORLD")
+
+        T.assertFalse(GGM.professionRosterMembershipCurrent)
+        T.assertEqual(GGM.lastProfessionIndexError, "profession-roster-unavailable")
     end)
 end)
 

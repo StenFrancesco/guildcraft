@@ -588,6 +588,17 @@ local function rosterIdentity(api, rawName, guid)
     return { key = name .. "-" .. realm, name = name, realm = realm, guid = guid }
 end
 
+local function hasUnexpectedCanonicalRecordForGUID(db, guid, sourceKey, destinationKey)
+    for key, record in pairs(db.professions) do
+        local identity = type(record) == "table" and record.identity or nil
+        if type(identity) == "table" and identity.key == key and identity.guid == guid
+            and key ~= sourceKey and key ~= destinationKey then
+            return true
+        end
+    end
+    return false
+end
+
 function GGM.ReconcileProfessionGuildRoster(api, db)
     GGM.professionRosterMembershipCurrent = false
     if type(api) ~= "table"
@@ -643,6 +654,10 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         end
         local current = currentByGUID[entry.guid]
         if current and entry.key ~= current.key then
+            if hasUnexpectedCanonicalRecordForGUID(db, entry.guid, entry.key, current.key) then
+                db.professionIndexRepairNeeded = true
+                return false, "profession-roster-rename-conflict"
+            end
             local rekeyOk = GGM.RekeyProfessionCharacter(db, localID, current, true)
             if not rekeyOk then
                 db.professionIndexRepairNeeded = true
