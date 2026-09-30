@@ -50,7 +50,7 @@ local function schedulePending(tracker, slotKey, slotValue)
     return "pending", nil
 end
 
-function GGM.CreateStableGearTracker(api, db, characterKey, stabilityDelaySeconds, onConfirmed)
+function GGM.CreateStableGearTracker(api, characterKey, savedSnapshot, stabilityDelaySeconds, onConfirmed)
     if type(api) ~= "table"
         or type(api.C_Timer) ~= "table"
         or type(api.C_Timer.NewTimer) ~= "function" then
@@ -59,10 +59,6 @@ function GGM.CreateStableGearTracker(api, db, characterKey, stabilityDelaySecond
 
     if type(api.GetServerTime) ~= "function" then
         return nil, "server-time-api-unavailable"
-    end
-
-    if type(api.GetInventorySlotInfo) ~= "function" then
-        return nil, "inventory-slot-api-unavailable"
     end
 
     if onConfirmed ~= nil and type(onConfirmed) ~= "function" then
@@ -74,52 +70,32 @@ function GGM.CreateStableGearTracker(api, db, characterKey, stabilityDelaySecond
         return nil, "stability-delay-invalid"
     end
 
-    local record, recordErr = GGM.GetCompleteCharacterRecord(db, characterKey)
-    if not record then
-        return nil, recordErr
+    local snapshotValid, snapshotErr = GGM.ValidateCompleteSnapshot(savedSnapshot)
+    if not snapshotValid then
+        return nil, snapshotErr
     end
 
-    local runtimeSlotIDByKey = {}
-    local seenRuntimeSlotIDs = {}
-    local unavailableOptionalSlots = {}
+    local resolvedSlots, resolveErr = GGM.ResolvePlayerGearSlots(api, savedSnapshot.slots)
+    if not resolvedSlots then
+        return nil, resolveErr
+    end
+
+    local confirmedSlots = {}
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local runtimeSlotID = api.GetInventorySlotInfo(trackedSlot.inventoryName)
-        if type(runtimeSlotID) ~= "number" then
-            if GGM.OPTIONAL_TRACKED_SLOTS[trackedSlot.key] == true then
-                unavailableOptionalSlots[trackedSlot.key] = true
-            else
-                return nil, "inventory-slot-unavailable:" .. trackedSlot.key
-            end
-        else
-            local sharedSlot = record.gear.slots[trackedSlot.key]
-            if sharedSlot and sharedSlot.unavailable ~= true
-                and sharedSlot.inventorySlotID ~= runtimeSlotID then
-                return nil, "snapshot-slot-id-mismatch:" .. trackedSlot.key
-            end
-
-            if seenRuntimeSlotIDs[runtimeSlotID] then
-                return nil, "inventory-slot-id-duplicate:" .. tostring(runtimeSlotID)
-            end
-
-            seenRuntimeSlotIDs[runtimeSlotID] = true
-            runtimeSlotIDByKey[trackedSlot.key] = runtimeSlotID
+        local slotValue = savedSnapshot.slots[trackedSlot.key]
+        if slotValue ~= nil then
+            confirmedSlots[trackedSlot.key] = GGM.CopyGearSlotValue(slotValue)
         end
-    end
-
-    local slotKeyByInventorySlotID = {}
-    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local runtimeSlotID = runtimeSlotIDByKey[trackedSlot.key]
-        if runtimeSlotID then slotKeyByInventorySlotID[runtimeSlotID] = trackedSlot.key end
     end
 
     return {
         api = api,
-        db = db,
         characterKey = characterKey,
         stabilityDelaySeconds = delay,
+        confirmedSlots = confirmedSlots,
         pendingBySlot = {},
-        slotKeyByInventorySlotID = slotKeyByInventorySlotID,
-        unavailableOptionalSlots = unavailableOptionalSlots,
+        slotKeyByInventorySlotID = resolvedSlots.slotKeyByInventorySlotID,
+        unavailableOptionalSlots = resolvedSlots.unavailableOptionalSlots,
         nextPendingToken = 0,
         onConfirmed = onConfirmed,
         lastError = nil,
@@ -127,21 +103,9 @@ function GGM.CreateStableGearTracker(api, db, characterKey, stabilityDelaySecond
     }, nil
 end
 
-function GGM.ReconcileGearSlot(tracker, slotKey)
+local function reconcileGearSlotValue(tracker, slotKey, currentSlot)
     if tracker.unavailableOptionalSlots[slotKey] then
         return "unavailable", nil
-    end
-
-    local record, recordErr = GGM.GetCompleteCharacterRecord(tracker.db, tracker.characterKey)
-    if not record then
-        tracker.lastError = recordErr
-        return nil, recordErr
-    end
-
-    local currentSlot, currentErr = GGM.CapturePlayerGearSlot(tracker.api, slotKey)
-    if not currentSlot then
-        tracker.lastError = currentErr
-        return nil, currentErr
     end
 
     if currentSlot.unavailable == true then
@@ -151,8 +115,8 @@ function GGM.ReconcileGearSlot(tracker, slotKey)
         return "unavailable", nil
     end
 
-    local sharedSlot = record.gear.slots[slotKey]
-    if GGM.AreGearSlotValuesEqual(currentSlot, sharedSlot) then
+    local confirmedSlot = tracker.confirmedSlots[slotKey]
+    if GGM.AreGearSlotValuesEqual(currentSlot, confirmedSlot) then
         clearPending(tracker, slotKey)
         tracker.lastError = nil
         return "shared", nil
@@ -167,6 +131,20 @@ function GGM.ReconcileGearSlot(tracker, slotKey)
     clearPending(tracker, slotKey)
     tracker.lastError = nil
     return schedulePending(tracker, slotKey, currentSlot)
+end
+
+function GGM.ReconcileGearSlot(tracker, slotKey)
+    if tracker.unavailableOptionalSlots[slotKey] then
+        return "unavailable", nil
+    end
+
+    local currentSlot, currentErr = GGM.CapturePlayerGearSlot(tracker.api, slotKey)
+    if not currentSlot then
+        tracker.lastError = currentErr
+        return nil, currentErr
+    end
+
+    return reconcileGearSlotValue(tracker, slotKey, currentSlot)
 end
 
 function GGM.ReconcileAllGearSlots(tracker)
@@ -212,43 +190,39 @@ function GGM.ConfirmPendingGearSlot(tracker, slotKey, token)
 
     if not GGM.AreGearSlotValuesEqual(currentSlot, pending.slot) then
         clearPending(tracker, slotKey)
-        local _, reconcileErr = GGM.ReconcileGearSlot(tracker, slotKey)
+        local _, reconcileErr = reconcileGearSlotValue(tracker, slotKey, currentSlot)
         return false, reconcileErr
     end
 
     local confirmedAt = tracker.api.GetServerTime()
-    local saved, saveErr, confirmedSequence = GGM.UpdateConfirmedCharacterSlot(
-        tracker.db,
-        tracker.characterKey,
-        slotKey,
-        currentSlot,
-        confirmedAt
-    )
-
-    if not saved then
-        clearPending(tracker, slotKey)
-        tracker.lastError = saveErr
-        return false, saveErr
-    end
-
-    tracker.pendingBySlot[slotKey] = nil
-    tracker.lastError = nil
-    tracker.lastConfirmationCallbackError = nil
-
+    local callbackError
     if tracker.onConfirmed then
-        local callbackOk, callbackErr = pcall(
+        local callbackOk, confirmed, confirmErr, notificationError = pcall(
             tracker.onConfirmed,
             tracker.characterKey,
             slotKey,
             GGM.CopyGearSlotValue(currentSlot),
-            confirmedAt,
-            confirmedSequence
+            confirmedAt
         )
 
         if not callbackOk then
-            tracker.lastConfirmationCallbackError = tostring(callbackErr)
+            callbackError = tostring(confirmed)
+            clearPending(tracker, slotKey)
+            tracker.lastError = callbackError
+            tracker.lastConfirmationCallbackError = callbackError
+            return false, callbackError
+        elseif confirmed == false then
+            clearPending(tracker, slotKey)
+            tracker.lastError = confirmErr or "confirmation-rejected"
+            return false, tracker.lastError
+        else
+            callbackError = notificationError
         end
     end
 
+    tracker.confirmedSlots[slotKey] = GGM.CopyGearSlotValue(currentSlot)
+    tracker.pendingBySlot[slotKey] = nil
+    tracker.lastError = nil
+    tracker.lastConfirmationCallbackError = callbackError
     return true, nil
 end

@@ -108,6 +108,48 @@ function GGM.CapturePlayerGearSlot(api, slotKey)
     return slotValue, nil
 end
 
+function GGM.ResolvePlayerGearSlots(api, savedSlots)
+    if type(api) ~= "table" or type(api.GetInventorySlotInfo) ~= "function" then
+        return nil, "inventory-slot-api-unavailable"
+    end
+
+    if type(savedSlots) ~= "table" then
+        return nil, "snapshot-slots-invalid"
+    end
+
+    local resolved = {
+        slotKeyByInventorySlotID = {},
+        unavailableOptionalSlots = {},
+    }
+    local seenInventorySlotIDs = {}
+
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local runtimeSlotID = api.GetInventorySlotInfo(trackedSlot.inventoryName)
+        if type(runtimeSlotID) ~= "number" then
+            if GGM.OPTIONAL_TRACKED_SLOTS[trackedSlot.key] == true then
+                resolved.unavailableOptionalSlots[trackedSlot.key] = true
+            else
+                return nil, "inventory-slot-unavailable:" .. trackedSlot.key
+            end
+        else
+            local savedSlot = savedSlots[trackedSlot.key]
+            if savedSlot and savedSlot.unavailable ~= true
+                and savedSlot.inventorySlotID ~= runtimeSlotID then
+                return nil, "snapshot-slot-id-mismatch:" .. trackedSlot.key
+            end
+
+            if seenInventorySlotIDs[runtimeSlotID] then
+                return nil, "inventory-slot-id-duplicate:" .. tostring(runtimeSlotID)
+            end
+
+            seenInventorySlotIDs[runtimeSlotID] = true
+            resolved.slotKeyByInventorySlotID[runtimeSlotID] = trackedSlot.key
+        end
+    end
+
+    return resolved, nil
+end
+
 function GGM.ValidateCompleteSnapshot(snapshot)
     if type(snapshot) ~= "table" then
         return false, "snapshot-invalid"

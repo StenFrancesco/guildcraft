@@ -180,17 +180,78 @@ T.test("starting tracking with an existing record preserves shared gear and star
     T.assertEqual(afterConfirm.gear.capturedAt, 1700000200)
 end)
 
-T.test("local tracking threads the confirmation callback into the stable tracker", function()
+T.test("local tracking persists a confirmed slot before invoking its sync callback", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api, itemIDs, itemLinks, timers = makeApi(GGM)
+    local calls = {}
+    local callback = function(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
+        local record = assert(GGM.GetCompleteCharacterRecord(db, characterKey))
+        table.insert(calls, {
+            slotKey = slotKey,
+            itemID = slotValue.itemID,
+            confirmedAt = confirmedAt,
+            confirmedSequence = confirmedSequence,
+            persistedItemID = record.gear.slots[slotKey].itemID,
+            persistedSequence = record.confirmedSequence,
+        })
+    end
+
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5, callback)
+    T.assertNil(err)
+    T.assertNotNil(tracker)
+
+    local headSlotID = api.GetInventorySlotInfo("HeadSlot")
+    itemIDs[headSlotID] = 3999
+    itemLinks[headSlotID] = "|Hitem:3999|h[Confirmed Head]|h"
+    assert(GGM.HandlePlayerEquipmentChanged(tracker, headSlotID))
+    timers[1]:Fire()
+
+    T.assertEqual(#calls, 1)
+    T.assertEqual(calls[1].slotKey, "HEAD")
+    T.assertEqual(calls[1].itemID, 3999)
+    T.assertEqual(calls[1].persistedItemID, 3999)
+    T.assertEqual(calls[1].confirmedSequence, 1)
+    T.assertEqual(calls[1].persistedSequence, 1)
+end)
+
+T.test("tracking startup rejects an invalid confirmation callback", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local api = makeApi(GGM)
-    local callback = function() end
 
-    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5, callback)
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5, "not a function")
 
-    T.assertNil(err)
-    T.assertNotNil(tracker)
-    T.assertTrue(tracker.onConfirmed == callback)
+    T.assertNil(tracker)
+    T.assertEqual(err, "confirmation-callback-invalid")
+end)
+
+T.test("tracking does not confirm a slot when persistence throws", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api, itemIDs, itemLinks, timers = makeApi(GGM)
+    local publishCount = 0
+    local tracker = assert(GGM.StartLocalPlayerGearTracking(api, db, 5, function()
+        publishCount = publishCount + 1
+    end))
+    local headSlotID = api.GetInventorySlotInfo("HeadSlot")
+    local previousItemID = tracker.confirmedSlots.HEAD.itemID
+
+    GGM.UpdateConfirmedCharacterSlot = function()
+        error("simulated persistence failure")
+    end
+    itemIDs[headSlotID] = 3999
+    itemLinks[headSlotID] = "|Hitem:3999|h[Unpersisted Head]|h"
+    assert(GGM.HandlePlayerEquipmentChanged(tracker, headSlotID))
+    timers[1]:Fire()
+
+    local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    T.assertEqual(tracker.confirmedSlots.HEAD.itemID, previousItemID)
+    T.assertNil(tracker.pendingBySlot.HEAD)
+    T.assertNotNil(tracker.lastError)
+    T.assertEqual(record.gear.slots.HEAD.itemID, previousItemID)
+    T.assertEqual(record.confirmedSequence, 0)
+    T.assertEqual(publishCount, 0)
 end)
 
 T.test("starting tracking marks the current character local after tracker creation", function()

@@ -184,3 +184,32 @@ T.test("capture preserves the snapshot when the optional ranged slot is unavaila
     T.assertTrue(snapshot.slots.RANGED.unavailable)
     T.assertTrue(type(snapshot.slots.HEAD.itemID) == "number")
 end)
+
+T.test("runtime gear slot resolution centralizes event slot lookup and optional availability", function()
+    local GGM = loadModules()
+    local api = makeCompleteApi(GGM)
+    local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
+    local originalGetInventorySlotInfo = api.GetInventorySlotInfo
+    api.GetInventorySlotInfo = function(inventoryName)
+        if inventoryName == "RangedSlot" then return nil end
+        return originalGetInventorySlotInfo(inventoryName)
+    end
+
+    local resolved, err = GGM.ResolvePlayerGearSlots(api, snapshot.slots)
+
+    T.assertNil(err)
+    T.assertEqual(resolved.slotKeyByInventorySlotID[1], "HEAD")
+    T.assertTrue(resolved.unavailableOptionalSlots.RANGED)
+end)
+
+T.test("runtime gear slot resolution rejects saved and current slot id mismatches", function()
+    local GGM = loadModules()
+    local api = makeCompleteApi(GGM)
+    local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
+    snapshot.slots.HEAD.inventorySlotID = 999
+
+    local resolved, err = GGM.ResolvePlayerGearSlots(api, snapshot.slots)
+
+    T.assertNil(resolved)
+    T.assertEqual(err, "snapshot-slot-id-mismatch:HEAD")
+end)
