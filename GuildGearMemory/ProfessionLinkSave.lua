@@ -12,7 +12,7 @@ end
 local function senderIdentity(api, sender)
     if not nonEmptyString(sender) then return nil, "profession-sender-invalid" end
 
-    local name, realm = sender:match("^(.+)%-(.+)$")
+    local name, realm = sender:match("^([^-]+)%-(.+)$")
     if not name then
         name = sender
         if type(api) == "table" and type(api.GetRealmName) == "function" then
@@ -55,6 +55,7 @@ local function guildIdentityForGUID(api, ownerGUID)
         if info[17] == ownerGUID then
             local identity, identityErr = senderIdentity(api, info[1])
             if not identity then return nil, identityErr end
+            identity.guid = ownerGUID
             if matchedIdentity then return nil, "profession-owner-ambiguous" end
             matchedIdentity = identity
         end

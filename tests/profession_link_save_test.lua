@@ -154,6 +154,56 @@ T.test("guild trade link saves under the roster member whose GUID matches the li
     T.assertNil(err)
     T.assertEqual(capturedSource, GGM.PROFESSION_SOURCE_GUILD_LINK)
     T.assertEqual(savedIdentity.key, "Alice-Silvermoon")
+    T.assertEqual(savedIdentity.guid, "Player-1-ABC")
+end)
+
+T.test("guild trade link with no matching roster GUID fails closed before saving", function()
+    local GGM = loadModule()
+    local saveCalls = 0
+    GGM.CaptureLinkedProfessionSnapshot = function()
+        return { professionID = 164 }, nil
+    end
+    GGM.SaveProfessionSnapshot = function()
+        saveCalls = saveCalls + 1
+        return true, nil
+    end
+
+    local controller = GGM.CreateProfessionLinkSaveController({
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function()
+            return "Alice-Silvermoon", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, nil
+        end,
+    }, {})
+    controller.activeLink = "trade:Player-1-ABC:164:75:100"
+    controller.activeOwnerGUID = "Player-1-ABC"
+    controller.activeSource = "guild"
+
+    local result, err = GGM.SaveActiveLinkedProfession(controller)
+
+    T.assertNil(result)
+    T.assertEqual(err, "profession-owner-not-in-guild")
+    T.assertEqual(saveCalls, 0)
+end)
+
+T.test("guild trade link resolves a full hyphenated realm from roster owner", function()
+    local GGM = loadModule()
+    local controller = GGM.CreateProfessionLinkSaveController({
+        GetRealmName = function() return "Silvermoon" end,
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function()
+            return "Alice-Argent-Dawn", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-ABC"
+        end,
+    }, {})
+    local link = "trade:Player-1-ABC:164:75:100"
+    GGM.ObserveGuildProfessionMessage(controller, "|H" .. link .. "|h[Blacksmithing]|h", "Bob-Silvermoon")
+
+    T.assertEqual(GGM.HandleProfessionHyperlinkOpened(controller, link), "guild-profession-link")
+    T.assertEqual(controller.activeIdentity.name, "Alice")
+    T.assertEqual(controller.activeIdentity.realm, "Argent-Dawn")
+    T.assertEqual(controller.activeIdentity.key, "Alice-Argent-Dawn")
+    T.assertEqual(controller.activeIdentity.guid, "Player-1-ABC")
 end)
 
 T.test("capture failure does not write SavedVariables", function()
