@@ -408,6 +408,40 @@ T.test("confirmation callback is not fired when persistence fails", function()
     T.assertEqual(callCount, 0)
 end)
 
+T.test("a thrown confirmation callback leaves the slot unconfirmed and retryable", function()
+    local GGM = loadModules()
+    local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    local callbackCount = 0
+    local tracker = assert(GGM.CreateStableGearTracker(
+        api,
+        "Alice-Silvermoon",
+        record.gear,
+        300,
+        function()
+            callbackCount = callbackCount + 1
+            error("storage callback exploded")
+        end
+    ))
+
+    setSlot("HEAD", 9350, "|Hitem:9350|h[Candidate]|h")
+    assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
+    timers[1]:Fire()
+
+    T.assertEqual(callbackCount, 1)
+    T.assertEqual(tracker.confirmedSlots.HEAD.itemID, 4001)
+    T.assertNil(tracker.pendingBySlot.HEAD)
+    T.assertEqual(tracker.lastError, "storage callback exploded")
+    T.assertEqual(tracker.lastConfirmationCallbackError, "storage callback exploded")
+    local unchangedRecord = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    T.assertEqual(unchangedRecord.gear.slots.HEAD.itemID, 4001)
+
+    local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
+    T.assertNil(err)
+    T.assertEqual(state, "pending")
+    T.assertEqual(#timers, 2)
+end)
+
 T.test("confirmation callback failure never rolls back a persisted confirmation", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
