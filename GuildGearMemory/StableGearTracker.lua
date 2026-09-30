@@ -224,6 +224,10 @@ function GGM.ConfirmPendingGearSlot(tracker, slotKey, token)
 
         if not callbackOk then
             callbackError = tostring(confirmed)
+            clearPending(tracker, slotKey)
+            tracker.lastError = callbackError
+            tracker.lastConfirmationCallbackError = callbackError
+            return false, callbackError
         elseif confirmed == false then
             clearPending(tracker, slotKey)
             tracker.lastError = confirmErr or "confirmation-rejected"

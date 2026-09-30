@@ -406,6 +406,40 @@ T.test("confirmation callback is not fired when persistence fails", function()
     T.assertEqual(callCount, 0)
 end)
 
+T.test("a thrown confirmation callback leaves the slot unconfirmed and retryable", function()
+    local GGM = loadModules()
+    local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    local callbackCount = 0
+    local tracker = assert(GGM.CreateStableGearTracker(
+        api,
+        "Alice-Silvermoon",
+        record.gear,
+        300,
+        function()
+            callbackCount = callbackCount + 1
+            error("storage callback exploded")
+        end
+    ))
+
+    setSlot("HEAD", 9350, "|Hitem:9350|h[Candidate]|h")
+    assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
+    timers[1]:Fire()
+
+    T.assertEqual(callbackCount, 1)
+    T.assertEqual(tracker.confirmedSlots.HEAD.itemID, 4001)
+    T.assertNil(tracker.pendingBySlot.HEAD)
+    T.assertTrue(string.find(tracker.lastError, "storage callback exploded", 1, true) ~= nil)
+    T.assertEqual(tracker.lastConfirmationCallbackError, tracker.lastError)
+    local unchangedRecord = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    T.assertEqual(unchangedRecord.gear.slots.HEAD.itemID, 4001)
+
+    local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
+    T.assertNil(err)
+    T.assertEqual(state, "pending")
+    T.assertEqual(#timers, 2)
+end)
+
 T.test("confirmation callback failure never rolls back a persisted confirmation", function()
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
@@ -422,4 +456,43 @@ T.test("confirmation callback failure never rolls back a persisted confirmation"
     T.assertEqual(record.gear.slots.HEAD.itemID, 9400)
     T.assertEqual(record.confirmedSequence, 1)
     T.assertNotNil(tracker.lastConfirmationCallbackError)
+end)
+
+T.test("stable tracker reports a confirmed slot without writing storage", function()
+    local GGM = loadModules()
+    local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    local confirmed
+    GGM.UpdateConfirmedCharacterSlot = function()
+        error("stable tracker must not write storage")
+    end
+
+    local tracker = assert(GGM.CreateStableGearTracker(
+        api,
+        "Alice-Silvermoon",
+        record.gear,
+        300,
+        function(characterKey, slotKey, slotValue, confirmedAt)
+            confirmed = {
+                characterKey = characterKey,
+                slotKey = slotKey,
+                itemID = slotValue.itemID,
+                confirmedAt = confirmedAt,
+            }
+            return true, nil
+        end
+    ))
+
+    setSlot("HEAD", 9500, "|Hitem:9500|h[Stable]|h")
+    assert(GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD))
+    setTime(1700000300)
+    timers[1]:Fire()
+
+    local savedRecord = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    T.assertEqual(confirmed.characterKey, "Alice-Silvermoon")
+    T.assertEqual(confirmed.slotKey, "HEAD")
+    T.assertEqual(confirmed.itemID, 9500)
+    T.assertEqual(confirmed.confirmedAt, 1700000300)
+    T.assertEqual(savedRecord.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(savedRecord.confirmedSequence, 0)
 end)
