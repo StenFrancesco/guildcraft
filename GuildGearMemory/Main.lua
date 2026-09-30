@@ -1,5 +1,9 @@
 local ADDON_NAME, GGM = ...
 
+GGM.professionRosterMembershipCurrent = false
+GGM.professionRosterRefreshIssued = false
+GGM.professionRosterRefreshPending = false
+
 GGM.RegisterSnapshotTestSlashCommand(_G)
 
 local frame = CreateFrame("Frame")
@@ -11,6 +15,9 @@ frame:RegisterEvent("CHAT_MSG_GUILD")
 frame:RegisterEvent("TRADE_SKILL_SHOW")
 frame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
 frame:RegisterEvent("TRADE_SKILL_CLOSE")
+frame:RegisterEvent("GUILD_ROSTER_UPDATE")
+frame:RegisterEvent("PLAYER_GUILD_UPDATE")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 local function publishConfirmedSlot(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
     if not GGM.guildSync then
@@ -140,6 +147,45 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if GGM.professionLinkSave then
             GGM.ClearProfessionSaveContext(GGM.professionLinkSave)
         end
+        return
+    end
+
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" then
+        if not GGM.db or GGM.startupError then return end
+        local guildOk, inGuild = pcall(_G.IsInGuild)
+        if not guildOk or type(inGuild) ~= "boolean" then
+            GGM.lastProfessionIndexError = "profession-roster-unavailable"
+            return
+        end
+        if not inGuild then
+            GGM.professionRosterRefreshIssued = false
+            GGM.professionRosterRefreshPending = false
+            local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
+            if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
+            return
+        end
+        if GGM.professionRosterRefreshIssued then return end
+        GGM.professionRosterMembershipCurrent = false
+        GGM.professionRosterRefreshIssued = true
+        local guildInfo = _G.C_GuildInfo
+        if type(guildInfo) ~= "table" or type(guildInfo.GuildRoster) ~= "function" then
+            GGM.lastProfessionIndexError = "profession-roster-unavailable"
+            return
+        end
+        GGM.professionRosterRefreshPending = true
+        local requestOk = pcall(guildInfo.GuildRoster)
+        if not requestOk then
+            GGM.professionRosterRefreshPending = false
+            GGM.lastProfessionIndexError = "profession-roster-unavailable"
+        end
+        return
+    end
+
+    if event == "GUILD_ROSTER_UPDATE" then
+        if not GGM.db or GGM.startupError or not GGM.professionRosterRefreshPending then return end
+        GGM.professionRosterRefreshPending = false
+        local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
+        if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
         return
     end
 

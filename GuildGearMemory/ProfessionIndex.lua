@@ -574,6 +574,113 @@ function GGM.RebuildProfessionRecipeIndex(db)
     return true, nil
 end
 
+local function rosterIdentity(api, rawName, guid)
+    if not nonEmptyString(rawName) or not GGM.IsProfessionGUID(guid) then return nil end
+    local name, realm = rawName:match("^([^-]+)%-(.+)$")
+    if not name then
+        name = rawName
+        if type(api.GetRealmName) == "function" then
+            local ok, currentRealm = pcall(api.GetRealmName)
+            if ok then realm = currentRealm end
+        end
+    end
+    if not nonEmptyString(name) or not nonEmptyString(realm) then return nil end
+    return { key = name .. "-" .. realm, name = name, realm = realm, guid = guid }
+end
+
+function GGM.ReconcileProfessionGuildRoster(api, db)
+    GGM.professionRosterMembershipCurrent = false
+    if type(api) ~= "table"
+        or type(api.IsInGuild) ~= "function"
+        or type(db) ~= "table"
+        or type(db.professions) ~= "table"
+        or type(db.professionCharacters) ~= "table"
+        or type(db.localCharacterIDByGUID) ~= "table"
+        or type(db.professionRecipeIndex) ~= "table" then
+        return false, "profession-roster-unavailable"
+    end
+
+    local guildOk, inGuild = pcall(api.IsInGuild)
+    if not guildOk or type(inGuild) ~= "boolean" then
+        return false, "profession-roster-unavailable"
+    end
+
+    local currentByGUID, currentByKey = {}, {}
+    if inGuild then
+        if type(api.GetNumGuildMembers) ~= "function"
+            or type(api.GetGuildRosterInfo) ~= "function" then
+            return false, "profession-roster-unavailable"
+        end
+
+        local countOk, count = pcall(api.GetNumGuildMembers, true)
+        if not countOk or type(count) ~= "number" or count < 0 or count ~= math.floor(count) then
+            return false, "profession-roster-unavailable"
+        end
+        if count == 0 then return false, "profession-roster-incomplete" end
+
+        for index = 1, count do
+            local rowOk, row = pcall(function()
+                return { api.GetGuildRosterInfo(index) }
+            end)
+            if not rowOk then return false, "profession-roster-incomplete" end
+            local identity = rosterIdentity(api, row[1], row[17])
+            if not identity
+                or currentByGUID[identity.guid] ~= nil
+                or (currentByKey[identity.key] ~= nil and currentByKey[identity.key] ~= identity.guid) then
+                return false, "profession-roster-incomplete"
+            end
+            currentByGUID[identity.guid] = identity
+            currentByKey[identity.key] = identity.guid
+        end
+    end
+
+    -- Check all canonical key changes before touching cached membership or index state.
+    for localID, entry in pairs(db.professionCharacters) do
+        if type(entry) ~= "table" or not GGM.IsProfessionGUID(entry.guid)
+            or db.localCharacterIDByGUID[entry.guid] ~= localID
+            or type(entry.key) ~= "string" or type(entry.active) ~= "boolean" then
+            return false, "profession-roster-unavailable"
+        end
+        local current = currentByGUID[entry.guid]
+        if current and entry.key ~= current.key then
+            local rekeyOk = GGM.RekeyProfessionCharacter(db, localID, current, true)
+            if not rekeyOk then
+                db.professionIndexRepairNeeded = true
+                return false, "profession-roster-rename-conflict"
+            end
+        end
+    end
+
+    local changed = false
+    for localID, entry in pairs(db.professionCharacters) do
+        local current = currentByGUID[entry.guid]
+        if current then
+            if entry.key ~= current.key then
+                local rekeyOk, rekeyed = GGM.RekeyProfessionCharacter(db, localID, current)
+                if not rekeyOk then
+                    db.professionIndexRepairNeeded = true
+                    return false, "profession-roster-rename-conflict"
+                end
+                changed = changed or rekeyed
+            end
+            if entry.active ~= true then
+                entry.active = true
+                changed = true
+            end
+        elseif entry.active ~= false then
+            entry.active = false
+            changed = true
+        end
+    end
+
+    if changed then
+        local rebuilt, rebuildErr = GGM.RebuildProfessionRecipeIndex(db)
+        if not rebuilt then return false, rebuildErr end
+    end
+    GGM.professionRosterMembershipCurrent = true
+    return true, nil
+end
+
 function GGM.ValidateProfessionIndexCache(db)
     return registryConsistent(db) and registryMatchesCanonical(db) and recipeIndexConsistent(db)
 end

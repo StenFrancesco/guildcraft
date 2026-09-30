@@ -312,3 +312,164 @@ T.test("incremental profession reconciliation removes only one character from on
     T.assertTrue(db.professionRecipeIndex[171][300][aliceID])
     T.assertTrue(db.professionRecipeIndex[171][300][bobID])
 end)
+
+T.test("guild roster reconciliation deactivates departed characters and removes them from search", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return false end,
+    }, db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertFalse(db.professionCharacters[localID].active)
+    local results = assert(GGM.GetProfessionRecipeCharacters(db, 164, 100))
+    T.assertEqual(#results, 0)
+    T.assertNotNil(db.professions[identity.key])
+end)
+
+T.test("incomplete guild roster leaves cached activity and index unchanged", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    local priorIndex = db.professionRecipeIndex
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function()
+            return "Alice-Silvermoon", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, nil
+        end,
+    }, db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-roster-incomplete")
+    T.assertTrue(db.professionCharacters[localID].active)
+    T.assertEqual(db.professionRecipeIndex, priorIndex)
+    T.assertTrue(db.professionRecipeIndex[164][100][localID])
+end)
+
+T.test("empty roster while still in a guild is unavailable, not an authoritative departure", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 0 end,
+        GetGuildRosterInfo = function() error("should not be called") end,
+    }, db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-roster-incomplete")
+    T.assertTrue(db.professionCharacters[localID].active)
+end)
+
+T.test("guild roster reconciliation reactivates a known GUID and preserves merged records on rename", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 171, professionName = "Alchemy", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 300, name = "Potion" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    db.professions["Alice-Argent-Dawn"] = {
+        identity = {
+            key = "Alice-Argent-Dawn", name = "Alice", realm = "Argent-Dawn", guid = identity.guid,
+        },
+        snapshots = {
+            [164] = {
+                professionID = 164, professionName = "Blacksmithing", capturedAt = 2,
+                source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+                recipes = { { recipeID = 100, name = "Copper Bracers" } },
+            },
+        },
+    }
+    assert(GGM.SetProfessionCharacterActive(db, localID, false))
+
+    local ok = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function(includeOffline)
+            T.assertTrue(includeOffline)
+            return 1
+        end,
+        GetGuildRosterInfo = function()
+            return "Alice-Argent-Dawn", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-A"
+        end,
+    }, db)
+
+    T.assertTrue(ok)
+    T.assertTrue(db.professionCharacters[localID].active)
+    T.assertEqual(db.professionCharacters[localID].key, "Alice-Argent-Dawn")
+    T.assertEqual(db.professions["Alice-Argent-Dawn"].identity.name, "Alice")
+    T.assertEqual(db.professions["Alice-Argent-Dawn"].identity.realm, "Argent-Dawn")
+    T.assertTrue(db.professionRecipeIndex[171][300][localID])
+    T.assertTrue(db.professionRecipeIndex[164][100][localID])
+    T.assertNil(db.professions["Alice-Silvermoon"])
+end)
+
+T.test("failed roster rename preserves the old key and inactive state on a collision", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    assert(GGM.SetProfessionCharacterActive(db, localID, false))
+    assert(GGM.RebuildProfessionRecipeIndex(db))
+    db.professions["Bob-Silvermoon"] = {
+        identity = { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B" },
+        snapshots = {},
+    }
+    local priorIndex = db.professionRecipeIndex
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function()
+            return "Bob-Silvermoon", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-A"
+        end,
+    }, db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-roster-rename-conflict")
+    T.assertEqual(db.professionCharacters[localID].key, identity.key)
+    T.assertFalse(db.professionCharacters[localID].active)
+    T.assertEqual(db.professionRecipeIndex, priorIndex)
+    T.assertTrue(db.professionIndexRepairNeeded)
+    T.assertNotNil(db.professions[identity.key])
+    T.assertEqual(db.professions["Bob-Silvermoon"].identity.guid, "Player-1-B")
+end)
