@@ -1591,7 +1591,7 @@ T.test("catalog groups localized snapshots by profession ID and sorts recipe own
     local GGM = loadModules()
     local db = catalogDB({
         {
-            key = "zoe-Silvermoon", name = "Zoe", realm = "Silvermoon", guid = "Player-1-Z",
+            key = "Zoe-Silvermoon", name = "Zoe", realm = "Silvermoon", guid = "Player-1-Z",
             active = true, snapshots = {
                 [171] = catalogSnapshot(GGM, 171, 1700000000, {
                     { recipeID = 101, name = "Amber Draught" },
@@ -1603,7 +1603,7 @@ T.test("catalog groups localized snapshots by profession ID and sorts recipe own
             },
         },
         {
-            key = "amy-ArgentDawn", name = "Amy", realm = "ArgentDawn", guid = "Player-1-A",
+            key = "Amy-ArgentDawn", name = "Amy", realm = "ArgentDawn", guid = "Player-1-A",
             active = true, snapshots = {
                 [171] = catalogSnapshot(GGM, 171, 1700000100, {
                     { recipeID = 101, name = "Amber Draught" },
@@ -1612,7 +1612,7 @@ T.test("catalog groups localized snapshots by profession ID and sorts recipe own
             },
         },
         {
-            key = "inactive-Silvermoon", name = "Inactive", realm = "Silvermoon", guid = "Player-1-I",
+            key = "Inactive-Silvermoon", name = "Inactive", realm = "Silvermoon", guid = "Player-1-I",
             active = false, snapshots = {
                 [171] = catalogSnapshot(GGM, 171, 1700000200, {
                     { recipeID = 404, name = "Hidden Recipe" },
@@ -1631,10 +1631,10 @@ T.test("catalog groups localized snapshots by profession ID and sorts recipe own
     T.assertEqual(model.recipes[1].recipeID, 101)
     T.assertEqual(model.recipes[1].name, "Amber Draught")
     T.assertEqual(#model.recipes[1].knownBy, 2)
-    T.assertEqual(model.recipes[1].knownBy[1].key, "amy-ArgentDawn")
+    T.assertEqual(model.recipes[1].knownBy[1].key, "Amy-ArgentDawn")
     T.assertEqual(model.recipes[1].knownBy[1].capturedAt, 1700000100)
     T.assertEqual(model.recipes[1].knownBy[1].savedDate, "%Y-%m-%d:1700000100")
-    T.assertEqual(model.recipes[1].knownBy[2].key, "zoe-Silvermoon")
+    T.assertEqual(model.recipes[1].knownBy[2].key, "Zoe-Silvermoon")
     T.assertEqual(model.recipes[1].knownBy[2].capturedAt, 1700000000)
     T.assertEqual(model.recipes[1].knownBy[2].savedDate, "%Y-%m-%d:1700000000")
     T.assertEqual(model.recipes[2].recipeID, 303)
@@ -1734,6 +1734,47 @@ T.test("catalog fails closed without confirmed membership or unambiguous canonic
     T.assertNil(unavailable.hasSnapshot)
     T.assertEqual(#unavailable.recipes, 0)
     assertTablesEqual(ambiguous, beforeAmbiguous)
+end)
+
+T.test("catalog rejects canonical profession identity key name realm disagreement without mutation", function()
+    local GGM = loadModules()
+    local member = {
+        key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A", active = true,
+        snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Recipe" } }) },
+    }
+    local db = catalogDB({ member })
+    db.professions[member.key].identity.name = "Alicia"
+    local before = copyTable(db)
+
+    local model = buildCatalog(GGM, db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "unavailable")
+    T.assertNil(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 0)
+    assertTablesEqual(db, before)
+end)
+
+T.test("catalog rejects snapshot-bearing profession orphans without valid roster GUIDs", function()
+    local GGM = loadModules()
+    for _, guid in ipairs({ false, "not-a-guid" }) do
+        local member = {
+            key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A", active = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Recipe" } }) },
+        }
+        local db = catalogDB({ member })
+        local orphan = db.professions[member.key]
+        if guid == false then orphan.identity.guid = nil else orphan.identity.guid = guid end
+        db.professionCharacters = {}
+        db.localCharacterIDByGUID = {}
+        local before = copyTable(db)
+
+        local model = buildCatalog(GGM, db, 171, "Alchemy", {})
+
+        T.assertEqual(model.state, "unavailable")
+        T.assertNil(model.hasSnapshot)
+        T.assertEqual(#model.recipes, 0)
+        assertTablesEqual(db, before)
+    end
 end)
 
 T.test("catalog keeps safely attributable recipes when another active snapshot is malformed", function()

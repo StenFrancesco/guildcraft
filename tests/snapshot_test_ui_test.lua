@@ -555,7 +555,8 @@ T.test("profession messages preserve unavailable and empty base states and disti
     mode = "incomplete-safe"; GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     frame.professionSearchBox:SetText("missing")
-    T.assertEqual(frame.professionStatus.text, "Some saved profession data is incomplete.")
+    T.assertEqual(frame.professionStatus.text,
+        "Some saved profession data is incomplete. No recipes match this search.")
     mode = "ready"; GGM.SelectProfession(frame, "Alchemy")
     frame.professionSearchBox:SetText("missing")
     T.assertEqual(frame.professionStatus.text, "No recipes match this search.")

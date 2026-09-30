@@ -1011,12 +1011,20 @@ local function catalogMemberOwnershipIsTrusted(db)
     local canonicalByGUID = {}
     for key, record in pairs(db.professions) do
         local identity = type(record) == "table" and record.identity or nil
-        if type(identity) == "table" and GGM.IsProfessionGUID(identity.guid) then
-            if identity.key ~= key or not nonEmptyString(identity.name) or not nonEmptyString(identity.realm) then
-                return false
-            end
+        if type(identity) ~= "table"
+            or identity.key ~= key
+            or not nonEmptyString(identity.name)
+            or not nonEmptyString(identity.realm)
+            or key ~= identity.name .. "-" .. identity.realm then
+            return false
+        end
+
+        if GGM.IsProfessionGUID(identity.guid) then
             if canonicalByGUID[identity.guid] ~= nil then return false end
             canonicalByGUID[identity.guid] = { key = key, identity = identity }
+        elseif (type(record.snapshots) == "table" and next(record.snapshots) ~= nil)
+            or (record.snapshots ~= nil and type(record.snapshots) ~= "table") then
+            return false
         end
     end
 
