@@ -102,6 +102,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
                 publishConfirmedSlot
             )
             GGM.gearTracker = tracker
+            if GGM.guildSync then
+                GGM.guildSync.localGearTracker = tracker
+            end
             GGM.lastGearTrackingError = err
             GGM.lastCaptureError = err
         end)

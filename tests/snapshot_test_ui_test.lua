@@ -493,6 +493,27 @@ T.test("guild gear browser distinguishes empty Mine and Guild views from unmatch
     T.assertEqual(emptyFrame.detailEmpty.text, "No personal snapshots yet")
 end)
 
+T.test("guild gear browser hides the model stage when detail has no valid record", function()
+    local GGM = loadUI()
+    local record = makeRecord(GGM)
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
+
+    -- WoW frames are shown by default; model that initial state in the UI stub.
+    frame.modelStage.visible = true
+    T.assertTrue(frame.modelStage.visible)
+    frame.searchBox:SetText("missing")
+    T.assertFalse(frame.modelStage.visible)
+    T.assertTrue(frame.detailEmpty.visible)
+
+    frame.searchBox:SetText("")
+    T.assertTrue(frame.modelStage.visible)
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
+    record.gear.slots.HEAD.itemLink = false
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
+    T.assertFalse(frame.modelStage.visible)
+    T.assertEqual(frame.detailEmpty.text, "No saved gear is available for this character")
+end)
+
 T.test("guild gear browser slot buttons fit inside the detail panel with a gap after the list", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))

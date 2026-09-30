@@ -6,6 +6,7 @@ local function loadModules()
     T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/StableGearTracker.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SyncProtocol.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SyncTransport.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GuildSync.lua", GGM)
@@ -412,6 +413,40 @@ T.test("snapshot response matching an explicit request is accepted", function()
     T.assertEqual(saved.identity.raceID, 5)
     T.assertEqual(saved.identity.sex, 2)
     T.assertEqual(saved.identity.displayID, 12345)
+end)
+
+T.test("received local snapshot refreshes the active gear tracker baseline", function()
+    local GGM = loadModules()
+    local alice, carol = identity("Alice", "Silvermoon", "A"), identity("Carol", "Silvermoon", "C")
+    local db = assert(GGM.InitializeDatabase(nil))
+    assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 8000), 4))
+    local api, sends, _, _, timers = clientApi(alice)
+    local slotIDs, itemIDs, itemLinks = {}, {}, {}
+    for index, slot in ipairs(GGM.TRACKED_SLOTS) do
+        slotIDs[slot.inventoryName] = index
+        itemIDs[index] = index == 1 and 8001 or 9000 + index
+        itemLinks[index] = "|Hitem:" .. tostring(itemIDs[index]) .. "|h[" .. slot.key .. "]|h"
+    end
+    api.GetInventorySlotInfo = function(name) return slotIDs[name] end
+    api.GetInventoryItemID = function(_, slotID) return itemIDs[slotID] end
+    api.GetInventoryItemLink = function(_, slotID) return itemLinks[slotID] end
+    api.GetServerTime = function() return 1700003000 end
+    local tracker = assert(GGM.CreateStableGearTracker(api, alice.key, db.characters[alice.key].gear, 30))
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    sync.localGearTracker = tracker
+    assert(GGM.RequestCompleteSnapshot(sync, alice))
+    local request = assert(GGM.DecodeSyncMessage(sends[1].message:match("^F1|%d%d%d%d%d%d|%d%d|%d%d|(.*)$")))
+    sync.pendingSnapshotRequests[request.requestID].selectedResponderKey = carol.key
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(alice, alice, carol, snapshot(GGM, 9000), 5, request.requestID))
+
+    local state, err = GGM.HandleGuildSyncPayload(sync, carol.key, payload)
+
+    T.assertEqual(state, "snapshot-saved"); T.assertNil(err)
+    T.assertEqual(tracker.confirmedSlots.HEAD.itemID, 9001)
+    T.assertNotNil(tracker.pendingBySlot.HEAD)
+    T.assertEqual(GGM.HandlePlayerEquipmentChanged(tracker, 1), "pending")
+    T.assertEqual(#timers, 1)
+    T.assertEqual(timers[1].delay, 30)
 end)
 
 T.test("received slot delta leaves saved model identity untouched without requesting a baseline", function()

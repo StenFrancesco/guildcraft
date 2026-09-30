@@ -517,6 +517,7 @@ local function renderBrowserDetail(frame, entry, api)
     if frame.completenessBadge then frame.completenessBadge:Hide() end
     if frame.snapshotCaption then frame.snapshotCaption:Hide() end
     frame.detailEmpty:Hide()
+    if frame.modelStage then frame.modelStage:Hide() end
     for _, slot in ipairs(frame.slotButtons) do slot:Hide() end
 
     if not entry then
@@ -539,6 +540,7 @@ local function renderBrowserDetail(frame, entry, api)
         return
     end
 
+    if frame.modelStage then frame.modelStage:Show() end
     local renderState = type(GGM.RenderSavedCharacterModel) == "function"
         and GGM.RenderSavedCharacterModel(frame.characterModelView, model.modelInput)
         or "render-unavailable"
