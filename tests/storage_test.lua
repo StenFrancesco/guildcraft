@@ -5,6 +5,7 @@ local function loadModules()
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     return GGM
 end
@@ -35,13 +36,13 @@ local function makeIdentity()
     }
 end
 
-T.test("database initialization creates the Phase 1 schema on first run", function()
+T.test("database initialization creates schema four on first run", function()
     local GGM = loadModules()
 
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertEqual(type(db.characters), "table")
     T.assertEqual(type(db.localCharacters), "table")
     T.assertNil(next(db.localCharacters))
@@ -477,13 +478,13 @@ T.test("new complete records persist confirmed sequence zero without a schema bu
 
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertEqual(db.characters[identity.key].confirmedSequence, 0)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(GGM.GetConfirmedSequence(record), 0)
 end)
 
-T.test("schema two migrates to schema three with empty profession storage", function()
+T.test("schema two migrates to schema four with empty profession storage", function()
     local GGM = loadModules()
     local existing = {
         schemaVersion = 2,
@@ -495,17 +496,17 @@ T.test("schema two migrates to schema three with empty profession storage", func
 
     T.assertNil(err)
     T.assertTrue(db == existing)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertNotNil(db.professions)
     T.assertNil(next(db.professions))
 end)
 
-T.test("new schema three database initializes profession storage", function()
+T.test("new schema four database initializes profession storage", function()
     local GGM = loadModules()
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertNotNil(db.professions)
 end)
 
@@ -932,7 +933,7 @@ T.test("schema one migration preserves known slots and leaves new slots unknown"
     } } }
     local db, err = GGM.InitializeDatabase(existing)
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     local record = assert(GGM.GetCharacterRecord(db, identity.key))
     T.assertFalse(record.complete)
     T.assertEqual(record.completeness, "incomplete")

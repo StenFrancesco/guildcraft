@@ -8,6 +8,8 @@
 Constants.lua
 CharacterIdentity.lua
 GearSnapshot.lua
+ProfessionSnapshot.lua
+ProfessionIndex.lua
 Storage.lua
 StableGearTracker.lua
 LocalGearMemory.lua
@@ -16,6 +18,5 @@ SyncTransport.lua
 GuildSync.lua
 SavedCharacterModel.lua
 SnapshotTestUI.lua
-ProfessionSnapshot.lua
 ProfessionLinkSave.lua
 Main.lua

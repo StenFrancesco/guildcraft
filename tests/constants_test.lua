@@ -42,10 +42,10 @@ T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", fun
     end
 end)
 
-T.test("schema version is three", function()
+T.test("schema version is four", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.assertEqual(GGM.SCHEMA_VERSION, 3)
+    T.assertEqual(GGM.SCHEMA_VERSION, 4)
 end)
 
 T.test("profession snapshot limits are conservative", function()

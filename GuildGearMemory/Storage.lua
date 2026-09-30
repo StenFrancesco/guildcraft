@@ -230,6 +230,13 @@ function GGM.InitializeDatabase(existing)
             characters = {},
             localCharacters = {},
             professions = {},
+            nextLocalCharacterID = 1,
+            professionCharacters = {},
+            localCharacterIDByGUID = {},
+            professionRecipeIndex = {},
+            professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
+            professionIndexDataIncomplete = false,
+            professionIndexRepairNeeded = false,
         }, nil
     end
 
@@ -237,7 +244,7 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-invalid"
     end
 
-    if existing.schemaVersion == 1 or existing.schemaVersion == 2 then
+    if existing.schemaVersion == 1 or existing.schemaVersion == 2 or existing.schemaVersion == 3 then
         if type(existing.characters) ~= "table" then
             return nil, "database-characters-invalid"
         end
@@ -252,13 +259,10 @@ function GGM.InitializeDatabase(existing)
                 migrateSchemaOneRecord(record, characterKey)
             end
         end
-        existing.schemaVersion = GGM.SCHEMA_VERSION
         existing.localCharacters = existing.localCharacters or {}
         existing.professions = existing.professions or {}
-        return existing, nil
-    end
-
-    if existing.schemaVersion ~= GGM.SCHEMA_VERSION then
+        existing.schemaVersion = GGM.SCHEMA_VERSION
+    elseif existing.schemaVersion ~= GGM.SCHEMA_VERSION then
         return nil, "unsupported-schema-version:" .. tostring(existing.schemaVersion)
     end
 
@@ -275,6 +279,8 @@ function GGM.InitializeDatabase(existing)
     end
 
     existing.professions = existing.professions or {}
+    local indexOk, indexErr = GGM.InitializeProfessionIndexState(existing)
+    if not indexOk then return nil, indexErr end
     return existing, nil
 end
 
