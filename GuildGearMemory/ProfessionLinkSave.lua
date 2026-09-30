@@ -162,6 +162,14 @@ function GGM.SaveActiveLinkedProfession(controller)
     local saveOptions
     if controller.activeSource == "guild" then
         saveOptions = { guildMembershipVerified = true }
+    elseif GGM.professionRosterMembershipCurrent == true then
+        local playerGuildIdentity, playerGuildErr = guildIdentityForGUID(controller.api, identity.guid)
+        if playerGuildIdentity then
+            identity = playerGuildIdentity
+            saveOptions = { guildMembershipVerified = true }
+        elseif playerGuildErr ~= "profession-owner-not-in-guild" then
+            return nil, playerGuildErr
+        end
     end
     local saved, saveErr = GGM.SaveProfessionSnapshot(
         controller.db, identity, snapshot, saveOptions

@@ -359,6 +359,112 @@ T.test("save click stores the open player's profession under the player identity
     T.assertEqual(savedSnapshot.source, GGM.PROFESSION_SOURCE_PLAYER)
 end)
 
+T.test("first player profession save activates and indexes the player after current roster confirms membership", function()
+    local GGM = loadModule()
+    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = {
+        UnitFullName = function() return "Alice", "Silvermoon" end,
+        UnitGUID = function() return "Player-1-ABC" end,
+        GetRealmName = function() return "Silvermoon" end,
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function(includeOffline)
+            T.assertTrue(includeOffline)
+            return 1
+        end,
+        GetGuildRosterInfo = function(index)
+            T.assertEqual(index, 1)
+            return "Alice-Silvermoon", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-ABC"
+        end,
+    }
+    T.assertTrue(GGM.ReconcileProfessionGuildRoster(api, db))
+    T.assertTrue(GGM.professionRosterMembershipCurrent)
+    T.assertNil(db.localCharacterIDByGUID["Player-1-ABC"])
+
+    local controller = GGM.CreateProfessionLinkSaveController(api, db)
+    controller.activeIdentity = assert(GGM.BuildPlayerIdentity(api))
+    controller.activeSource = "player"
+    GGM.CaptureLinkedProfessionSnapshot = function(_, source)
+        return {
+            professionID = 164, professionName = "Blacksmithing",
+            capturedAt = 1700000000, source = source,
+            status = GGM.PROFESSION_CACHE_STATUS,
+            recipes = { { recipeID = 41234, name = "Copper Bracers" } },
+        }, nil
+    end
+
+    local result, err = GGM.SaveActiveLinkedProfession(controller)
+
+    T.assertEqual(result, "saved")
+    T.assertNil(err)
+    local localID = db.localCharacterIDByGUID["Player-1-ABC"]
+    T.assertNotNil(localID)
+    T.assertTrue(db.professionCharacters[localID].active)
+    local matches = assert(GGM.GetProfessionRecipeCharacters(db, 164, 41234))
+    T.assertEqual(#matches, 1)
+    T.assertEqual(matches[1].guid, "Player-1-ABC")
+end)
+
+T.test("player profession save does not activate when current roster does not verify the player GUID", function()
+    local GGM = loadModule()
+    local savedIdentity
+    local savedOptions
+    GGM.professionRosterMembershipCurrent = true
+    GGM.CaptureLinkedProfessionSnapshot = function()
+        return { professionID = 164 }, nil
+    end
+    GGM.SaveProfessionSnapshot = function(_, identity, _, options)
+        savedIdentity = identity
+        savedOptions = options
+        return true, nil
+    end
+    local controller = GGM.CreateProfessionLinkSaveController({
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function()
+            return "Bob-Silvermoon", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, "Player-2-DEF"
+        end,
+    }, {})
+    controller.activeIdentity = {
+        key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-ABC",
+    }
+    controller.activeSource = "player"
+
+    T.assertEqual(GGM.SaveActiveLinkedProfession(controller), "saved")
+    T.assertEqual(savedIdentity.guid, "Player-1-ABC")
+    T.assertNil(savedOptions)
+end)
+
+T.test("player profession save aborts when current roster verification is unavailable", function()
+    local GGM = loadModule()
+    local saveCalls = 0
+    GGM.professionRosterMembershipCurrent = true
+    GGM.CaptureLinkedProfessionSnapshot = function()
+        return { professionID = 164 }, nil
+    end
+    GGM.SaveProfessionSnapshot = function()
+        saveCalls = saveCalls + 1
+        return true, nil
+    end
+    local controller = GGM.CreateProfessionLinkSaveController({
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function() error("roster temporarily unavailable") end,
+    }, {})
+    controller.activeIdentity = {
+        key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-ABC",
+    }
+    controller.activeSource = "player"
+
+    local result, err = GGM.SaveActiveLinkedProfession(controller)
+
+    T.assertNil(result)
+    T.assertEqual(err, "profession-roster-unavailable")
+    T.assertEqual(saveCalls, 0)
+end)
+
 T.test("save button is parented to the profession UI", function()
     local GGM = loadModule()
     local professionFrame = {}
