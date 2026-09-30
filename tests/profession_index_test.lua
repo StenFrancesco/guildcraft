@@ -304,6 +304,43 @@ T.test("malformed active snapshots produce an unavailable index without repeated
     T.assertEqual(rebuildCount, 0)
 end)
 
+T.test("snapshots without a canonical GUID keep the recipe index incomplete", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    db.professions["Legacy-Silvermoon"] = {
+        identity = { key = "Legacy-Silvermoon", name = "Legacy", realm = "Silvermoon" },
+        snapshots = { [164] = indexedSnapshot(GGM, 164, 100) },
+    }
+    db.professionRecipeIndexVersion = 0
+
+    assert(GGM.RebuildProfessionRecipeIndex(db))
+    GGM.professionRosterMembershipCurrent = true
+    local results, err = GGM.GetProfessionRecipeCharacters(db, 164, 100)
+
+    T.assertTrue(db.professionIndexDataIncomplete)
+    T.assertNil(results)
+    T.assertEqual(err, "profession-index-incomplete")
+end)
+
+T.test("saving a new GUID does not claim snapshots from an ownerless legacy row", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local oldSnapshot = indexedSnapshot(GGM, 164, 100)
+    db.professions[identity.key] = {
+        identity = { key = identity.key, name = "Alice", realm = "Silvermoon" },
+        snapshots = { [164] = oldSnapshot },
+    }
+
+    local localID, err = GGM.PrepareProfessionCharacterForSave(db, identity, true)
+
+    T.assertNil(localID)
+    T.assertEqual(err, "profession-key-collision")
+    T.assertNil(db.localCharacterIDByGUID[identity.guid])
+    T.assertNil(db.professions[identity.key].identity.guid)
+    T.assertEqual(db.professions[identity.key].snapshots[164], oldSnapshot)
+end)
+
 T.test("active canonical record without snapshots makes the recipe index unavailable", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

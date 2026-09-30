@@ -276,6 +276,11 @@ function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVeri
             if targetGUID ~= nil and not GGM.IsProfessionGUID(targetGUID) then
                 return nil, "profession-record-invalid"
             end
+            if targetGUID == nil and type(targetRecord.snapshots) == "table"
+                and next(targetRecord.snapshots) ~= nil then
+                db.professionIndexRepairNeeded = true
+                return nil, "profession-key-collision"
+            end
             if GGM.IsProfessionGUID(targetGUID) and targetGUID ~= identity.guid then
                 db.professionIndexRepairNeeded = true
                 return nil, "profession-key-collision"
@@ -535,7 +540,7 @@ local function recipeIndexConsistent(db)
 end
 
 canonicalGUIDRecords = function(db)
-    local byGUID, ambiguous, invalidRecord = {}, {}, false
+    local byGUID, ambiguous, invalidRecord, snapshotsWithoutGUID = {}, {}, false, false
     for key, record in pairs(db.professions) do
         local identity = type(record) == "table" and record.identity or nil
         local guid = type(identity) == "table" and identity.guid or nil
@@ -549,9 +554,12 @@ canonicalGUIDRecords = function(db)
                     byGUID[guid] = { key = key, record = record }
                 end
             end
+        elseif type(record) == "table" and type(record.snapshots) == "table"
+            and next(record.snapshots) ~= nil then
+            snapshotsWithoutGUID = true
         end
     end
-    return byGUID, ambiguous, invalidRecord
+    return byGUID, ambiguous, invalidRecord, snapshotsWithoutGUID
 end
 
 local function canonicalRecordsForGUID(db, guid)
@@ -703,8 +711,8 @@ function GGM.RebuildProfessionRecipeIndex(db)
         if not registryOk then return false, registryErr end
     end
 
-    local _, _, invalidCanonical = canonicalGUIDRecords(db)
-    local rebuilt, dataIncomplete = {}, invalidCanonical
+    local _, _, invalidCanonical, snapshotsWithoutGUID = canonicalGUIDRecords(db)
+    local rebuilt, dataIncomplete = {}, invalidCanonical or snapshotsWithoutGUID
     for localID, entry in pairs(db.professionCharacters) do
         if entry.active == true then
             local record = db.professions[entry.key]
