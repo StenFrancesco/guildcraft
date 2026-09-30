@@ -77,3 +77,19 @@ T.test("profession index state fails closed when no monotonic next ID can be rep
     T.assertEqual(err, "profession-character-id-exhausted")
     T.assertFalse(db.professionCharacters[1e100] == nil)
 end)
+
+T.test("profession index state rejects a counter that cannot advance even with empty registries", function()
+    local GGM = loadModules()
+    local db = {
+        professions = {},
+        professionCharacters = {},
+        localCharacterIDByGUID = {},
+        nextLocalCharacterID = 1e100,
+    }
+
+    local ok, err = GGM.InitializeProfessionIndexState(db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-character-id-exhausted")
+    T.assertEqual(db.nextLocalCharacterID, 1e100)
+end)

@@ -11,6 +11,11 @@ local function positiveInteger(value)
         and value == math.floor(value)
 end
 
+local function canAdvance(value)
+    local advanced = value + 1
+    return positiveInteger(advanced) and advanced > value
+end
+
 local function highestReservedID(professionCharacters, localCharacterIDByGUID)
     local highest = 0
 
@@ -58,6 +63,9 @@ function GGM.InitializeProfessionIndexState(db)
     local nextID = db.nextLocalCharacterID
     if not positiveInteger(nextID) or nextID <= highestID then
         nextID = minimumNextID
+    end
+    if not canAdvance(nextID) then
+        return false, "profession-character-id-exhausted"
     end
 
     db.nextLocalCharacterID = nextID
