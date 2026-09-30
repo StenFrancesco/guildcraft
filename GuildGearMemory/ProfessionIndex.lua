@@ -18,26 +18,31 @@ end
 
 local function highestReservedID(professionCharacters, localCharacterIDByGUID)
     local highest = 0
+    local malformed = false
+
+    local function reserve(localID)
+        if type(localID) == "number" then
+            if localID > highest then highest = localID end
+            if not positiveInteger(localID) then malformed = true end
+        else
+            malformed = true
+        end
+    end
 
     if type(professionCharacters) == "table" then
         for localID in pairs(professionCharacters) do
-            if not positiveInteger(localID) then
-                return nil, "profession-character-id-invalid"
-            end
-            if localID > highest then highest = localID end
+            reserve(localID)
         end
     end
 
     if type(localCharacterIDByGUID) == "table" then
-        for _, localID in pairs(localCharacterIDByGUID) do
-            if not positiveInteger(localID) then
-                return nil, "profession-character-id-invalid"
-            end
-            if localID > highest then highest = localID end
+        for guid, localID in pairs(localCharacterIDByGUID) do
+            if not nonEmptyString(guid) then malformed = true end
+            reserve(localID)
         end
     end
 
-    return highest, nil
+    return highest, nil, malformed
 end
 
 function GGM.InitializeProfessionIndexState(db)
@@ -49,18 +54,29 @@ function GGM.InitializeProfessionIndexState(db)
         or type(db.localCharacterIDByGUID) ~= "table"
     local indexMissing = type(db.professionRecipeIndex) ~= "table"
 
-    local highestID, highestErr = highestReservedID(
+    local highestID, highestErr, registryMalformed = highestReservedID(
         db.professionCharacters,
         db.localCharacterIDByGUID
     )
     if highestID == nil then return false, highestErr end
 
-    local minimumNextID = highestID + 1
+    local nextID = db.nextLocalCharacterID
+    if type(nextID) == "number" and nextID ~= nextID then
+        return false, "profession-character-id-exhausted"
+    end
+    if highestID == 0
+        and type(nextID) ~= "number"
+        and (nextID ~= nil or registryMalformed) then
+        return false, "profession-character-id-exhausted"
+    end
+
+    local highWater = highestID
+    if type(nextID) == "number" and nextID > highWater then highWater = nextID end
+    local minimumNextID = math.floor(highWater) + 1
     if minimumNextID <= highestID or not positiveInteger(minimumNextID) then
         return false, "profession-character-id-exhausted"
     end
 
-    local nextID = db.nextLocalCharacterID
     if not positiveInteger(nextID) or nextID <= highestID then
         nextID = minimumNextID
     end
@@ -78,7 +94,7 @@ function GGM.InitializeProfessionIndexState(db)
     db.professionRecipeIndexVersion = type(db.professionRecipeIndexVersion) == "number"
         and db.professionRecipeIndexVersion or 0
     db.professionIndexDataIncomplete = db.professionIndexDataIncomplete == true
-    if registryMissing or indexMissing then db.professionRecipeIndexVersion = 0 end
+    if registryMissing or indexMissing or registryMalformed then db.professionRecipeIndexVersion = 0 end
     db.professionIndexRepairNeeded = db.professionIndexRepairNeeded == true
 
     return true, nil
@@ -460,23 +476,28 @@ local function recipeIndexConsistent(db)
 end
 
 local function canonicalGUIDRecords(db)
-    local byGUID, ambiguous = {}, {}
+    local byGUID, ambiguous, invalidRecord = {}, {}, false
     for key, record in pairs(db.professions) do
         local identity = type(record) == "table" and record.identity or nil
         local guid = type(identity) == "table" and identity.guid or nil
-        if GGM.IsProfessionGUID(guid) and identity.key == key then
-            if byGUID[guid] and byGUID[guid].key ~= key then
-                ambiguous[guid] = true
+        if GGM.IsProfessionGUID(guid) then
+            if identity.key ~= key then
+                invalidRecord = true
             else
-                byGUID[guid] = { key = key, record = record }
+                if byGUID[guid] and byGUID[guid].key ~= key then
+                    ambiguous[guid] = true
+                else
+                    byGUID[guid] = { key = key, record = record }
+                end
             end
         end
     end
-    return byGUID, ambiguous
+    return byGUID, ambiguous, invalidRecord
 end
 
 local function registryMatchesCanonical(db)
-    local canonicalByGUID, ambiguous = canonicalGUIDRecords(db)
+    local canonicalByGUID, ambiguous, invalidRecord = canonicalGUIDRecords(db)
+    if invalidRecord then return false end
     for guid in pairs(ambiguous) do
         if db.localCharacterIDByGUID[guid] ~= nil or db.professionIndexRepairNeeded ~= true then return false end
     end
@@ -549,7 +570,8 @@ function GGM.RebuildProfessionRecipeIndex(db)
         if not registryOk then return false, registryErr end
     end
 
-    local rebuilt, dataIncomplete = {}, false
+    local _, _, invalidCanonical = canonicalGUIDRecords(db)
+    local rebuilt, dataIncomplete = {}, invalidCanonical
     for localID, entry in pairs(db.professionCharacters) do
         if entry.active == true then
             local record = db.professions[entry.key]
@@ -742,7 +764,12 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
         return nil, "profession-roster-incomplete"
     end
     local ok, err = GGM.EnsureProfessionIndex(db)
-    if not ok then return nil, err end
+    if not ok then
+        if type(db) == "table" and db.professionIndexDataIncomplete then
+            return nil, "profession-index-incomplete"
+        end
+        return nil, err
+    end
     if db.professionIndexDataIncomplete then return nil, "profession-index-incomplete" end
     if db.professionIndexRepairNeeded then return nil, "profession-index-repair-needed" end
 

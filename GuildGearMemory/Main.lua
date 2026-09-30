@@ -3,6 +3,7 @@ local ADDON_NAME, GGM = ...
 GGM.professionRosterMembershipCurrent = false
 GGM.professionRosterRefreshIssued = false
 GGM.professionRosterRefreshPending = false
+GGM.professionRosterRefreshSucceeded = false
 
 GGM.RegisterSnapshotTestSlashCommand(_G)
 
@@ -161,6 +162,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if not inGuild then
             GGM.professionRosterRefreshIssued = false
             GGM.professionRosterRefreshPending = false
+            GGM.professionRosterRefreshSucceeded = false
             local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
             if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
             return
@@ -168,22 +170,25 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if GGM.professionRosterRefreshIssued then return end
         GGM.professionRosterMembershipCurrent = false
         GGM.professionRosterRefreshIssued = true
+        GGM.professionRosterRefreshSucceeded = false
         local guildInfo = _G.C_GuildInfo
         if type(guildInfo) ~= "table" or type(guildInfo.GuildRoster) ~= "function" then
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
             return
         end
         GGM.professionRosterRefreshPending = true
-        local requestOk = pcall(guildInfo.GuildRoster)
-        if not requestOk then
+        local requestOk, requestResult = pcall(guildInfo.GuildRoster)
+        if not requestOk or requestResult == false then
             GGM.professionRosterRefreshPending = false
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
+        else
+            GGM.professionRosterRefreshSucceeded = true
         end
         return
     end
 
     if event == "GUILD_ROSTER_UPDATE" then
-        if not GGM.db or GGM.startupError or not GGM.professionRosterRefreshIssued then return end
+        if not GGM.db or GGM.startupError or not GGM.professionRosterRefreshSucceeded then return end
         GGM.professionRosterRefreshPending = false
         local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
         if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end

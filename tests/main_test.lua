@@ -227,6 +227,62 @@ T.test("guild membership API failure clears cached roster readiness", function()
     end)
 end)
 
+T.test("failed guild roster refresh cannot make a later roster event authoritative", function()
+    for _, failureMode in ipairs({ "missing", "throwing" }) do
+        local onEvent
+        local refreshCalls = 0
+        local reconcileCalls = 0
+        local frame = {
+            RegisterEvent = function() end,
+            SetScript = function(_, _, handler) onEvent = handler end,
+        }
+        local replacements = {
+            CreateFrame = function() return frame end,
+            GuildGearMemoryDB = NIL,
+            IsInGuild = function() return true end,
+        }
+        if failureMode == "throwing" then
+            replacements.C_GuildInfo = {
+                GuildRoster = function()
+                    refreshCalls = refreshCalls + 1
+                    error("roster refresh failed")
+                end,
+            }
+        else
+            replacements.C_GuildInfo = NIL
+        end
+
+        withGlobals(replacements, function()
+            local GGM = {}
+            stubSnapshotUI(GGM)
+            GGM.InitializeDatabase = function()
+                return { schemaVersion = 4, characters = {}, professions = {} }, nil
+            end
+            GGM.ReconcileProfessionGuildRoster = function()
+                reconcileCalls = reconcileCalls + 1
+                GGM.professionRosterMembershipCurrent = true
+                return true, nil
+            end
+
+            T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+            onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+            onEvent(frame, "PLAYER_ENTERING_WORLD")
+
+            T.assertTrue(GGM.professionRosterRefreshIssued)
+            T.assertFalse(GGM.professionRosterRefreshSucceeded)
+            T.assertFalse(GGM.professionRosterMembershipCurrent)
+            local attemptedRefreshCalls = refreshCalls
+            onEvent(frame, "GUILD_ROSTER_UPDATE")
+
+            T.assertEqual(refreshCalls, attemptedRefreshCalls)
+            T.assertEqual(reconcileCalls, 0)
+            T.assertFalse(GGM.professionRosterMembershipCurrent)
+            onEvent(frame, "PLAYER_ENTERING_WORLD")
+            T.assertEqual(refreshCalls, attemptedRefreshCalls)
+        end)
+    end
+end)
+
 T.test("guild chat routes message and sender only to profession provenance", function()
     local onEvent
     local observed

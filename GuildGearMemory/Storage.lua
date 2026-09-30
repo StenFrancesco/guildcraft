@@ -280,7 +280,18 @@ function GGM.InitializeDatabase(existing)
 
     existing.professions = existing.professions or {}
     local indexOk, indexErr = GGM.InitializeProfessionIndexState(existing)
-    if not indexOk then return nil, indexErr end
+    if not indexOk then
+        if indexErr ~= "profession-character-id-exhausted" then return nil, indexErr end
+        existing.professionCharacters = type(existing.professionCharacters) == "table"
+            and existing.professionCharacters or {}
+        existing.localCharacterIDByGUID = type(existing.localCharacterIDByGUID) == "table"
+            and existing.localCharacterIDByGUID or {}
+        existing.professionRecipeIndex = {}
+        existing.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
+        existing.professionIndexDataIncomplete = true
+        existing.professionIndexRepairNeeded = true
+        return existing, nil
+    end
     local cacheOk, cacheErr = GGM.EnsureProfessionIndex(existing, true)
     if not cacheOk then return nil, cacheErr end
     return existing, nil
