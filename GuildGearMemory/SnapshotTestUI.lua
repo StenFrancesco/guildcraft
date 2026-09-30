@@ -613,12 +613,12 @@ local function setBrowserContentVisible(frame, visible)
 end
 
 local PROFESSIONS = {
-    { key = "Alchemy", icon = "Interface\\Icons\\Trade_Alchemy" },
-    { key = "Blacksmithing", icon = "Interface\\Icons\\Trade_BlackSmithing" },
-    { key = "Enchanting", icon = "Interface\\Icons\\Trade_Engraving" },
-    { key = "Engineering", icon = "Interface\\Icons\\Trade_Engineering" },
-    { key = "Leatherworking", icon = "Interface\\Icons\\Trade_LeatherWorking" },
-    { key = "Tailoring", icon = "Interface\\Icons\\Trade_Tailoring" },
+    { key = "Alchemy", professionID = 171, icon = "Interface\\Icons\\Trade_Alchemy" },
+    { key = "Blacksmithing", professionID = 164, icon = "Interface\\Icons\\Trade_BlackSmithing" },
+    { key = "Enchanting", professionID = 333, icon = "Interface\\Icons\\Trade_Engraving" },
+    { key = "Engineering", professionID = 202, icon = "Interface\\Icons\\Trade_Engineering" },
+    { key = "Leatherworking", professionID = 165, icon = "Interface\\Icons\\Trade_LeatherWorking" },
+    { key = "Tailoring", professionID = 197, icon = "Interface\\Icons\\Trade_Tailoring" },
 }
 
 local function professionButtonColor(button, selected)
@@ -627,14 +627,39 @@ local function professionButtonColor(button, selected)
     if button.selectionBar then if selected then button.selectionBar:Show() else button.selectionBar:Hide() end end
 end
 
+local updateProfessionRecipeBrowser
+
+function GGM.FilterProfessionRecipeBrowserEntries(entries, query)
+    local filtered = {}
+    if type(entries) ~= "table" then return filtered end
+    local needle = type(query) == "string" and string.lower(query) or ""
+    if needle == "" then
+        for _, entry in ipairs(entries) do table.insert(filtered, entry) end
+        return filtered
+    end
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" and type(entry.name) == "string"
+            and string.find(string.lower(entry.name), needle, 1, true) then
+            table.insert(filtered, entry)
+        end
+    end
+    return filtered
+end
+
 function GGM.SelectProfession(frame, selectedKey)
     local selectedProfession
     for _, profession in ipairs(PROFESSIONS) do if profession.key == selectedKey then selectedProfession = profession; break end end
     if not selectedProfession then return false end
+    local changed = frame.selectedProfession ~= selectedKey
     frame.selectedProfession = selectedKey
     frame.professionHeading:SetText(selectedKey)
     if frame.professionHeroIcon then frame.professionHeroIcon:SetTexture(selectedProfession.icon) end
     for _, button in ipairs(frame.professionButtons) do professionButtonColor(button, button.key == selectedKey) end
+    if changed and frame.professionSearchBox then frame.professionSearchBox:SetText("") end
+    if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
+        frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, selectedProfession.professionID, selectedProfession.key, frame.api)
+        if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
+    end
     return true
 end
 
@@ -664,6 +689,7 @@ local function createProfessionButton(api, sidebar, profession, offset)
     button.key = profession.key
     button:SetScript("OnClick", function() GGM.SelectProfession(sidebar.owner, profession.key) end)
     professionButtonColor(button, false)
+    button.professionID = profession.professionID
     return button
 end
 
@@ -722,12 +748,95 @@ local function createProfessionsPage(api, frame)
     subtitle:SetText("Last-known recipe information")
     setTextColor(subtitle, THEME.textSoft)
 
-    local placeholder = createEmptyStateCard(api, panel, "Interface\\Icons\\INV_Misc_Note_01",
-        "Profession snapshot details", "Profession data is captured from the Blizzard profession window. This view is ready for the saved recipe detail layer without changing the storage or sync backend.")
-    placeholder:SetPoint("CENTER", panel, "CENTER", 0, -46)
+    local searchLabel = createSectionLabel(panel, "SEARCH RECIPES")
+    searchLabel:SetPoint("TOPLEFT", hero, "BOTTOMLEFT", 8, -16)
+    frame.professionSearchBox = api.CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    frame.professionSearchBox:SetSize(300, UI.controlHeightCompact)
+    frame.professionSearchBox:SetPoint("TOPLEFT", searchLabel, "BOTTOMLEFT", 0, -7)
+    frame.professionSearchBox:SetAutoFocus(false)
+    frame.professionSearchBox:SetText("")
+
+    frame.professionCount = createText(panel, "OVERLAY", "GameFontDisableSmall")
+    frame.professionCount:SetPoint("LEFT", frame.professionSearchBox, "RIGHT", 14, 0)
+    setTextColor(frame.professionCount, THEME.muted)
+    frame.professionStatus = createText(panel, "OVERLAY", "GameFontHighlightSmall")
+    frame.professionStatus:SetPoint("TOPLEFT", frame.professionSearchBox, "BOTTOMLEFT", 0, -11)
+    frame.professionStatus:SetPoint("RIGHT", panel, "RIGHT", -18, 0)
+    frame.professionStatus:SetJustifyH("LEFT")
+    setTextColor(frame.professionStatus, THEME.textSoft)
+
+    frame.professionRecipeScroll = api.CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+    frame.professionRecipeScroll:SetPoint("TOPLEFT", frame.professionStatus, "BOTTOMLEFT", 0, -8)
+    frame.professionRecipeScroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -30, 16)
+    frame.professionRecipeContent = api.CreateFrame("Frame", nil, frame.professionRecipeScroll)
+    frame.professionRecipeContent:SetSize(620, 1)
+    frame.professionRecipeScroll:SetScrollChild(frame.professionRecipeContent)
+    frame.professionRecipeRows = {}
+    frame.professionSearchBox:SetScript("OnTextChanged", function()
+        if updateProfessionRecipeBrowser and frame.professionCatalog then updateProfessionRecipeBrowser(frame) end
+    end)
 
     frame.professionsPage = page
     GGM.SelectProfession(frame, "Alchemy")
+end
+
+updateProfessionRecipeBrowser = function(frame)
+    local catalog = frame.professionCatalog or { state = "unavailable", recipes = {}, message = nil }
+    local recipes = type(catalog.recipes) == "table" and catalog.recipes or {}
+    local filtered = GGM.FilterProfessionRecipeBrowserEntries(recipes, frame.professionSearchBox:GetText() or "")
+    frame.filteredProfessionRecipes = filtered
+    frame.professionCount:SetText(#filtered .. (#filtered == 1 and " recipe" or " recipes"))
+
+    local status = catalog.message
+    if #recipes > 0 and #filtered == 0 then
+        local noMatch = "No recipes match this search."
+        status = status and (status .. " " .. noMatch) or noMatch
+    elseif catalog.state == "ready" and #recipes == 0 then
+        status = "No saved recipes are available."
+    end
+    frame.professionStatus:SetText(status or "")
+    if status and status ~= "" then frame.professionStatus:Show() else frame.professionStatus:Hide() end
+
+    local y = 0
+    for index, recipe in ipairs(filtered) do
+        local row = frame.professionRecipeRows[index]
+        if not row then
+            row = frame.api.CreateFrame("Frame", nil, frame.professionRecipeContent)
+            row.name = createText(row, "OVERLAY", "GameFontHighlight")
+            row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -9)
+            row.name:SetPoint("RIGHT", row, "RIGHT", -12, 0)
+            row.name:SetJustifyH("LEFT")
+            setTextColor(row.name, THEME.text)
+            row.knownBy = createText(row, "OVERLAY", "GameFontDisableSmall")
+            row.knownBy:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -5)
+            row.knownBy:SetPoint("RIGHT", row, "RIGHT", -12, 0)
+            row.knownBy:SetJustifyH("LEFT")
+            row.separator = row:CreateTexture(nil, "BORDER")
+            row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 10, 0)
+            row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -10, 0)
+            row.separator:SetHeight(1)
+            setColor(row.separator, THEME.borderSoft)
+            frame.professionRecipeRows[index] = row
+        end
+
+        local owners = {}
+        for _, owner in ipairs(type(recipe.knownBy) == "table" and recipe.knownBy or {}) do
+            local character = (owner.name or "Unknown") .. "-" .. (owner.realm or "Unknown")
+            owners[#owners + 1] = character .. " — " .. (owner.savedDate or "Date unavailable")
+        end
+        row.recipe = recipe
+        row.name:SetText(recipe.name or "Unknown recipe")
+        row.knownBy:SetText(#owners > 0 and ("Known by: " .. table.concat(owners, "\n")) or "Cached recipe snapshot")
+        local rowHeight = 48 + math.max(#owners - 1, 0) * 14
+        row:SetHeight(rowHeight)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", frame.professionRecipeContent, "TOPLEFT", 0, -y)
+        row:SetPoint("RIGHT", frame.professionRecipeContent, "RIGHT", 0, 0)
+        row:Show()
+        y = y + rowHeight + 1
+    end
+    for index = #filtered + 1, #frame.professionRecipeRows do frame.professionRecipeRows[index]:Hide() end
+    frame.professionRecipeContent:SetHeight(math.max(y, 1))
 end
 
 local updateBrowserList
@@ -756,7 +865,17 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     end
 
     local showCharacter = selectedKey == "Character"
-    if selectedKey == "Professions" then frame.professionsPage:Show() else frame.professionsPage:Hide() end
+    if selectedKey == "Professions" then
+        frame.professionsPage:Show()
+        if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
+            local profession
+            for _, item in ipairs(PROFESSIONS) do if item.key == frame.selectedProfession then profession = item; break end end
+            if profession then
+                frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, profession.professionID, profession.key, frame.api)
+                updateProfessionRecipeBrowser(frame)
+            end
+        end
+    else frame.professionsPage:Hide() end
     for pageKey, page in pairs(frame.placeholderPages) do if pageKey == selectedKey then page:Show() else page:Hide() end end
 
     if showCharacter then
@@ -1282,6 +1401,7 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     local selectedKey = frame.selectedEntry and frame.selectedEntry.key or nil
     frame.entries = GGM.BuildGuildGearBrowserEntries(db)
     frame.db = db
+    GGM.SelectProfession(frame, frame.selectedProfession or "Alchemy")
     frame.searchBox:SetText(query)
     frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, query)
     frame.selectedEntry = nil
