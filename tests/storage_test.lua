@@ -5,6 +5,7 @@ local function loadModules()
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     return GGM
 end
@@ -35,13 +36,13 @@ local function makeIdentity()
     }
 end
 
-T.test("database initialization creates the Phase 1 schema on first run", function()
+T.test("database initialization creates schema four on first run", function()
     local GGM = loadModules()
 
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertEqual(type(db.characters), "table")
     T.assertEqual(type(db.localCharacters), "table")
     T.assertNil(next(db.localCharacters))
@@ -477,17 +478,23 @@ T.test("new complete records persist confirmed sequence zero without a schema bu
 
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertEqual(db.characters[identity.key].confirmedSequence, 0)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(GGM.GetConfirmedSequence(record), 0)
 end)
 
-T.test("schema two migrates to schema three with empty profession storage", function()
+T.test("schema two migrates to schema four with empty profession storage", function()
     local GGM = loadModules()
+    local identity = makeIdentity()
     local existing = {
         schemaVersion = 2,
-        characters = {},
+        characters = { [identity.key] = {
+            complete = true,
+            identity = identity,
+            confirmedSequence = 4,
+            gear = makeSnapshot(GGM),
+        } },
         localCharacters = {},
     }
 
@@ -495,24 +502,28 @@ T.test("schema two migrates to schema three with empty profession storage", func
 
     T.assertNil(err)
     T.assertTrue(db == existing)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertNotNil(db.professions)
     T.assertNil(next(db.professions))
+    local migratedRecord = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertEqual(migratedRecord.identity.guid, identity.guid)
+    T.assertEqual(migratedRecord.confirmedSequence, 4)
+    T.assertEqual(migratedRecord.gear.slots.HEAD.itemID, 2001)
 end)
 
-T.test("new schema three database initializes profession storage", function()
+T.test("new schema four database initializes profession storage", function()
     local GGM = loadModules()
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     T.assertNotNil(db.professions)
 end)
 
 T.test("saving profession data creates a profession-only character entry", function()
     local GGM = loadModules()
     local db = GGM.InitializeDatabase(nil)
-    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         professionID = 164,
         professionName = "Blacksmithing",
@@ -539,7 +550,7 @@ end)
 T.test("re-saving the same profession replaces that profession snapshot predictably", function()
     local GGM = loadModules()
     local db = GGM.InitializeDatabase(nil)
-    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local first = {
         professionID = 164, professionName = "Blacksmithing",
         capturedAt = 1700004000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
@@ -563,7 +574,7 @@ end)
 T.test("saving a second profession preserves the first profession", function()
     local GGM = loadModules()
     local db = GGM.InitializeDatabase(nil)
-    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
 
     local function snapshot(id, name)
         return {
@@ -584,7 +595,7 @@ end)
 T.test("invalid profession snapshot writes nothing", function()
     local GGM = loadModules()
     local db = GGM.InitializeDatabase(nil)
-    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
 
     local saved, err = GGM.SaveProfessionSnapshot(db, identity, { professionID = 164 })
 
@@ -596,7 +607,7 @@ end)
 T.test("invalid replacement cannot overwrite an existing profession snapshot", function()
     local GGM = loadModules()
     local db = GGM.InitializeDatabase(nil)
-    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local valid = {
         professionID = 171, professionName = "Alchemy",
         capturedAt = 1700006000, source = GGM.PROFESSION_SOURCE_GUILD_LINK,
@@ -612,6 +623,233 @@ T.test("invalid replacement cannot overwrite an existing profession snapshot", f
 
     T.assertFalse(saved)
     T.assertEqual(db.professions[identity.key].snapshots[171].capturedAt, 1700006000)
+end)
+
+T.test("saving a profession snapshot updates only that profession membership", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = {
+        key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
+    }
+    local blacksmithing = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1700000000,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = {
+            { recipeID = 100, name = "Copper Bracers" },
+            { recipeID = 200, name = "Iron Buckle" },
+        },
+    }
+    local alchemy = {
+        professionID = 171, professionName = "Alchemy", capturedAt = 1700000001,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 300, name = "Potion" } },
+    }
+
+    assert(GGM.SaveProfessionSnapshot(db, identity, blacksmithing))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    T.assertFalse(db.professionCharacters[localID].active)
+    T.assertNil(db.professionRecipeIndex[164])
+    assert(GGM.SetProfessionCharacterActive(db, localID, true))
+    assert(GGM.RebuildProfessionRecipeIndex(db))
+    assert(GGM.SaveProfessionSnapshot(db, identity, alchemy))
+
+    local replacement = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1700000010,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 400, name = "Steel Belt" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, replacement))
+
+    T.assertNil(db.professionRecipeIndex[164][100])
+    T.assertNil(db.professionRecipeIndex[164][200])
+    T.assertTrue(db.professionRecipeIndex[164][400][localID])
+    T.assertTrue(db.professionRecipeIndex[171][300][localID])
+end)
+
+T.test("two characters may share one profession recipe bucket", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local snapshot = {
+        professionID = 171, professionName = "Alchemy", capturedAt = 1700000000,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 300, name = "Potion" } },
+    }
+    local alice = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local bob = { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B" }
+    assert(GGM.SaveProfessionSnapshot(db, alice, snapshot, { guildMembershipVerified = true }))
+    assert(GGM.SaveProfessionSnapshot(db, bob, snapshot, { guildMembershipVerified = true }))
+
+    local bucket = db.professionRecipeIndex[171][300]
+    T.assertTrue(bucket[db.localCharacterIDByGUID[alice.guid]])
+    T.assertTrue(bucket[db.localCharacterIDByGUID[bob.guid]])
+end)
+
+T.test("a local-player save cannot reactivate a departed profession character", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = {
+        key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
+    }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    assert(GGM.SetProfessionCharacterActive(db, localID, false))
+    assert(GGM.RebuildProfessionRecipeIndex(db))
+    snapshot.capturedAt = 2
+    assert(GGM.SaveProfessionSnapshot(db, identity, snapshot))
+
+    T.assertFalse(db.professionCharacters[localID].active)
+    T.assertNil(db.professionRecipeIndex[164])
+    T.assertNotNil(db.professions[identity.key].snapshots[164])
+end)
+
+T.test("profession save requires a GUID and legacy guidless records stay readable", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1700000000,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = {},
+    }
+    local legacyIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
+    local saved, err = GGM.SaveProfessionSnapshot(db, legacyIdentity, snapshot)
+    T.assertFalse(saved)
+    T.assertEqual(err, "profession-identity-guid-invalid")
+
+    db.professions[legacyIdentity.key] = {
+        identity = legacyIdentity,
+        snapshots = { [164] = snapshot },
+    }
+    local record = assert(GGM.GetProfessionRecord(db, legacyIdentity.key))
+    T.assertNotNil(record.snapshots[164])
+    T.assertNil(db.localCharacterIDByGUID[legacyIdentity.guid])
+end)
+
+T.test("verified same-GUID rename moves the canonical profession record and preserves other professions", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local oldIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local first = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    local second = {
+        professionID = 171, professionName = "Alchemy", capturedAt = 2,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 300, name = "Potion" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, oldIdentity, first, { guildMembershipVerified = true }))
+    assert(GGM.SaveProfessionSnapshot(db, oldIdentity, second))
+
+    local renamed = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = "Player-1-A" }
+    first.capturedAt = 3
+    assert(GGM.SaveProfessionSnapshot(db, renamed, first, { guildMembershipVerified = true }))
+
+    T.assertNil(db.professions[oldIdentity.key])
+    T.assertNotNil(db.professions[renamed.key].snapshots[164])
+    T.assertNotNil(db.professions[renamed.key].snapshots[171])
+end)
+
+T.test("verified same-GUID rename merges disjoint profession records", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local oldIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local first = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    local second = {
+        professionID = 171, professionName = "Alchemy", capturedAt = 2,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 300, name = "Potion" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, oldIdentity, first, { guildMembershipVerified = true }))
+    db.professions["Alicia-Silvermoon"] = {
+        identity = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = oldIdentity.guid },
+        snapshots = { [171] = second },
+    }
+    local renamed = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = oldIdentity.guid }
+    first.capturedAt = 3
+    assert(GGM.SaveProfessionSnapshot(db, renamed, first, { guildMembershipVerified = true }))
+
+    T.assertNil(db.professions[oldIdentity.key])
+    T.assertNotNil(db.professions[renamed.key].snapshots[164])
+    T.assertNotNil(db.professions[renamed.key].snapshots[171])
+    T.assertTrue(db.professionRecipeIndex[171][300][db.localCharacterIDByGUID[oldIdentity.guid]])
+end)
+
+T.test("same-GUID rename with overlapping profession snapshots fails without mutation", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local oldIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    assert(GGM.SaveProfessionSnapshot(db, oldIdentity, snapshot))
+    local renamed = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = oldIdentity.guid }
+    db.professions[renamed.key] = { identity = renamed, snapshots = { [164] = snapshot } }
+
+    local ok, err = GGM.SaveProfessionSnapshot(db, renamed, snapshot)
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-rename-profession-conflict")
+    T.assertTrue(db.professionIndexRepairNeeded)
+    T.assertNotNil(db.professions[oldIdentity.key])
+    T.assertNotNil(db.professions[renamed.key])
+    T.assertEqual(db.professionCharacters[db.localCharacterIDByGUID[oldIdentity.guid]].key, oldIdentity.key)
+    T.assertEqual(db.professions[oldIdentity.key].snapshots[164].capturedAt, 1)
+end)
+
+T.test("rename never overwrites a different GUID at the destination key", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    local alice = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local bob = { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B" }
+    assert(GGM.SaveProfessionSnapshot(db,
+        alice, snapshot, { guildMembershipVerified = true }))
+    assert(GGM.SaveProfessionSnapshot(db,
+        bob, snapshot, { guildMembershipVerified = true }))
+    local aliceID, bobID = db.localCharacterIDByGUID[alice.guid], db.localCharacterIDByGUID[bob.guid]
+    local aliceRecord, bobRecord = db.professions[alice.key], db.professions[bob.key]
+    local characters, reverseMap = db.professionCharacters, db.localCharacterIDByGUID
+    local index = db.professionRecipeIndex
+    local indexVersion = db.professionRecipeIndexVersion
+
+    local ok, err = GGM.SaveProfessionSnapshot(db, {
+        key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-A",
+    }, snapshot)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-key-collision")
+    T.assertTrue(db.professions[alice.key] == aliceRecord)
+    T.assertTrue(db.professions[bob.key] == bobRecord)
+    T.assertEqual(db.professions[alice.key].identity.guid, alice.guid)
+    T.assertEqual(db.professions[bob.key].identity.guid, bob.guid)
+    T.assertTrue(db.professionCharacters == characters)
+    T.assertTrue(db.localCharacterIDByGUID == reverseMap)
+    T.assertEqual(db.localCharacterIDByGUID[alice.guid], aliceID)
+    T.assertEqual(db.localCharacterIDByGUID[bob.guid], bobID)
+    T.assertEqual(db.professionCharacters[aliceID].key, alice.key)
+    T.assertEqual(db.professionCharacters[bobID].key, bob.key)
+    T.assertTrue(db.professionRecipeIndex == index)
+    T.assertEqual(db.professionRecipeIndexVersion, indexVersion)
+    T.assertTrue(db.professionIndexRepairNeeded)
+    GGM.professionRosterMembershipCurrent = true
+    local results, queryErr = GGM.GetProfessionRecipeCharacters(db, 164, 100)
+    T.assertNil(results)
+    T.assertEqual(queryErr, "profession-index-repair-needed")
 end)
 
 T.test("malformed profession snapshot records fail closed without raising", function()
@@ -932,7 +1170,7 @@ T.test("schema one migration preserves known slots and leaves new slots unknown"
     } } }
     local db, err = GGM.InitializeDatabase(existing)
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 3)
+    T.assertEqual(db.schemaVersion, 4)
     local record = assert(GGM.GetCharacterRecord(db, identity.key))
     T.assertFalse(record.complete)
     T.assertEqual(record.completeness, "incomplete")
@@ -987,4 +1225,39 @@ T.test("incomplete records require all 16 legacy slots and allow only new slots 
     local unknown, unknownErr = GGM.GetCharacterRecord(db, identity.key)
     T.assertNil(unknown)
     T.assertEqual(unknownErr, "tracked-slot-unknown:UNTRACKED")
+end)
+
+T.test("schema three migration keeps GUID-backed records inactive until roster verification", function()
+    local GGM = loadModules()
+    local existing = {
+        schemaVersion = 3,
+        characters = {},
+        localCharacters = {},
+        professions = {
+            ["Alice-Silvermoon"] = {
+                identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" },
+                snapshots = { [164] = {
+                    professionID = 164, professionName = "Blacksmithing", capturedAt = 1700000000,
+                    source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+                    recipes = { { recipeID = 100, name = "Copper Bracers" } },
+                } },
+            },
+            ["Legacy-Silvermoon"] = {
+                identity = { key = "Legacy-Silvermoon", name = "Legacy", realm = "Silvermoon" },
+                snapshots = {},
+            },
+        },
+    }
+
+    local db, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(err)
+    T.assertEqual(db.schemaVersion, 4)
+    local aliceID = db.localCharacterIDByGUID["Player-1-A"]
+    T.assertNotNil(aliceID)
+    T.assertEqual(db.professionCharacters[aliceID].key, "Alice-Silvermoon")
+    T.assertFalse(db.professionCharacters[aliceID].active)
+    T.assertNil(db.professionRecipeIndex[164])
+    T.assertNil(db.localCharacterIDByGUID["Legacy-Silvermoon"])
+    T.assertNotNil(db.professions["Legacy-Silvermoon"])
 end)

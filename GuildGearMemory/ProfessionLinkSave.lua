@@ -12,7 +12,7 @@ end
 local function senderIdentity(api, sender)
     if not nonEmptyString(sender) then return nil, "profession-sender-invalid" end
 
-    local name, realm = sender:match("^(.+)%-(.+)$")
+    local name, realm = sender:match("^([^-]+)%-(.+)$")
     if not name then
         name = sender
         if type(api) == "table" and type(api.GetRealmName) == "function" then
@@ -55,6 +55,7 @@ local function guildIdentityForGUID(api, ownerGUID)
         if info[17] == ownerGUID then
             local identity, identityErr = senderIdentity(api, info[1])
             if not identity then return nil, identityErr end
+            identity.guid = ownerGUID
             if matchedIdentity then return nil, "profession-owner-ambiguous" end
             matchedIdentity = identity
         end
@@ -135,6 +136,9 @@ function GGM.SaveActiveLinkedProfession(controller)
     local identity
     local snapshotSource
     if controller.activeSource == "guild" then
+        if GGM.professionRosterMembershipCurrent ~= true then
+            return nil, "profession-roster-incomplete"
+        end
         if professionOwnerGUID(controller.activeLink) ~= controller.activeOwnerGUID then
             return nil, "profession-owner-unavailable"
         end
@@ -155,7 +159,21 @@ function GGM.SaveActiveLinkedProfession(controller)
     )
     if not snapshot then return nil, captureErr end
 
-    local saved, saveErr = GGM.SaveProfessionSnapshot(controller.db, identity, snapshot)
+    local saveOptions
+    if controller.activeSource == "guild" then
+        saveOptions = { guildMembershipVerified = true }
+    elseif GGM.professionRosterMembershipCurrent == true then
+        local playerGuildIdentity, playerGuildErr = guildIdentityForGUID(controller.api, identity.guid)
+        if playerGuildIdentity then
+            identity = playerGuildIdentity
+            saveOptions = { guildMembershipVerified = true }
+        elseif playerGuildErr ~= "profession-owner-not-in-guild" then
+            return nil, playerGuildErr
+        end
+    end
+    local saved, saveErr = GGM.SaveProfessionSnapshot(
+        controller.db, identity, snapshot, saveOptions
+    )
     if not saved then return nil, saveErr end
     return "saved", nil
 end

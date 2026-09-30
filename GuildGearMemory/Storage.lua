@@ -223,6 +223,17 @@ function GGM.GetConfirmedSequence(record)
     return readConfirmedSequence(record)
 end
 
+local function markProfessionIndexUnavailable(db)
+    db.professionCharacters = type(db.professionCharacters) == "table"
+        and db.professionCharacters or {}
+    db.localCharacterIDByGUID = type(db.localCharacterIDByGUID) == "table"
+        and db.localCharacterIDByGUID or {}
+    db.professionRecipeIndex = {}
+    db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
+    db.professionIndexDataIncomplete = true
+    db.professionIndexRepairNeeded = true
+end
+
 function GGM.InitializeDatabase(existing)
     if existing == nil then
         return {
@@ -230,6 +241,14 @@ function GGM.InitializeDatabase(existing)
             characters = {},
             localCharacters = {},
             professions = {},
+            nextLocalCharacterID = 1,
+            professionCharacters = {},
+            localCharacterIDByGUID = {},
+            professionRecipeIndex = {},
+            professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
+            professionIndexRepairCandidates = {},
+            professionIndexDataIncomplete = false,
+            professionIndexRepairNeeded = false,
         }, nil
     end
 
@@ -237,7 +256,7 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-invalid"
     end
 
-    if existing.schemaVersion == 1 or existing.schemaVersion == 2 then
+    if existing.schemaVersion == 1 or existing.schemaVersion == 2 or existing.schemaVersion == 3 then
         if type(existing.characters) ~= "table" then
             return nil, "database-characters-invalid"
         end
@@ -252,13 +271,10 @@ function GGM.InitializeDatabase(existing)
                 migrateSchemaOneRecord(record, characterKey)
             end
         end
-        existing.schemaVersion = GGM.SCHEMA_VERSION
         existing.localCharacters = existing.localCharacters or {}
         existing.professions = existing.professions or {}
-        return existing, nil
-    end
-
-    if existing.schemaVersion ~= GGM.SCHEMA_VERSION then
+        existing.schemaVersion = GGM.SCHEMA_VERSION
+    elseif existing.schemaVersion ~= GGM.SCHEMA_VERSION then
         return nil, "unsupported-schema-version:" .. tostring(existing.schemaVersion)
     end
 
@@ -275,6 +291,18 @@ function GGM.InitializeDatabase(existing)
     end
 
     existing.professions = existing.professions or {}
+    local indexOk, indexErr = GGM.InitializeProfessionIndexState(existing)
+    if not indexOk then
+        if indexErr ~= "profession-character-id-exhausted" then return nil, indexErr end
+        markProfessionIndexUnavailable(existing)
+        return existing, nil
+    end
+    local cacheOk, cacheErr = GGM.EnsureProfessionIndex(existing, true)
+    if not cacheOk then
+        if cacheErr ~= "profession-character-id-exhausted" then return nil, cacheErr end
+        markProfessionIndexUnavailable(existing)
+        return existing, nil
+    end
     return existing, nil
 end
 
@@ -332,7 +360,7 @@ function GGM.GetProfessionRecord(db, characterKey)
     return record, nil
 end
 
-function GGM.SaveProfessionSnapshot(db, identity, snapshot)
+function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-invalid"
     end
@@ -341,8 +369,32 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot)
     end
     local identityValid, identityErr = validateIdentity(identity)
     if not identityValid then return false, identityErr end
+    if not GGM.IsProfessionGUID(identity.guid) then
+        return false, "profession-identity-guid-invalid"
+    end
     local snapshotValid, snapshotErr = GGM.ValidateProfessionSnapshot(snapshot)
     if not snapshotValid then return false, snapshotErr end
+
+    local guildMembershipVerified = type(options) == "table"
+        and options.guildMembershipVerified == true
+
+    local stateReady, stateErr = GGM.InitializeProfessionIndexState(db)
+    if not stateReady then return false, stateErr end
+
+    local localID, characterErr, rekeyed = GGM.PrepareProfessionCharacterForSave(
+        db,
+        identity,
+        guildMembershipVerified
+    )
+    if characterErr then return false, characterErr end
+
+    local indexOk, indexErr = GGM.EnsureProfessionIndex(db)
+    if not indexOk then return false, indexErr end
+
+    if localID == nil then
+        localID, characterErr = GGM.EnsureProfessionCharacter(db, identity)
+        if not localID then return false, characterErr end
+    end
 
     local record = db.professions[identity.key]
     if record ~= nil then
@@ -362,6 +414,26 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot)
 
     record.identity = copyIdentity(identity)
     record.snapshots[snapshot.professionID] = copyProfessionSnapshot(snapshot)
+
+    local entry = db.professionCharacters[localID]
+    local activityChanged = guildMembershipVerified and entry.active ~= true
+    if activityChanged then entry.active = true end
+
+    if rekeyed or activityChanged or db.professionIndexDataIncomplete then
+        local rebuilt = GGM.RebuildProfessionRecipeIndex(db)
+        if not rebuilt then
+            db.professionRecipeIndexVersion = 0
+            db.professionIndexRepairNeeded = true
+        end
+        return true, nil
+    end
+
+    local indexed = GGM.ReconcileProfessionRecipeMembership(db, localID, snapshot)
+    if not indexed then
+        db.professionRecipeIndexVersion = 0
+        db.professionIndexRepairNeeded = true
+        return true, nil
+    end
     return true, nil
 end
 
