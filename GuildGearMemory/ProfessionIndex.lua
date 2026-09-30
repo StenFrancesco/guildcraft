@@ -93,6 +93,8 @@ function GGM.InitializeProfessionIndexState(db)
         and db.professionRecipeIndex or {}
     db.professionRecipeIndexVersion = type(db.professionRecipeIndexVersion) == "number"
         and db.professionRecipeIndexVersion or 0
+    db.professionIndexRepairCandidates = type(db.professionIndexRepairCandidates) == "table"
+        and db.professionIndexRepairCandidates or {}
     db.professionIndexDataIncomplete = db.professionIndexDataIncomplete == true
     if registryMissing or indexMissing or registryMalformed then db.professionRecipeIndexVersion = 0 end
     db.professionIndexRepairNeeded = db.professionIndexRepairNeeded == true
@@ -242,7 +244,10 @@ function GGM.RekeyProfessionCharacter(db, localID, identity, validateOnly)
     return true, true
 end
 
-function GGM.PrepareProfessionCharacterForSave(db, identity)
+local canonicalGUIDRecords
+local storedRepairCandidateIsValid
+
+function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVerified)
     if type(identity) ~= "table" or not GGM.IsProfessionGUID(identity.guid) then
         return nil, "profession-identity-guid-invalid"
     end
@@ -261,8 +266,50 @@ function GGM.PrepareProfessionCharacterForSave(db, identity)
                 return nil, "profession-record-invalid"
             end
             if GGM.IsProfessionGUID(targetGUID) and targetGUID ~= identity.guid then
+                db.professionIndexRepairNeeded = true
                 return nil, "profession-key-collision"
             end
+        end
+
+        local candidate = type(db.professionIndexRepairCandidates) == "table"
+            and db.professionIndexRepairCandidates[identity.guid] or nil
+        if candidate ~= nil then
+            if guildMembershipVerified ~= true
+                or not storedRepairCandidateIsValid(db, identity.guid, candidate, identity.key)
+                or db.professionCharacters[candidate.localID] ~= nil then
+                db.professionIndexRepairNeeded = true
+                return nil, "profession-identity-ambiguous"
+            end
+
+            local localID = candidate.localID
+            db.professionCharacters[localID] = {
+                guid = identity.guid,
+                key = candidate.sourceKey,
+                active = candidate.active,
+            }
+            db.localCharacterIDByGUID[identity.guid] = localID
+
+            local validated, validateErr = GGM.RekeyProfessionCharacter(db, localID, identity, true)
+            if not validated then
+                db.professionCharacters[localID] = nil
+                db.localCharacterIDByGUID[identity.guid] = nil
+                db.professionIndexRepairNeeded = true
+                return nil, validateErr
+            end
+
+            local rekeyed, rekeyResult = GGM.RekeyProfessionCharacter(db, localID, identity)
+            if not rekeyed then
+                db.professionCharacters[localID] = nil
+                db.localCharacterIDByGUID[identity.guid] = nil
+                db.professionIndexRepairNeeded = true
+                return nil, rekeyResult
+            end
+
+            db.professionIndexRepairCandidates[identity.guid] = nil
+            local _, ambiguous, invalidCanonical = canonicalGUIDRecords(db)
+            db.professionIndexRepairNeeded = next(ambiguous) ~= nil or invalidCanonical
+                or next(db.professionIndexRepairCandidates) ~= nil
+            return localID, nil, rekeyResult
         end
         return nil, nil, false
     end
@@ -278,6 +325,7 @@ function GGM.PrepareProfessionCharacterForSave(db, identity)
         if targetRecord ~= nil and type(targetIdentity) == "table"
             and GGM.IsProfessionGUID(targetIdentity.guid)
             and targetIdentity.guid ~= identity.guid then
+            db.professionIndexRepairNeeded = true
             return nil, "profession-key-collision"
         end
         local matchingCanonicalRecords = 0
@@ -475,7 +523,7 @@ local function recipeIndexConsistent(db)
     return true
 end
 
-local function canonicalGUIDRecords(db)
+canonicalGUIDRecords = function(db)
     local byGUID, ambiguous, invalidRecord = {}, {}, false
     for key, record in pairs(db.professions) do
         local identity = type(record) == "table" and record.identity or nil
@@ -493,6 +541,52 @@ local function canonicalGUIDRecords(db)
         end
     end
     return byGUID, ambiguous, invalidRecord
+end
+
+local function canonicalRecordsForGUID(db, guid)
+    local records = {}
+    for key, record in pairs(db.professions) do
+        local identity = type(record) == "table" and record.identity or nil
+        if type(identity) == "table" and identity.guid == guid then
+            records[#records + 1] = {
+                key = key,
+                record = record,
+                identity = identity,
+                keyMatches = identity.key == key,
+            }
+        end
+    end
+    return records
+end
+
+local function hasExactlyTwoCanonicalRecords(db, guid, sourceKey, destinationKey)
+    local records = canonicalRecordsForGUID(db, guid)
+    if #records ~= 2 or sourceKey == destinationKey then return false end
+    local sourceMatches, destinationMatches = 0, 0
+    for _, row in ipairs(records) do
+        if not row.keyMatches then return false end
+        if row.key == sourceKey then sourceMatches = sourceMatches + 1 end
+        if destinationKey ~= nil and row.key == destinationKey then
+            destinationMatches = destinationMatches + 1
+        end
+    end
+    return sourceMatches == 1 and (destinationKey == nil or destinationMatches == 1)
+end
+
+local function trustedRepairCandidate(db, guid)
+    local localID = db.localCharacterIDByGUID[guid]
+    local entry = db.professionCharacters[localID]
+    if not validRegistryPair(db, localID, entry) then return nil end
+    if not hasExactlyTwoCanonicalRecords(db, guid, entry.key) then return nil end
+    return { localID = localID, sourceKey = entry.key, active = entry.active }
+end
+
+storedRepairCandidateIsValid = function(db, guid, candidate, destinationKey)
+    return type(candidate) == "table"
+        and positiveInteger(candidate.localID)
+        and nonEmptyString(candidate.sourceKey)
+        and type(candidate.active) == "boolean"
+        and hasExactlyTwoCanonicalRecords(db, guid, candidate.sourceKey, destinationKey)
 end
 
 local function registryMatchesCanonical(db)
@@ -513,7 +607,7 @@ local function registryMatchesCanonical(db)
     return true
 end
 
-local function rebuildRegistryFromCanonical(db)
+local function rebuildRegistryFromCanonical(db, oldRegistryConsistent)
     local oldEntries, oldByGUID = db.professionCharacters, db.localCharacterIDByGUID
     local highest = 0
     for localID in pairs(oldEntries) do
@@ -531,22 +625,42 @@ local function rebuildRegistryFromCanonical(db)
     end
     local nextID = db.nextLocalCharacterID
     if not positiveInteger(nextID) or nextID < minimumNext then
-        db.nextLocalCharacterID = minimumNext
-    else
-        db.nextLocalCharacterID = nextID
+        nextID = minimumNext
+    end
+
+    local canonicalByGUID, ambiguous = canonicalGUIDRecords(db)
+    local candidates = type(db.professionIndexRepairCandidates) == "table"
+        and db.professionIndexRepairCandidates or {}
+    for guid, candidate in pairs(candidates) do
+        if not ambiguous[guid] or not storedRepairCandidateIsValid(db, guid, candidate) then
+            candidates[guid] = nil
+        end
+    end
+    if oldRegistryConsistent then
+        for guid in pairs(ambiguous) do
+            local candidate = trustedRepairCandidate(db, guid)
+            if candidate then candidates[guid] = candidate end
+        end
     end
 
     local rebuiltEntries, rebuiltByGUID = {}, {}
-    local canonicalByGUID, ambiguous = canonicalGUIDRecords(db)
-    local repairNeeded = next(ambiguous) ~= nil
+    local proposedNextID = nextID
     for guid, canonical in pairs(canonicalByGUID) do
         if not ambiguous[guid] then
             local localID = oldByGUID[guid]
             local previous = localID and oldEntries[localID] or nil
             if not (positiveInteger(localID) and type(previous) == "table" and previous.guid == guid) then
-                localID = db.nextLocalCharacterID
-                if not canAdvance(localID) then return false, "profession-character-id-exhausted" end
-                db.nextLocalCharacterID = localID + 1
+                localID = proposedNextID
+                if not canAdvance(proposedNextID) then
+                    db.nextLocalCharacterID = proposedNextID
+                    db.professionRecipeIndex = {}
+                    db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
+                    db.professionIndexDataIncomplete = true
+                    db.professionIndexRepairNeeded = true
+                    db.professionIndexRepairCandidates = candidates
+                    return false, "profession-character-id-exhausted"
+                end
+                proposedNextID = proposedNextID + 1
             end
             rebuiltEntries[localID] = {
                 guid = guid,
@@ -557,7 +671,9 @@ local function rebuildRegistryFromCanonical(db)
         end
     end
     db.professionCharacters, db.localCharacterIDByGUID = rebuiltEntries, rebuiltByGUID
-    db.professionIndexRepairNeeded = repairNeeded
+    db.nextLocalCharacterID = proposedNextID
+    db.professionIndexRepairCandidates = candidates
+    db.professionIndexRepairNeeded = next(ambiguous) ~= nil or next(candidates) ~= nil
     return true
 end
 
@@ -565,8 +681,10 @@ function GGM.RebuildProfessionRecipeIndex(db)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-professions-invalid"
     end
-    if not registryConsistent(db) or not registryMatchesCanonical(db) then
-        local registryOk, registryErr = rebuildRegistryFromCanonical(db)
+    local oldRegistryConsistent = registryConsistent(db)
+    local registryMatches = oldRegistryConsistent and registryMatchesCanonical(db)
+    if not oldRegistryConsistent or not registryMatches then
+        local registryOk, registryErr = rebuildRegistryFromCanonical(db, oldRegistryConsistent)
         if not registryOk then return false, registryErr end
     end
 

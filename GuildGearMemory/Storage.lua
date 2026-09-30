@@ -223,6 +223,17 @@ function GGM.GetConfirmedSequence(record)
     return readConfirmedSequence(record)
 end
 
+local function markProfessionIndexUnavailable(db)
+    db.professionCharacters = type(db.professionCharacters) == "table"
+        and db.professionCharacters or {}
+    db.localCharacterIDByGUID = type(db.localCharacterIDByGUID) == "table"
+        and db.localCharacterIDByGUID or {}
+    db.professionRecipeIndex = {}
+    db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
+    db.professionIndexDataIncomplete = true
+    db.professionIndexRepairNeeded = true
+end
+
 function GGM.InitializeDatabase(existing)
     if existing == nil then
         return {
@@ -235,6 +246,7 @@ function GGM.InitializeDatabase(existing)
             localCharacterIDByGUID = {},
             professionRecipeIndex = {},
             professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
+            professionIndexRepairCandidates = {},
             professionIndexDataIncomplete = false,
             professionIndexRepairNeeded = false,
         }, nil
@@ -282,18 +294,15 @@ function GGM.InitializeDatabase(existing)
     local indexOk, indexErr = GGM.InitializeProfessionIndexState(existing)
     if not indexOk then
         if indexErr ~= "profession-character-id-exhausted" then return nil, indexErr end
-        existing.professionCharacters = type(existing.professionCharacters) == "table"
-            and existing.professionCharacters or {}
-        existing.localCharacterIDByGUID = type(existing.localCharacterIDByGUID) == "table"
-            and existing.localCharacterIDByGUID or {}
-        existing.professionRecipeIndex = {}
-        existing.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
-        existing.professionIndexDataIncomplete = true
-        existing.professionIndexRepairNeeded = true
+        markProfessionIndexUnavailable(existing)
         return existing, nil
     end
     local cacheOk, cacheErr = GGM.EnsureProfessionIndex(existing, true)
-    if not cacheOk then return nil, cacheErr end
+    if not cacheOk then
+        if cacheErr ~= "profession-character-id-exhausted" then return nil, cacheErr end
+        markProfessionIndexUnavailable(existing)
+        return existing, nil
+    end
     return existing, nil
 end
 
@@ -372,7 +381,11 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     local stateReady, stateErr = GGM.InitializeProfessionIndexState(db)
     if not stateReady then return false, stateErr end
 
-    local localID, characterErr, rekeyed = GGM.PrepareProfessionCharacterForSave(db, identity)
+    local localID, characterErr, rekeyed = GGM.PrepareProfessionCharacterForSave(
+        db,
+        identity,
+        guildMembershipVerified
+    )
     if characterErr then return false, characterErr end
 
     local indexOk, indexErr = GGM.EnsureProfessionIndex(db)

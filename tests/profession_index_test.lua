@@ -432,6 +432,172 @@ T.test("duplicate canonical records with disjoint professions remain untouched a
     T.assertEqual(queryErr, "profession-index-repair-needed")
 end)
 
+T.test("verified save recovers duplicate GUID records after rebuild when registry provenance is trusted", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
+    local sourceSnapshot = indexedSnapshot(GGM, 164, 100)
+    local destinationSnapshot = indexedSnapshot(GGM, 171, 300)
+    assert(GGM.SaveProfessionSnapshot(db, sourceIdentity, sourceSnapshot, { guildMembershipVerified = true }))
+    local trustedID = db.localCharacterIDByGUID[sourceIdentity.guid]
+    db.professions[destinationIdentity.key] = {
+        identity = destinationIdentity,
+        snapshots = { [171] = destinationSnapshot },
+    }
+    db.professionRecipeIndexVersion = 0
+
+    assert(GGM.EnsureProfessionIndex(db, true))
+    T.assertNil(db.localCharacterIDByGUID[sourceIdentity.guid])
+    T.assertTrue(db.professionIndexRepairNeeded)
+    GGM.professionRosterMembershipCurrent = true
+    local beforeRepair, beforeRepairErr = GGM.GetProfessionRecipeCharacters(db, 171, 300)
+    T.assertNil(beforeRepair)
+    T.assertEqual(beforeRepairErr, "profession-index-repair-needed")
+
+    local repairedSnapshot = indexedSnapshot(GGM, 164, 100)
+    repairedSnapshot.capturedAt = sourceSnapshot.capturedAt + 1
+    local saved, saveErr = GGM.SaveProfessionSnapshot(
+        db,
+        destinationIdentity,
+        repairedSnapshot,
+        { guildMembershipVerified = true }
+    )
+
+    T.assertTrue(saved)
+    T.assertNil(saveErr)
+    T.assertNil(db.professions[sourceIdentity.key])
+    T.assertNotNil(db.professions[destinationIdentity.key].snapshots[164])
+    T.assertNotNil(db.professions[destinationIdentity.key].snapshots[171])
+    T.assertEqual(db.localCharacterIDByGUID[sourceIdentity.guid], trustedID)
+    T.assertEqual(db.professionCharacters[trustedID].key, destinationIdentity.key)
+    T.assertFalse(db.professionIndexRepairNeeded)
+    local recovered = assert(GGM.GetProfessionRecipeCharacters(db, 171, 300))
+    T.assertEqual(#recovered, 1)
+    T.assertEqual(recovered[1].localCharacterID, trustedID)
+    T.assertEqual(recovered[1].key, destinationIdentity.key)
+end)
+
+T.test("verified save cannot recover duplicate GUID records without registry provenance", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
+    local sourceRecord = { identity = sourceIdentity, snapshots = { [164] = indexedSnapshot(GGM, 164, 100) } }
+    local destinationRecord = { identity = destinationIdentity, snapshots = { [171] = indexedSnapshot(GGM, 171, 300) } }
+    db.professions[sourceIdentity.key] = sourceRecord
+    db.professions[destinationIdentity.key] = destinationRecord
+    db.professionCharacters = {}
+    db.localCharacterIDByGUID = {}
+    db.professionRecipeIndexVersion = 0
+
+    assert(GGM.EnsureProfessionIndex(db, true))
+    local saved, err = GGM.SaveProfessionSnapshot(
+        db,
+        destinationIdentity,
+        indexedSnapshot(GGM, 164, 101),
+        { guildMembershipVerified = true }
+    )
+
+    T.assertFalse(saved)
+    T.assertEqual(err, "profession-identity-ambiguous")
+    T.assertTrue(db.professions[sourceIdentity.key] == sourceRecord)
+    T.assertTrue(db.professions[destinationIdentity.key] == destinationRecord)
+    T.assertNil(db.localCharacterIDByGUID[sourceIdentity.guid])
+    T.assertTrue(db.professionIndexRepairNeeded)
+end)
+
+T.test("verified save keeps duplicate GUID records blocked when a third record appears after rebuild", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
+    local thirdIdentity = indexedIdentity(GGM, "Ally-Silvermoon", sourceIdentity.guid)
+    assert(GGM.SaveProfessionSnapshot(db, sourceIdentity, indexedSnapshot(GGM, 164, 100), {
+        guildMembershipVerified = true,
+    }))
+    local sourceRecord = db.professions[sourceIdentity.key]
+    local destinationRecord = { identity = destinationIdentity, snapshots = { [171] = indexedSnapshot(GGM, 171, 300) } }
+    db.professions[destinationIdentity.key] = destinationRecord
+    db.professionRecipeIndexVersion = 0
+    assert(GGM.EnsureProfessionIndex(db, true))
+    local thirdRecord = { identity = thirdIdentity, snapshots = {} }
+    db.professions[thirdIdentity.key] = thirdRecord
+
+    local saved, err = GGM.SaveProfessionSnapshot(
+        db,
+        destinationIdentity,
+        indexedSnapshot(GGM, 164, 101),
+        { guildMembershipVerified = true }
+    )
+
+    T.assertFalse(saved)
+    T.assertEqual(err, "profession-identity-ambiguous")
+    T.assertTrue(db.professions[sourceIdentity.key] == sourceRecord)
+    T.assertTrue(db.professions[destinationIdentity.key] == destinationRecord)
+    T.assertTrue(db.professions[thirdIdentity.key] == thirdRecord)
+    T.assertNil(db.localCharacterIDByGUID[sourceIdentity.guid])
+    T.assertTrue(db.professionIndexRepairNeeded)
+end)
+
+T.test("verified save does not recover duplicate GUID records with overlapping professions", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
+    assert(GGM.SaveProfessionSnapshot(db, sourceIdentity, indexedSnapshot(GGM, 164, 100), {
+        guildMembershipVerified = true,
+    }))
+    assert(GGM.SaveProfessionSnapshot(db, sourceIdentity, indexedSnapshot(GGM, 171, 200)))
+    local sourceRecord = db.professions[sourceIdentity.key]
+    local destinationRecord = { identity = destinationIdentity, snapshots = { [171] = indexedSnapshot(GGM, 171, 300) } }
+    db.professions[destinationIdentity.key] = destinationRecord
+    db.professionRecipeIndexVersion = 0
+    assert(GGM.EnsureProfessionIndex(db, true))
+
+    local saved, err = GGM.SaveProfessionSnapshot(
+        db,
+        destinationIdentity,
+        indexedSnapshot(GGM, 164, 101),
+        { guildMembershipVerified = true }
+    )
+
+    T.assertFalse(saved)
+    T.assertEqual(err, "profession-rename-profession-conflict")
+    T.assertTrue(db.professions[sourceIdentity.key] == sourceRecord)
+    T.assertTrue(db.professions[destinationIdentity.key] == destinationRecord)
+    T.assertNil(db.localCharacterIDByGUID[sourceIdentity.guid])
+    T.assertTrue(db.professionIndexRepairNeeded)
+end)
+
+T.test("near-exhausted profession ID counter keeps startup available and preserves canonical data", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local firstIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local secondIdentity = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
+    local firstRecord = { identity = firstIdentity, snapshots = { [164] = indexedSnapshot(GGM, 164, 100) } }
+    local secondRecord = { identity = secondIdentity, snapshots = { [171] = indexedSnapshot(GGM, 171, 300) } }
+    db.professions[firstIdentity.key] = firstRecord
+    db.professions[secondIdentity.key] = secondRecord
+    local priorCounter = 2 ^ 53 - 2
+    db.nextLocalCharacterID = priorCounter
+    db.professionRecipeIndexVersion = 0
+
+    local initialized, err = GGM.InitializeDatabase(db)
+
+    T.assertNil(err)
+    T.assertTrue(initialized == db)
+    T.assertTrue(db.professions[firstIdentity.key] == firstRecord)
+    T.assertTrue(db.professions[secondIdentity.key] == secondRecord)
+    T.assertTrue(db.nextLocalCharacterID >= priorCounter)
+    T.assertTrue(db.professionIndexDataIncomplete)
+    T.assertTrue(db.professionIndexRepairNeeded)
+    GGM.professionRosterMembershipCurrent = true
+    local results, queryErr = GGM.GetProfessionRecipeCharacters(db, 164, 100)
+    T.assertNil(results)
+    T.assertEqual(queryErr, "profession-index-incomplete")
+end)
+
 T.test("canonical GUID record with mismatched storage key makes recipe queries unavailable", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

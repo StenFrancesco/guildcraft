@@ -812,18 +812,44 @@ T.test("rename never overwrites a different GUID at the destination key", functi
     local db = assert(GGM.InitializeDatabase(nil))
     local snapshot = {
         professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
-        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS, recipes = {},
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
+    local alice = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local bob = { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B" }
     assert(GGM.SaveProfessionSnapshot(db,
-        { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }, snapshot))
+        alice, snapshot, { guildMembershipVerified = true }))
     assert(GGM.SaveProfessionSnapshot(db,
-        { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B" }, snapshot))
-    local ok, err = GGM.SaveProfessionSnapshot(db,
-        { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-A" }, snapshot)
+        bob, snapshot, { guildMembershipVerified = true }))
+    local aliceID, bobID = db.localCharacterIDByGUID[alice.guid], db.localCharacterIDByGUID[bob.guid]
+    local aliceRecord, bobRecord = db.professions[alice.key], db.professions[bob.key]
+    local characters, reverseMap = db.professionCharacters, db.localCharacterIDByGUID
+    local index = db.professionRecipeIndex
+    local indexVersion = db.professionRecipeIndexVersion
+
+    local ok, err = GGM.SaveProfessionSnapshot(db, {
+        key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-A",
+    }, snapshot)
 
     T.assertFalse(ok)
     T.assertEqual(err, "profession-key-collision")
-    T.assertEqual(db.professions["Bob-Silvermoon"].identity.guid, "Player-1-B")
+    T.assertTrue(db.professions[alice.key] == aliceRecord)
+    T.assertTrue(db.professions[bob.key] == bobRecord)
+    T.assertEqual(db.professions[alice.key].identity.guid, alice.guid)
+    T.assertEqual(db.professions[bob.key].identity.guid, bob.guid)
+    T.assertTrue(db.professionCharacters == characters)
+    T.assertTrue(db.localCharacterIDByGUID == reverseMap)
+    T.assertEqual(db.localCharacterIDByGUID[alice.guid], aliceID)
+    T.assertEqual(db.localCharacterIDByGUID[bob.guid], bobID)
+    T.assertEqual(db.professionCharacters[aliceID].key, alice.key)
+    T.assertEqual(db.professionCharacters[bobID].key, bob.key)
+    T.assertTrue(db.professionRecipeIndex == index)
+    T.assertEqual(db.professionRecipeIndexVersion, indexVersion)
+    T.assertTrue(db.professionIndexRepairNeeded)
+    GGM.professionRosterMembershipCurrent = true
+    local results, queryErr = GGM.GetProfessionRecipeCharacters(db, 164, 100)
+    T.assertNil(results)
+    T.assertEqual(queryErr, "profession-index-repair-needed")
 end)
 
 T.test("malformed profession snapshot records fail closed without raising", function()
