@@ -1518,6 +1518,314 @@ T.test("failed roster rename preserves the old key and inactive state on a colli
     T.assertEqual(db.professions["Bob-Silvermoon"].identity.guid, "Player-1-B")
 end)
 
+local function catalogSnapshot(GGM, professionID, capturedAt, recipes, professionName)
+    return {
+        professionID = professionID,
+        professionName = professionName or "Localized profession",
+        capturedAt = capturedAt,
+        source = GGM.PROFESSION_SOURCE_PLAYER,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = recipes or {},
+    }
+end
+
+local function catalogDB(members)
+    local db = {
+        professions = {},
+        professionCharacters = {},
+        localCharacterIDByGUID = {},
+    }
+
+    for index, member in ipairs(members) do
+        local localID = member.localID or index
+        db.professionCharacters[localID] = {
+            guid = member.guid,
+            key = member.key,
+            active = member.active,
+        }
+        db.localCharacterIDByGUID[member.guid] = localID
+        db.professions[member.key] = {
+            identity = {
+                key = member.key,
+                name = member.name,
+                realm = member.realm,
+                guid = member.guid,
+            },
+            snapshots = member.snapshots,
+        }
+    end
+
+    return db
+end
+
+local function copyTable(value)
+    if type(value) ~= "table" then return value end
+    local result = {}
+    for key, nested in pairs(value) do result[copyTable(key)] = copyTable(nested) end
+    return result
+end
+
+local function assertTablesEqual(actual, expected, path)
+    path = path or "database"
+    T.assertEqual(type(actual), type(expected), path .. " type changed")
+    if type(expected) ~= "table" then
+        T.assertEqual(actual, expected, path .. " value changed")
+        return
+    end
+
+    for key, value in pairs(expected) do
+        T.assertNotNil(actual[key], path .. " lost key " .. tostring(key))
+        assertTablesEqual(actual[key], value, path .. "." .. tostring(key))
+    end
+    for key in pairs(actual) do
+        T.assertNotNil(expected[key], path .. " gained key " .. tostring(key))
+    end
+end
+
+local function buildCatalog(GGM, db, professionID, professionLabel, api)
+    GGM.professionRosterMembershipCurrent = true
+    return GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api)
+end
+
+T.test("catalog groups localized snapshots by profession ID and sorts recipe owners with their own saved dates", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "zoe-Silvermoon", name = "Zoe", realm = "Silvermoon", guid = "Player-1-Z",
+            active = true, snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000000, {
+                    { recipeID = 101, name = "Amber Draught" },
+                    { recipeID = 202, name = "Zinc Alloy" },
+                }, "Alchimie"),
+                [164] = catalogSnapshot(GGM, 164, 1700000000, {
+                    { recipeID = 999, name = "Wrong Profession" },
+                }, "Forgeron"),
+            },
+        },
+        {
+            key = "amy-ArgentDawn", name = "Amy", realm = "ArgentDawn", guid = "Player-1-A",
+            active = true, snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000100, {
+                    { recipeID = 101, name = "Amber Draught" },
+                    { recipeID = 303, name = "Azure Elixir" },
+                }, "Alchimie"),
+            },
+        },
+        {
+            key = "inactive-Silvermoon", name = "Inactive", realm = "Silvermoon", guid = "Player-1-I",
+            active = false, snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000200, {
+                    { recipeID = 404, name = "Hidden Recipe" },
+                }),
+            },
+        },
+    })
+    local before = copyTable(db)
+    local api = { date = function(format, timestamp) return format .. ":" .. tostring(timestamp) end }
+
+    local model = buildCatalog(GGM, db, 171, "Alchemy", api)
+
+    T.assertEqual(model.state, "ready")
+    T.assertTrue(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 3)
+    T.assertEqual(model.recipes[1].recipeID, 101)
+    T.assertEqual(model.recipes[1].name, "Amber Draught")
+    T.assertEqual(#model.recipes[1].knownBy, 2)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "amy-ArgentDawn")
+    T.assertEqual(model.recipes[1].knownBy[1].capturedAt, 1700000100)
+    T.assertEqual(model.recipes[1].knownBy[1].savedDate, "%Y-%m-%d:1700000100")
+    T.assertEqual(model.recipes[1].knownBy[2].key, "zoe-Silvermoon")
+    T.assertEqual(model.recipes[1].knownBy[2].capturedAt, 1700000000)
+    T.assertEqual(model.recipes[1].knownBy[2].savedDate, "%Y-%m-%d:1700000000")
+    T.assertEqual(model.recipes[2].recipeID, 303)
+    T.assertEqual(model.recipes[3].recipeID, 202)
+    T.assertEqual(model.message, nil)
+    assertTablesEqual(db, before)
+end)
+
+T.test("catalog distinguishes no snapshot from a valid empty snapshot", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        { key = "NoSnapshot-Silvermoon", name = "NoSnapshot", realm = "Silvermoon", guid = "Player-1-N", active = true, snapshots = {} },
+        { key = "Empty-Silvermoon", name = "Empty", realm = "Silvermoon", guid = "Player-1-E", active = true, snapshots = {
+            [171] = catalogSnapshot(GGM, 171, 1700000000, {}),
+        } },
+    })
+    local before = copyTable(db)
+
+    local noSnapshot = buildCatalog(GGM, db, 164, "Blacksmithing", {})
+    T.assertEqual(noSnapshot.state, "empty")
+    T.assertFalse(noSnapshot.hasSnapshot)
+    T.assertEqual(noSnapshot.message, "No saved Blacksmithing snapshots for current guild members.")
+    assertTablesEqual(db, before)
+
+    local emptySnapshot = buildCatalog(GGM, db, 171, "Alchemy", {})
+    T.assertEqual(emptySnapshot.state, "empty")
+    T.assertTrue(emptySnapshot.hasSnapshot)
+    T.assertEqual(emptySnapshot.message, "Saved Alchemy snapshots contain no learned recipes.")
+    assertTablesEqual(db, before)
+end)
+
+T.test("catalog treats malformed selected snapshots and containers as incomplete without claiming no snapshot", function()
+    local GGM = loadModules()
+    local malformedOnly = catalogDB({
+        { key = "Broken-Silvermoon", name = "Broken", realm = "Silvermoon", guid = "Player-1-B", active = true, snapshots = {
+            [171] = { professionID = 171, recipes = "not-a-recipe-list" },
+        } },
+    })
+    local beforeMalformed = copyTable(malformedOnly)
+
+    local malformed = buildCatalog(GGM, malformedOnly, 171, "Alchemy", {})
+
+    T.assertEqual(malformed.state, "incomplete")
+    T.assertTrue(malformed.hasSnapshot)
+    T.assertEqual(#malformed.recipes, 0)
+    T.assertEqual(malformed.message, "Some saved profession data is incomplete.")
+    assertTablesEqual(malformedOnly, beforeMalformed)
+
+    local badContainer = catalogDB({
+        { key = "Unknown-Silvermoon", name = "Unknown", realm = "Silvermoon", guid = "Player-1-U", active = true, snapshots = false },
+    })
+    local beforeContainer = copyTable(badContainer)
+    local uncertain = buildCatalog(GGM, badContainer, 171, "Alchemy", {})
+    T.assertEqual(uncertain.state, "incomplete")
+    T.assertNil(uncertain.hasSnapshot)
+    T.assertEqual(#uncertain.recipes, 0)
+    assertTablesEqual(badContainer, beforeContainer)
+
+    local malformedKeys = catalogDB({
+        { key = "OddKey-Silvermoon", name = "OddKey", realm = "Silvermoon", guid = "Player-1-O", active = true, snapshots = {
+            ["171"] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Recipe" } }),
+        } },
+    })
+    local beforeKeys = copyTable(malformedKeys)
+    local unknownPresence = buildCatalog(GGM, malformedKeys, 171, "Alchemy", {})
+    T.assertEqual(unknownPresence.state, "incomplete")
+    T.assertNil(unknownPresence.hasSnapshot)
+    T.assertEqual(#unknownPresence.recipes, 0)
+    assertTablesEqual(malformedKeys, beforeKeys)
+end)
+
+T.test("catalog fails closed without confirmed membership or unambiguous canonical ownership", function()
+    local GGM = loadModules()
+    local member = {
+        key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A", active = true,
+        snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Recipe" } }) },
+    }
+    local db = catalogDB({ member })
+    local before = copyTable(db)
+    GGM.professionRosterMembershipCurrent = false
+    local unconfirmed = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+    T.assertEqual(unconfirmed.state, "unavailable")
+    T.assertNil(unconfirmed.hasSnapshot)
+    T.assertEqual(#unconfirmed.recipes, 0)
+    T.assertEqual(unconfirmed.message, "Current guild membership could not be confirmed.")
+    assertTablesEqual(db, before)
+
+    local ambiguous = catalogDB({ member })
+    ambiguous.professions["Alicia-Silvermoon"] = {
+        identity = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = member.guid },
+        snapshots = {},
+    }
+    local beforeAmbiguous = copyTable(ambiguous)
+    GGM.professionRosterMembershipCurrent = true
+    local unavailable = GGM.BuildProfessionRecipeCatalog(ambiguous, 171, "Alchemy", {})
+    T.assertEqual(unavailable.state, "unavailable")
+    T.assertNil(unavailable.hasSnapshot)
+    T.assertEqual(#unavailable.recipes, 0)
+    assertTablesEqual(ambiguous, beforeAmbiguous)
+end)
+
+T.test("catalog keeps safely attributable recipes when another active snapshot is malformed", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A", active = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Recipe" } }) },
+        },
+        {
+            key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B", active = true,
+            snapshots = { [171] = { professionID = 171, recipes = "broken" } },
+        },
+    })
+    local before = copyTable(db)
+
+    local model = buildCatalog(GGM, db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "incomplete")
+    T.assertTrue(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(model.recipes[1].recipeID, 100)
+    T.assertEqual(#model.recipes[1].knownBy, 1)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "Alice-Silvermoon")
+    T.assertEqual(model.message, "Some saved profession data is incomplete.")
+    assertTablesEqual(db, before)
+end)
+
+T.test("catalog marks conflicting recipe names incomplete and uses the newest snapshot name", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A", active = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Old Name" } }) },
+        },
+        {
+            key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B", active = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000100, { { recipeID = 100, name = "New Name" } }) },
+        },
+    })
+    local before = copyTable(db)
+
+    local model = buildCatalog(GGM, db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "incomplete")
+    T.assertTrue(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(model.recipes[1].name, "New Name")
+    T.assertEqual(#model.recipes[1].knownBy, 2)
+    assertTablesEqual(db, before)
+end)
+
+T.test("catalog resolves equally recent conflicting names by character key", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "Zoe-Silvermoon", name = "Zoe", realm = "Silvermoon", guid = "Player-1-Z", active = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Name from Zoe" } }) },
+        },
+        {
+            key = "Amy-Silvermoon", name = "Amy", realm = "Silvermoon", guid = "Player-1-A", active = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 100, name = "Name from Amy" } }) },
+        },
+    })
+
+    local model = buildCatalog(GGM, db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "incomplete")
+    T.assertEqual(model.recipes[1].name, "Name from Amy")
+    T.assertEqual(model.recipes[1].knownBy[1].key, "Amy-Silvermoon")
+    T.assertEqual(model.recipes[1].knownBy[2].key, "Zoe-Silvermoon")
+end)
+
+T.test("catalog reports unavailable dates for zero timestamps and absent date formatting", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A", active = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 0, { { recipeID = 100, name = "Recipe" } }) },
+        },
+    })
+
+    local withDate = buildCatalog(GGM, db, 171, "Alchemy", {
+        date = function() error("zero timestamp must not be formatted") end,
+    })
+    T.assertEqual(withDate.recipes[1].knownBy[1].savedDate, "Date unavailable")
+
+    db.professions["Alice-Silvermoon"].snapshots[171].capturedAt = 1700000000
+    local withoutDate = buildCatalog(GGM, db, 171, "Alchemy", {})
+    T.assertEqual(withoutDate.recipes[1].knownBy[1].savedDate, "Date unavailable")
+end)
+
 T.test("roster rename rejects a third canonical same-GUID record without mutation", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

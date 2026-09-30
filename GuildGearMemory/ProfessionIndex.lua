@@ -977,3 +977,175 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
     end)
     return results, nil, membershipCurrent
 end
+
+local function catalogMemberOwnershipIsTrusted(db)
+    if type(db) ~= "table"
+        or type(db.professions) ~= "table"
+        or type(db.professionCharacters) ~= "table"
+        or type(db.localCharacterIDByGUID) ~= "table"
+        or db.professionIndexRepairNeeded == true then
+        return false
+    end
+
+    for localID, entry in pairs(db.professionCharacters) do
+        if not positiveInteger(localID)
+            or type(entry) ~= "table"
+            or not GGM.IsProfessionGUID(entry.guid)
+            or not nonEmptyString(entry.key)
+            or type(entry.active) ~= "boolean"
+            or db.localCharacterIDByGUID[entry.guid] ~= localID then
+            return false
+        end
+    end
+
+    for guid, localID in pairs(db.localCharacterIDByGUID) do
+        local entry = db.professionCharacters[localID]
+        if not GGM.IsProfessionGUID(guid)
+            or not positiveInteger(localID)
+            or type(entry) ~= "table"
+            or entry.guid ~= guid then
+            return false
+        end
+    end
+
+    local canonicalByGUID = {}
+    for key, record in pairs(db.professions) do
+        local identity = type(record) == "table" and record.identity or nil
+        if type(identity) == "table" and GGM.IsProfessionGUID(identity.guid) then
+            if identity.key ~= key or not nonEmptyString(identity.name) or not nonEmptyString(identity.realm) then
+                return false
+            end
+            if canonicalByGUID[identity.guid] ~= nil then return false end
+            canonicalByGUID[identity.guid] = { key = key, identity = identity }
+        end
+    end
+
+    for guid, localID in pairs(db.localCharacterIDByGUID) do
+        local canonical = canonicalByGUID[guid]
+        local entry = db.professionCharacters[localID]
+        if not canonical or canonical.key ~= entry.key then return false end
+    end
+    for guid, canonical in pairs(canonicalByGUID) do
+        local localID = db.localCharacterIDByGUID[guid]
+        local entry = db.professionCharacters[localID]
+        if not entry or entry.key ~= canonical.key then return false end
+    end
+
+    return true
+end
+
+local function catalogSavedDate(api, capturedAt)
+    if capturedAt <= 0 or type(api) ~= "table" or type(api.date) ~= "function" then
+        return "Date unavailable"
+    end
+    local ok, value = pcall(api.date, "%Y-%m-%d", capturedAt)
+    if not ok or not nonEmptyString(value) then return "Date unavailable" end
+    return value
+end
+
+local function catalogOwnerLess(left, right)
+    local leftName, rightName = string.lower(left.name), string.lower(right.name)
+    if leftName ~= rightName then return leftName < rightName end
+    local leftRealm, rightRealm = string.lower(left.realm), string.lower(right.realm)
+    if leftRealm ~= rightRealm then return leftRealm < rightRealm end
+    return left.key < right.key
+end
+
+function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api)
+    local emptyModel = { state = "unavailable", hasSnapshot = nil, recipes = {}, message = nil }
+    if GGM.professionRosterMembershipCurrent ~= true then
+        emptyModel.message = "Current guild membership could not be confirmed."
+        return emptyModel
+    end
+    if not positiveInteger(professionID) or not nonEmptyString(professionLabel)
+        or not catalogMemberOwnershipIsTrusted(db) then
+        emptyModel.message = "Current guild member identities could not be confirmed."
+        return emptyModel
+    end
+
+    local hasSnapshot, incomplete = false, false
+    local recipesByID = {}
+    for localID, member in pairs(db.professionCharacters) do
+        if member.active == true then
+            local canonical = db.professions[member.key]
+            local snapshots = canonical.snapshots
+            if type(snapshots) ~= "table" then
+                if hasSnapshot ~= true then hasSnapshot = nil end
+                incomplete = true
+            else
+                for snapshotProfessionID in pairs(snapshots) do
+                    if not positiveInteger(snapshotProfessionID) then
+                        if hasSnapshot ~= true then hasSnapshot = nil end
+                        incomplete = true
+                    end
+                end
+                local snapshot = rawget(snapshots, professionID)
+                if snapshot ~= nil then
+                    hasSnapshot = true
+                    local valid = type(snapshot) == "table"
+                        and snapshot.professionID == professionID
+                        and GGM.ValidateProfessionSnapshot(snapshot)
+                    if not valid then
+                        incomplete = true
+                    else
+                        for _, recipe in ipairs(snapshot.recipes) do
+                            local row = recipesByID[recipe.recipeID]
+                            if not row then
+                                row = {
+                                    recipeID = recipe.recipeID,
+                                    name = recipe.name,
+                                    nameCapturedAt = snapshot.capturedAt,
+                                    nameOwnerKey = member.key,
+                                    knownBy = {},
+                                }
+                                recipesByID[recipe.recipeID] = row
+                            else
+                                if row.name ~= recipe.name then incomplete = true end
+                                if snapshot.capturedAt > row.nameCapturedAt
+                                    or (snapshot.capturedAt == row.nameCapturedAt and member.key < row.nameOwnerKey) then
+                                    row.name = recipe.name
+                                    row.nameCapturedAt = snapshot.capturedAt
+                                    row.nameOwnerKey = member.key
+                                end
+                            end
+                            row.knownBy[#row.knownBy + 1] = {
+                                key = member.key,
+                                name = canonical.identity.name,
+                                realm = canonical.identity.realm,
+                                capturedAt = snapshot.capturedAt,
+                                savedDate = catalogSavedDate(api, snapshot.capturedAt),
+                            }
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local recipes = {}
+    for _, recipe in pairs(recipesByID) do
+        table.sort(recipe.knownBy, catalogOwnerLess)
+        recipe.nameCapturedAt = nil
+        recipe.nameOwnerKey = nil
+        recipes[#recipes + 1] = recipe
+    end
+    table.sort(recipes, function(left, right)
+        local leftName, rightName = string.lower(left.name), string.lower(right.name)
+        if leftName ~= rightName then return leftName < rightName end
+        return left.recipeID < right.recipeID
+    end)
+
+    if incomplete or hasSnapshot == nil then
+        return { state = "incomplete", hasSnapshot = hasSnapshot, recipes = recipes,
+            message = "Some saved profession data is incomplete." }
+    end
+    if not hasSnapshot then
+        return { state = "empty", hasSnapshot = false, recipes = recipes,
+            message = "No saved " .. professionLabel .. " snapshots for current guild members." }
+    end
+    if #recipes == 0 then
+        return { state = "empty", hasSnapshot = true, recipes = recipes,
+            message = "Saved " .. professionLabel .. " snapshots contain no learned recipes." }
+    end
+    return { state = "ready", hasSnapshot = true, recipes = recipes, message = nil }
+end
