@@ -152,9 +152,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" then
         if not GGM.db or GGM.startupError then return end
-        GGM.professionRosterMembershipCurrent = false
         local guildOk, inGuild = pcall(_G.IsInGuild)
         if not guildOk or type(inGuild) ~= "boolean" then
+            GGM.professionRosterMembershipCurrent = false
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
             return
         end

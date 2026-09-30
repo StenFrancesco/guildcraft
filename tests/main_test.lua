@@ -144,6 +144,7 @@ T.test("guild roster refresh is bounded to guild periods and reconciliation wait
         GGM.PublishConfirmedSlot = function() publishCount = publishCount + 1; return true end
         GGM.ReconcileProfessionGuildRoster = function()
             reconcileCount = reconcileCount + 1
+            GGM.professionRosterMembershipCurrent = true
             return true, nil
         end
         GGM.StartLocalPlayerGearTracking = function() return {}, nil end
@@ -163,6 +164,12 @@ T.test("guild roster refresh is bounded to guild periods and reconciliation wait
         T.assertEqual(rosterRefreshCount, 1)
         T.assertEqual(reconcileCount, 1)
         T.assertFalse(GGM.professionRosterRefreshPending)
+        T.assertTrue(GGM.professionRosterMembershipCurrent)
+
+        onEvent(frame, "PLAYER_ENTERING_WORLD")
+        T.assertTrue(GGM.professionRosterMembershipCurrent)
+        T.assertEqual(rosterRefreshCount, 1)
+        T.assertEqual(reconcileCount, 1)
 
         onEvent(frame, "GUILD_ROSTER_UPDATE")
         T.assertEqual(rosterRefreshCount, 1)
