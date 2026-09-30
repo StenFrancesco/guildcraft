@@ -281,6 +281,8 @@ function GGM.InitializeDatabase(existing)
     existing.professions = existing.professions or {}
     local indexOk, indexErr = GGM.InitializeProfessionIndexState(existing)
     if not indexOk then return nil, indexErr end
+    local cacheOk, cacheErr = GGM.EnsureProfessionIndex(existing, true)
+    if not cacheOk then return nil, cacheErr end
     return existing, nil
 end
 
@@ -350,6 +352,9 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot)
     local snapshotValid, snapshotErr = GGM.ValidateProfessionSnapshot(snapshot)
     if not snapshotValid then return false, snapshotErr end
 
+    local indexOk, indexErr = GGM.EnsureProfessionIndex(db)
+    if not indexOk then return false, indexErr end
+
     local record = db.professions[identity.key]
     if record ~= nil then
         local existing, existingErr = GGM.GetProfessionRecord(db, identity.key)
@@ -368,6 +373,7 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot)
 
     record.identity = copyIdentity(identity)
     record.snapshots[snapshot.professionID] = copyProfessionSnapshot(snapshot)
+    db.professionRecipeIndexVersion = 0
     return true, nil
 end
 

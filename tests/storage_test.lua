@@ -989,3 +989,38 @@ T.test("incomplete records require all 16 legacy slots and allow only new slots 
     T.assertNil(unknown)
     T.assertEqual(unknownErr, "tracked-slot-unknown:UNTRACKED")
 end)
+
+T.test("schema three migration keeps GUID-backed records inactive until roster verification", function()
+    local GGM = loadModules()
+    local existing = {
+        schemaVersion = 3,
+        characters = {},
+        localCharacters = {},
+        professions = {
+            ["Alice-Silvermoon"] = {
+                identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" },
+                snapshots = { [164] = {
+                    professionID = 164, professionName = "Blacksmithing", capturedAt = 1700000000,
+                    source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+                    recipes = { { recipeID = 100, name = "Copper Bracers" } },
+                } },
+            },
+            ["Legacy-Silvermoon"] = {
+                identity = { key = "Legacy-Silvermoon", name = "Legacy", realm = "Silvermoon" },
+                snapshots = {},
+            },
+        },
+    }
+
+    local db, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(err)
+    T.assertEqual(db.schemaVersion, 4)
+    local aliceID = db.localCharacterIDByGUID["Player-1-A"]
+    T.assertNotNil(aliceID)
+    T.assertEqual(db.professionCharacters[aliceID].key, "Alice-Silvermoon")
+    T.assertFalse(db.professionCharacters[aliceID].active)
+    T.assertNil(db.professionRecipeIndex[164])
+    T.assertNil(db.localCharacterIDByGUID["Legacy-Silvermoon"])
+    T.assertNotNil(db.professions["Legacy-Silvermoon"])
+end)
