@@ -284,3 +284,31 @@ T.test("registry rebuild preserves numeric IDs reserved only by the reverse map"
     T.assertNil(db.professionCharacters[reservedID])
     T.assertEqual(db.professions[canonical.key].identity.guid, canonical.guid)
 end)
+
+T.test("incremental profession reconciliation removes only one character from one profession", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local alice = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local bob = { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B" }
+    local aliceID = assert(GGM.EnsureProfessionCharacter(db, alice))
+    local bobID = assert(GGM.EnsureProfessionCharacter(db, bob))
+    assert(GGM.SetProfessionCharacterActive(db, aliceID, true))
+    assert(GGM.SetProfessionCharacterActive(db, bobID, true))
+    db.professionRecipeIndex = {
+        [164] = { [100] = { [aliceID] = true }, [200] = { [aliceID] = true } },
+        [171] = { [300] = { [aliceID] = true, [bobID] = true } },
+    }
+    local replacement = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 2,
+        source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 400, name = "Steel Belt" } },
+    }
+
+    assert(GGM.ReconcileProfessionRecipeMembership(db, aliceID, replacement))
+
+    T.assertNil(db.professionRecipeIndex[164][100])
+    T.assertNil(db.professionRecipeIndex[164][200])
+    T.assertTrue(db.professionRecipeIndex[164][400][aliceID])
+    T.assertTrue(db.professionRecipeIndex[171][300][aliceID])
+    T.assertTrue(db.professionRecipeIndex[171][300][bobID])
+end)

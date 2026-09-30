@@ -154,6 +154,159 @@ function GGM.EnsureProfessionCharacter(db, identity)
     return localID, nil
 end
 
+function GGM.RekeyProfessionCharacter(db, localID, identity, validateOnly)
+    local entry = type(db) == "table"
+        and type(db.professionCharacters) == "table"
+        and db.professionCharacters[localID] or nil
+    if type(entry) ~= "table" or entry.guid ~= identity.guid then
+        return false, "profession-registry-inconsistent"
+    end
+    if entry.key == identity.key then return true, false end
+
+    local oldKey = entry.key
+    local oldRecord = db.professions[oldKey]
+    local targetRecord = db.professions[identity.key]
+    if type(oldRecord) ~= "table"
+        or type(oldRecord.identity) ~= "table"
+        or oldRecord.identity.key ~= oldKey
+        or oldRecord.identity.guid ~= identity.guid
+        or type(oldRecord.snapshots) ~= "table" then
+        return false, "profession-registry-key-mismatch"
+    end
+    for professionID, snapshot in pairs(oldRecord.snapshots) do
+        if type(snapshot) ~= "table"
+            or professionID ~= snapshot.professionID
+            or not GGM.ValidateProfessionSnapshot(snapshot) then
+            return false, "profession-record-invalid"
+        end
+    end
+
+    if targetRecord ~= nil then
+        if type(targetRecord) ~= "table"
+            or type(targetRecord.identity) ~= "table"
+            or targetRecord.identity.key ~= identity.key
+            or targetRecord.identity.guid ~= identity.guid
+            or type(targetRecord.snapshots) ~= "table" then
+            return false, "profession-key-collision"
+        end
+        for professionID, snapshot in pairs(targetRecord.snapshots) do
+            if type(snapshot) ~= "table"
+                or professionID ~= snapshot.professionID
+                or not GGM.ValidateProfessionSnapshot(snapshot) then
+                return false, "profession-record-invalid"
+            end
+        end
+        for professionID in pairs(oldRecord.snapshots) do
+            if targetRecord.snapshots[professionID] ~= nil then
+                db.professionIndexRepairNeeded = true
+                return false, "profession-rename-profession-conflict"
+            end
+        end
+        if validateOnly then return true, false end
+
+        for professionID, snapshot in pairs(oldRecord.snapshots) do
+            targetRecord.snapshots[professionID] = snapshot
+        end
+        targetRecord.identity.key = identity.key
+        targetRecord.identity.name = identity.name
+        targetRecord.identity.realm = identity.realm
+        targetRecord.identity.guid = identity.guid
+        db.professions[oldKey] = nil
+    else
+        if validateOnly then return true, false end
+        db.professions[identity.key] = oldRecord
+        db.professions[oldKey] = nil
+        oldRecord.identity.key = identity.key
+        oldRecord.identity.name = identity.name
+        oldRecord.identity.realm = identity.realm
+        oldRecord.identity.guid = identity.guid
+    end
+
+    entry.key = identity.key
+    return true, true
+end
+
+function GGM.PrepareProfessionCharacterForSave(db, identity)
+    if type(identity) ~= "table" or not GGM.IsProfessionGUID(identity.guid) then
+        return nil, "profession-identity-guid-invalid"
+    end
+
+    local existingID = db.localCharacterIDByGUID[identity.guid]
+    if existingID == nil then
+        local targetRecord = db.professions[identity.key]
+        if targetRecord ~= nil then
+            if type(targetRecord) ~= "table"
+                or type(targetRecord.identity) ~= "table"
+                or targetRecord.identity.key ~= identity.key then
+                return nil, "profession-record-invalid"
+            end
+            local targetGUID = targetRecord.identity.guid
+            if targetGUID ~= nil and not GGM.IsProfessionGUID(targetGUID) then
+                return nil, "profession-record-invalid"
+            end
+            if GGM.IsProfessionGUID(targetGUID) and targetGUID ~= identity.guid then
+                return nil, "profession-key-collision"
+            end
+        end
+        return nil, nil, false
+    end
+
+    local entry = db.professionCharacters[existingID]
+    if type(entry) ~= "table" or entry.guid ~= identity.guid then
+        return nil, "profession-registry-inconsistent"
+    end
+
+    if entry.key ~= identity.key then
+        local targetRecord = db.professions[identity.key]
+        local targetIdentity = type(targetRecord) == "table" and targetRecord.identity or nil
+        if targetRecord ~= nil and type(targetIdentity) == "table"
+            and GGM.IsProfessionGUID(targetIdentity.guid)
+            and targetIdentity.guid ~= identity.guid then
+            return nil, "profession-key-collision"
+        end
+        local matchingCanonicalRecords = 0
+        for key, candidate in pairs(db.professions) do
+            local candidateIdentity = type(candidate) == "table" and candidate.identity or nil
+            if type(candidateIdentity) == "table"
+                and candidateIdentity.key == key
+                and candidateIdentity.guid == identity.guid then
+                matchingCanonicalRecords = matchingCanonicalRecords + 1
+            end
+        end
+        local expectedRecords = db.professions[identity.key] ~= nil and 2 or 1
+        if matchingCanonicalRecords ~= expectedRecords then
+            db.professionIndexRepairNeeded = true
+            return nil, "profession-identity-ambiguous"
+        end
+        local ok, rekeyResult = GGM.RekeyProfessionCharacter(db, existingID, identity)
+        if not ok then return nil, rekeyResult end
+        return existingID, nil, rekeyResult
+    end
+
+    local record = db.professions[identity.key]
+    if type(record) ~= "table"
+        or type(record.identity) ~= "table"
+        or record.identity.guid ~= identity.guid then
+        return nil, "profession-registry-key-mismatch"
+    end
+
+    local matchingCanonicalRecords = 0
+    for key, candidate in pairs(db.professions) do
+        local candidateIdentity = type(candidate) == "table" and candidate.identity or nil
+        if type(candidateIdentity) == "table"
+            and candidateIdentity.key == key
+            and candidateIdentity.guid == identity.guid then
+            matchingCanonicalRecords = matchingCanonicalRecords + 1
+        end
+    end
+    if matchingCanonicalRecords > 1 then
+        db.professionIndexRepairNeeded = true
+        return nil, "profession-identity-ambiguous"
+    end
+
+    return existingID, nil, false
+end
+
 function GGM.SetProfessionCharacterActive(db, localID, active)
     if type(db) ~= "table" or type(db.professionCharacters) ~= "table" then
         return false, "profession-registry-invalid"
@@ -174,6 +327,46 @@ local function addRecipeMembership(index, professionID, recipeID, localID)
     index[professionID] = index[professionID] or {}
     index[professionID][recipeID] = index[professionID][recipeID] or {}
     index[professionID][recipeID][localID] = true
+end
+
+local function removeMembershipFromProfession(index, professionID, localID)
+    local profession = index[professionID]
+    if type(profession) ~= "table" then return end
+
+    for recipeID, bucket in pairs(profession) do
+        if type(bucket) == "table" then
+            bucket[localID] = nil
+            if next(bucket) == nil then profession[recipeID] = nil end
+        end
+    end
+    if next(profession) == nil then index[professionID] = nil end
+end
+
+function GGM.ReconcileProfessionRecipeMembership(db, localID, snapshot)
+    if not positiveInteger(localID) then
+        return false, "profession-character-id-invalid"
+    end
+    local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+    if not valid then return false, err end
+    if type(db) ~= "table" or type(db.professionRecipeIndex) ~= "table"
+        or type(db.professionCharacters) ~= "table" then
+        return false, "profession-index-invalid"
+    end
+
+    removeMembershipFromProfession(db.professionRecipeIndex, snapshot.professionID, localID)
+    local entry = db.professionCharacters[localID]
+    if type(entry) == "table" and entry.active == true then
+        for _, recipe in ipairs(snapshot.recipes) do
+            addRecipeMembership(
+                db.professionRecipeIndex,
+                snapshot.professionID,
+                recipe.recipeID,
+                localID
+            )
+        end
+    end
+    db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
+    return true, nil
 end
 
 local function validRegistryPair(db, localID, entry)

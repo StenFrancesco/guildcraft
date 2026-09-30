@@ -136,6 +136,9 @@ function GGM.SaveActiveLinkedProfession(controller)
     local identity
     local snapshotSource
     if controller.activeSource == "guild" then
+        if GGM.professionRosterMembershipCurrent ~= true then
+            return nil, "profession-roster-incomplete"
+        end
         if professionOwnerGUID(controller.activeLink) ~= controller.activeOwnerGUID then
             return nil, "profession-owner-unavailable"
         end
@@ -156,7 +159,13 @@ function GGM.SaveActiveLinkedProfession(controller)
     )
     if not snapshot then return nil, captureErr end
 
-    local saved, saveErr = GGM.SaveProfessionSnapshot(controller.db, identity, snapshot)
+    local saveOptions
+    if controller.activeSource == "guild" then
+        saveOptions = { guildMembershipVerified = true }
+    end
+    local saved, saveErr = GGM.SaveProfessionSnapshot(
+        controller.db, identity, snapshot, saveOptions
+    )
     if not saved then return nil, saveErr end
     return "saved", nil
 end

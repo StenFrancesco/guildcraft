@@ -340,7 +340,7 @@ function GGM.GetProfessionRecord(db, characterKey)
     return record, nil
 end
 
-function GGM.SaveProfessionSnapshot(db, identity, snapshot)
+function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-invalid"
     end
@@ -349,11 +349,28 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot)
     end
     local identityValid, identityErr = validateIdentity(identity)
     if not identityValid then return false, identityErr end
+    if not GGM.IsProfessionGUID(identity.guid) then
+        return false, "profession-identity-guid-invalid"
+    end
     local snapshotValid, snapshotErr = GGM.ValidateProfessionSnapshot(snapshot)
     if not snapshotValid then return false, snapshotErr end
 
+    local guildMembershipVerified = type(options) == "table"
+        and options.guildMembershipVerified == true
+
+    local stateReady, stateErr = GGM.InitializeProfessionIndexState(db)
+    if not stateReady then return false, stateErr end
+
+    local localID, characterErr, rekeyed = GGM.PrepareProfessionCharacterForSave(db, identity)
+    if characterErr then return false, characterErr end
+
     local indexOk, indexErr = GGM.EnsureProfessionIndex(db)
     if not indexOk then return false, indexErr end
+
+    if localID == nil then
+        localID, characterErr = GGM.EnsureProfessionCharacter(db, identity)
+        if not localID then return false, characterErr end
+    end
 
     local record = db.professions[identity.key]
     if record ~= nil then
@@ -373,7 +390,26 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot)
 
     record.identity = copyIdentity(identity)
     record.snapshots[snapshot.professionID] = copyProfessionSnapshot(snapshot)
-    db.professionRecipeIndexVersion = 0
+
+    local entry = db.professionCharacters[localID]
+    local activityChanged = guildMembershipVerified and entry.active ~= true
+    if activityChanged then entry.active = true end
+
+    if rekeyed or activityChanged or db.professionIndexDataIncomplete then
+        local rebuilt = GGM.RebuildProfessionRecipeIndex(db)
+        if not rebuilt then
+            db.professionRecipeIndexVersion = 0
+            db.professionIndexRepairNeeded = true
+        end
+        return true, nil
+    end
+
+    local indexed = GGM.ReconcileProfessionRecipeMembership(db, localID, snapshot)
+    if not indexed then
+        db.professionRecipeIndexVersion = 0
+        db.professionIndexRepairNeeded = true
+        return true, nil
+    end
     return true, nil
 end
 
