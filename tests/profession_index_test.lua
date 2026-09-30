@@ -419,6 +419,41 @@ T.test("guild roster reconciliation deactivates departed characters and removes 
     T.assertNotNil(db.professions[identity.key])
 end)
 
+T.test("real guild roster reconciliation sends no addon messages or gear updates", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
+    local snapshot = {
+        professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
+        source = GGM.PROFESSION_SOURCE_GUILD_LINK, status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+    db.professions[identity.key] = { identity = identity, snapshots = { [164] = snapshot } }
+    local localID = assert(GGM.EnsureProfessionCharacter(db, identity))
+    local addonMessageCalls = 0
+    local publishCalls = 0
+    GGM.PublishConfirmedSlot = function() publishCalls = publishCalls + 1 end
+    local api = {
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function()
+            return "Alice-Silvermoon", nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, "Player-1-A"
+        end,
+        C_ChatInfo = {
+            SendAddonMessage = function() addonMessageCalls = addonMessageCalls + 1 end,
+        },
+    }
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(api, db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertTrue(db.professionCharacters[localID].active)
+    T.assertEqual(addonMessageCalls, 0)
+    T.assertEqual(publishCalls, 0)
+end)
+
 T.test("incomplete guild roster leaves cached activity and index unchanged", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))

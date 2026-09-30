@@ -480,6 +480,8 @@ end)
 T.test("observing guild profession links is local-only", function()
     local GGM = loadModule()
     local sendCalls = 0
+    local publishCalls = 0
+    GGM.PublishConfirmedSlot = function() publishCalls = publishCalls + 1 end
     local controller = GGM.CreateProfessionLinkSaveController({
         GetRealmName = function() return "Silvermoon" end,
         C_ChatInfo = {
@@ -494,4 +496,5 @@ T.test("observing guild profession links is local-only", function()
     )
 
     T.assertEqual(sendCalls, 0)
+    T.assertEqual(publishCalls, 0)
 end)
