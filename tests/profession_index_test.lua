@@ -262,3 +262,25 @@ T.test("recipe queries stay unavailable until guild membership is current", func
     T.assertNil(results)
     T.assertEqual(err, "profession-roster-incomplete")
 end)
+
+T.test("registry rebuild preserves numeric IDs reserved only by the reverse map", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local reservedID = 37
+    local canonical = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
+    db.localCharacterIDByGUID["Player-1-Retired"] = reservedID
+    db.nextLocalCharacterID = 2
+    db.professions[canonical.key] = {
+        identity = canonical,
+        snapshots = { [171] = indexedSnapshot(GGM, 171, 200) },
+    }
+
+    assert(GGM.RebuildProfessionRecipeIndex(db))
+
+    local allocatedID = db.localCharacterIDByGUID[canonical.guid]
+    T.assertTrue(allocatedID > reservedID)
+    T.assertEqual(db.nextLocalCharacterID, allocatedID + 1)
+    T.assertNil(db.localCharacterIDByGUID["Player-1-Retired"])
+    T.assertNil(db.professionCharacters[reservedID])
+    T.assertEqual(db.professions[canonical.key].identity.guid, canonical.guid)
+end)

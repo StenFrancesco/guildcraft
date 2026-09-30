@@ -302,10 +302,16 @@ end
 local function rebuildRegistryFromCanonical(db)
     local oldEntries, oldByGUID = db.professionCharacters, db.localCharacterIDByGUID
     local highest = highestReservedRegistryID(db)
+    for _, localID in pairs(oldByGUID) do
+        if positiveInteger(localID) and localID > highest then highest = localID end
+    end
     if positiveInteger(db.nextLocalCharacterID) and db.nextLocalCharacterID - 1 > highest then
         highest = db.nextLocalCharacterID - 1
     end
     local minimumNext = math.floor(highest) + 1
+    if not positiveInteger(minimumNext) or minimumNext <= highest then
+        return false, "profession-character-id-exhausted"
+    end
     if not positiveInteger(db.nextLocalCharacterID) or db.nextLocalCharacterID < minimumNext then
         db.nextLocalCharacterID = minimumNext
     end
