@@ -383,11 +383,14 @@ T.test("profession recipe lookup resolves active local IDs through the named cat
     }
     GGM.professionRosterMembershipCurrent = true
 
-    local characters = assert(GGM.GetProfessionRecipeCharacters(db, 164, 100))
+    local characters, queryErr, membershipCurrent = GGM.GetProfessionRecipeCharacters(db, 164, 100)
+    assert(characters, queryErr)
+    T.assertTrue(membershipCurrent)
     T.assertEqual(#characters, 1)
     T.assertEqual(characters[1].localCharacterID, id)
     T.assertEqual(characters[1].guid, identity.guid)
     T.assertEqual(characters[1].key, identity.key)
+    T.assertTrue(characters[1].membershipCurrent)
 end)
 
 T.test("full index validation preserves the authoritative named catalog", function()
@@ -843,7 +846,9 @@ T.test("named catalog lookup includes inactive crafters without current roster m
     }
     GGM.professionRosterMembershipCurrent = false
 
-    local results = assert(GGM.GetProfessionRecipeCharacters(db, 164, 100))
+    local results, queryErr, membershipCurrent = GGM.GetProfessionRecipeCharacters(db, 164, 100)
+    assert(results, queryErr)
+    T.assertFalse(membershipCurrent)
 
     T.assertEqual(#results, 2)
     T.assertEqual(results[1].localCharacterID, inactiveID)
@@ -854,6 +859,7 @@ T.test("named catalog lookup includes inactive crafters without current roster m
     T.assertEqual(results[2].guid, activeIdentity.guid)
     T.assertEqual(results[2].key, activeIdentity.key)
     T.assertTrue(results[2].active)
+    T.assertFalse(results[2].membershipCurrent)
 end)
 
 T.test("registry validation preserves numeric IDs reserved only by the reverse map", function()

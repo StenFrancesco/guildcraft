@@ -957,6 +957,7 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
     local profession = db.professionRecipeIndex[professionID]
     local recipe = type(profession) == "table" and profession[recipeID] or nil
     local results = {}
+    local membershipCurrent = GGM.professionRosterMembershipCurrent == true
     if type(recipe) == "table" and type(recipe.crafters) == "table" then
         for _, localID in ipairs(recipe.crafters) do
             local entry = db.professionCharacters[localID]
@@ -966,6 +967,7 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
                     guid = entry.guid,
                     key = entry.key,
                     active = entry.active == true,
+                    membershipCurrent = membershipCurrent,
                 })
             end
         end
@@ -973,5 +975,5 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
     table.sort(results, function(left, right)
         return left.localCharacterID < right.localCharacterID
     end)
-    return results, nil
+    return results, nil, membershipCurrent
 end
