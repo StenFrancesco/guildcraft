@@ -161,14 +161,17 @@ local function safeNext(source, key)
     return ok, nextKey, value
 end
 
-local function selectNextRecipe(cache)
+local function selectNextRecipe(cache, budget)
     local warmup = cache.warmup
     local catalog = cache.db.professionRecipeIndex
+    local workUsed = 0
 
-    while true do
+    -- Count cursor advances so empty tables yield to the next warm-up chunk.
+    while workUsed < budget do
         if type(warmup.profession) == "table" then
             local ok, recipeID, recipe =
                 safeNext(warmup.profession, warmup.recipeID)
+            workUsed = workUsed + 1
 
             if not ok then
                 warmup.recipeID = nil
@@ -180,13 +183,16 @@ local function selectNextRecipe(cache)
                     or type(recipe.name) ~= "string"
                     or recipe.name == ""
                     or type(recipe.crafters) ~= "table" then
-                    return false, "profession-character-cache-source-invalid"
+                    return false,
+                        "profession-character-cache-source-invalid",
+                        workUsed,
+                        false
                 end
 
                 warmup.recipeID = recipeID
                 warmup.recipe = recipe
                 warmup.crafterPosition = 1
-                return true, nil
+                return true, nil, workUsed, false
             else
                 warmup.profession = nil
                 warmup.recipeID = nil
@@ -196,15 +202,19 @@ local function selectNextRecipe(cache)
         else
             local ok, professionID, profession =
                 safeNext(catalog, warmup.professionID)
+            workUsed = workUsed + 1
 
             if not ok then
                 warmup.professionID = nil
             elseif professionID == nil then
                 warmup.complete = true
-                return false, nil
+                return false, nil, workUsed, true
             elseif not positiveInteger(professionID)
                 or type(profession) ~= "table" then
-                return false, "profession-character-cache-source-invalid"
+                return false,
+                    "profession-character-cache-source-invalid",
+                    workUsed,
+                    false
             else
                 warmup.professionID = professionID
                 warmup.profession = profession
@@ -212,6 +222,8 @@ local function selectNextRecipe(cache)
             end
         end
     end
+
+    return false, nil, workUsed, false
 end
 
 function GGM.StepProfessionCharacterCacheWarmup(cache, budget)
@@ -233,23 +245,30 @@ function GGM.StepProfessionCharacterCacheWarmup(cache, budget)
     end
 
     local processed = 0
+    local budgetUsed = 0
 
-    while processed < budget do
+    while budgetUsed < budget do
         local warmup = cache.warmup
 
         if warmup.recipe == nil then
-            local found, selectErr = selectNextRecipe(cache)
+            local found, selectErr, selectWork, catalogComplete =
+                selectNextRecipe(cache, budget - budgetUsed)
+            budgetUsed = budgetUsed + selectWork
             if selectErr then
                 warmup.error = selectErr
                 return false, selectErr, processed
             end
-            if not found then
+            if catalogComplete then
                 return true, nil, processed
+            end
+            if not found or budgetUsed >= budget then
+                return false, nil, processed
             end
         end
 
         local recipe = warmup.recipe
         local localID = recipe.crafters[warmup.crafterPosition]
+        budgetUsed = budgetUsed + 1
 
         if localID == nil then
             warmup.recipe = nil

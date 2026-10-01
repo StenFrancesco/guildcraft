@@ -101,12 +101,44 @@ local function seededCache(GGM)
     return db, assert(GGM.CreateProfessionCharacterCache(db))
 end
 
-T.test("profession cache warmup processes a bounded membership budget", function()
+T.test("profession cache warmup bounds traversal across empty profession buckets", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+
+    for professionID = 1, 128 do
+        db.professionRecipeIndex[professionID] = {}
+    end
+
+    local validatedDB, validationErr = GGM.InitializeDatabase(db)
+    T.assertNil(validationErr)
+    T.assertNotNil(validatedDB)
+
+    local cache = assert(GGM.CreateProfessionCharacterCache(validatedDB))
+    local complete, err, processed =
+        GGM.StepProfessionCharacterCacheWarmup(cache, 1)
+
+    T.assertFalse(complete)
+    T.assertNil(err)
+    T.assertEqual(processed, 0)
+
+    local chunks = 1
+    while not complete do
+        complete, err, processed =
+            GGM.StepProfessionCharacterCacheWarmup(cache, 1)
+        T.assertNil(err)
+        T.assertEqual(processed, 0)
+        chunks = chunks + 1
+    end
+
+    T.assertTrue(chunks > 1)
+end)
+
+T.test("profession cache warmup processes a bounded work budget", function()
     local GGM = loadModules()
     local _, cache = seededCache(GGM)
 
     local complete, err, processed =
-        GGM.StepProfessionCharacterCacheWarmup(cache, 1)
+        GGM.StepProfessionCharacterCacheWarmup(cache, 3)
 
     T.assertFalse(complete)
     T.assertNil(err)
@@ -134,7 +166,7 @@ T.test("profession cache warmup schedules later chunks instead of draining synch
         function(callback)
             scheduled[#scheduled + 1] = callback
         end,
-        1
+        3
     )
 
     T.assertTrue(started)
@@ -149,7 +181,7 @@ T.test("profession cache warmup schedules later chunks instead of draining synch
     T.assertTrue(#scheduled >= 1)
 end)
 
-T.test("profession cache warmup defaults to 64 crafter memberships per step", function()
+T.test("profession cache warmup defaults to 64 work units per step", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local crafters = {}
@@ -175,8 +207,8 @@ T.test("profession cache warmup defaults to 64 crafter memberships per step", fu
 
     T.assertFalse(complete)
     T.assertNil(err)
-    T.assertEqual(processed, 64)
-    T.assertEqual(cachedMembershipCount(cache), 64)
+    T.assertEqual(processed, 62)
+    T.assertEqual(cachedMembershipCount(cache), 62)
 
     while not complete do
         complete, err = GGM.StepProfessionCharacterCacheWarmup(cache)
@@ -193,13 +225,13 @@ T.test("profession cache warmup restarts traversal when the revision changes", f
     local thirdID = assert(GGM.EnsureProfessionCharacter(db, third))
     local crafters = db.professionRecipeIndex[164][100].crafters
 
-    GGM.StepProfessionCharacterCacheWarmup(cache, 1)
+    GGM.StepProfessionCharacterCacheWarmup(cache, 3)
     T.assertEqual(cachedMembershipCount(cache), 1)
 
     crafters[#crafters + 1] = thirdID
     cache.revision = cache.revision + 1
 
-    local complete, err = GGM.StepProfessionCharacterCacheWarmup(cache, 1)
+    local complete, err = GGM.StepProfessionCharacterCacheWarmup(cache, 3)
 
     T.assertFalse(complete)
     T.assertNil(err)
@@ -233,7 +265,7 @@ T.test("profession cache warmup removes stale memberships after a revision resta
 
     local cache = assert(GGM.CreateProfessionCharacterCache(db))
     local complete, err, processed =
-        GGM.StepProfessionCharacterCacheWarmup(cache, 1)
+        GGM.StepProfessionCharacterCacheWarmup(cache, 3)
 
     T.assertFalse(complete)
     T.assertNil(err)
