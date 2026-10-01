@@ -20,6 +20,12 @@ frame:RegisterEvent("GUILD_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_GUILD_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
+local function refreshVisibleProfessionCatalog()
+    if type(GGM.RefreshVisibleProfessionCatalog) == "function" then
+        GGM.RefreshVisibleProfessionCatalog()
+    end
+end
+
 local function publishConfirmedSlot(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
     if not GGM.guildSync then
         return
@@ -157,6 +163,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if not guildOk or type(inGuild) ~= "boolean" then
             GGM.professionRosterMembershipCurrent = false
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
+            refreshVisibleProfessionCatalog()
             return
         end
         if not inGuild then
@@ -165,6 +172,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             GGM.professionRosterRefreshSucceeded = false
             local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
             if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
+            refreshVisibleProfessionCatalog()
             return
         end
         if GGM.professionRosterRefreshIssued then return end
@@ -174,6 +182,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         local guildInfo = _G.C_GuildInfo
         if type(guildInfo) ~= "table" or type(guildInfo.GuildRoster) ~= "function" then
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
+            refreshVisibleProfessionCatalog()
             return
         end
         GGM.professionRosterRefreshPending = true
@@ -181,6 +190,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if not requestOk or requestResult == false then
             GGM.professionRosterRefreshPending = false
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
+            refreshVisibleProfessionCatalog()
         else
             GGM.professionRosterRefreshSucceeded = true
         end
@@ -192,6 +202,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GGM.professionRosterRefreshPending = false
         local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
         if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
+        refreshVisibleProfessionCatalog()
         return
     end
 

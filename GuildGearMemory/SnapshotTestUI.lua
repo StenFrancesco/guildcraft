@@ -840,6 +840,23 @@ updateProfessionRecipeBrowser = function(frame)
     frame.professionRecipeContent:SetHeight(math.max(y, 1))
 end
 
+function GGM.RefreshVisibleProfessionCatalog()
+    local frame = GGM.guildGearBrowserFrame
+    if not frame or frame.activeTab ~= "Professions" or not frame.db
+        or type(GGM.BuildProfessionRecipeCatalog) ~= "function" then
+        return false
+    end
+    local profession
+    for _, item in ipairs(PROFESSIONS) do
+        if item.key == frame.selectedProfession then profession = item; break end
+    end
+    if not profession then return false end
+    frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(
+        frame.db, profession.professionID, profession.key, frame.api)
+    updateProfessionRecipeBrowser(frame)
+    return true
+end
+
 local updateBrowserList
 
 local function setPageHeader(frame, title, subtitle)

@@ -562,6 +562,37 @@ T.test("profession messages preserve unavailable and empty base states and disti
     T.assertEqual(frame.professionStatus.text, "No recipes match this search.")
 end)
 
+T.test("visible profession catalog refreshes locally after roster reconciliation succeeds or fails", function()
+    local GGM = loadUI()
+    local calls = 0
+    GGM.professionRosterMembershipCurrent = true
+    GGM.BuildProfessionRecipeCatalog = function()
+        calls = calls + 1
+        if not GGM.professionRosterMembershipCurrent then
+            return professionCatalog("unavailable", {}, "Current guild membership could not be confirmed.")
+        end
+        return professionCatalog("ready", { { recipeID = calls, name = "Recipe " .. calls, knownBy = {} } })
+    end
+    local api = makeBrowserAPI()
+    for _, name in ipairs({ "GuildRoster", "SendAddonMessage" }) do
+        api[name] = function() error("catalog refresh must not request roster data or send messages") end
+    end
+    local frame = showBrowser(GGM, api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 2")
+
+    -- A completed reconciliation refreshes the currently visible catalog from local saved data.
+    GGM.professionRosterMembershipCurrent = true
+    T.assertTrue(GGM.RefreshVisibleProfessionCatalog())
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 3")
+
+    -- A failed reconciliation clears stale owners by rebuilding the fail-closed unavailable model.
+    GGM.professionRosterMembershipCurrent = false
+    T.assertTrue(GGM.RefreshVisibleProfessionCatalog())
+    T.assertEqual(frame.professionStatus.text, "Current guild membership could not be confirmed.")
+    T.assertEqual(#frame.filteredProfessionRecipes, 0)
+end)
+
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM))
