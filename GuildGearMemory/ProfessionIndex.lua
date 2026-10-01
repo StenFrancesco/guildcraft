@@ -929,6 +929,8 @@ function GGM.EnsureProfessionIndex(db, validateFully)
     if type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
+        or type(db.professionIndexRepairCandidates) ~= "table"
+        or type(db.professionIndexRepairNeeded) ~= "boolean"
         or not positiveInteger(db.nextLocalCharacterID)
         or db.professionRecipeIndexVersion ~= GGM.PROFESSION_RECIPE_INDEX_VERSION then
         return false, "profession-index-invalid"

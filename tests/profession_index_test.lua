@@ -201,6 +201,40 @@ T.test("startup fails closed on a malformed reverse registry value without catal
     T.assertEqual(db.localCharacterIDByGUID[identity.guid], "malformed-id")
 end)
 
+T.test("startup fails closed on malformed repair state without mutation", function()
+    local malformedStates = {
+        { field = "professionIndexRepairCandidates", value = nil },
+        { field = "professionIndexRepairCandidates", value = "corrupt" },
+        { field = "professionIndexRepairNeeded", value = nil },
+        { field = "professionIndexRepairNeeded", value = "corrupt" },
+    }
+
+    for _, malformed in ipairs(malformedStates) do
+        local GGM = loadModules()
+        local db = assert(GGM.InitializeDatabase(nil))
+        db.professionIndexRepairCandidates = { ["keep"] = { localID = 9 } }
+        db.professionIndexRepairNeeded = false
+        if malformed.value == nil then
+            db[malformed.field] = nil
+        else
+            db[malformed.field] = malformed.value
+        end
+        local candidates = db.professionIndexRepairCandidates
+        local repairNeeded = db.professionIndexRepairNeeded
+        local professions = db.professions
+        local catalog = db.professionRecipeIndex
+
+        local initialized, err = GGM.InitializeDatabase(db)
+
+        T.assertNil(initialized)
+        T.assertEqual(err, "profession-index-invalid")
+        T.assertEqual(db.professions, professions)
+        T.assertEqual(db.professionIndexRepairCandidates, candidates)
+        T.assertEqual(db.professionIndexRepairNeeded, repairNeeded)
+        T.assertEqual(db.professionRecipeIndex, catalog)
+    end
+end)
+
 T.test("unsafe profession ID high-water fails closed without replacing canonical data", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
