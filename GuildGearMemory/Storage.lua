@@ -37,22 +37,14 @@ local function copyIdentity(identity)
 end
 
 local function copyProfessionSnapshot(snapshot)
-    local copied = {
+    return {
+        complete = true,
         professionID = snapshot.professionID,
         professionName = snapshot.professionName,
         capturedAt = snapshot.capturedAt,
         source = snapshot.source,
         status = snapshot.status,
-        recipes = {},
     }
-
-    for _, recipe in ipairs(snapshot.recipes) do
-        table.insert(copied.recipes, {
-            recipeID = recipe.recipeID,
-            name = recipe.name,
-        })
-    end
-    return copied
 end
 
 local function copySlotValue(source)
@@ -178,60 +170,12 @@ function GGM.UpdateLocalCharacterModelIdentity(db, identity)
     return true, nil
 end
 
-local schemaOneSlotKeys = {
-    "HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "WRIST", "HANDS", "WAIST",
-    "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2", "MAIN_HAND", "OFF_HAND",
-}
-
-local function migrateSchemaOneRecord(record, characterKey)
-    if type(record) ~= "table" or record.complete ~= true or type(record.gear) ~= "table"
-        or record.gear.complete ~= true or type(record.gear.slots) ~= "table"
-        or type(record.gear.capturedAt) ~= "number" then
-        return false
-    end
-    if not validateIdentity(record.identity) or record.identity.key ~= characterKey
-        or record.identity.key ~= record.identity.name .. "-" .. record.identity.realm then
-        return false
-    end
-    if not readConfirmedSequence(record) then return false end
-
-    local expected = {}
-    for _, key in ipairs(schemaOneSlotKeys) do expected[key] = true end
-    local count = 0
-    for key, value in pairs(record.gear.slots) do
-        if not expected[key] then return false end
-        local valid = GGM.ValidateGearSlotValue(key, value)
-        if not valid then return false end
-        count = count + 1
-    end
-    if count ~= #schemaOneSlotKeys then return false end
-    for _, key in ipairs(schemaOneSlotKeys) do
-        if type(record.gear.slots[key]) ~= "table" then return false end
-    end
-
-    record.complete = false
-    record.completeness = "incomplete"
-    record.gear.complete = false
-    return true
-end
-
 function GGM.GetConfirmedSequence(record)
     if type(record) ~= "table" then
         return nil, "record-invalid"
     end
 
     return readConfirmedSequence(record)
-end
-
-local function markProfessionIndexUnavailable(db)
-    db.professionCharacters = type(db.professionCharacters) == "table"
-        and db.professionCharacters or {}
-    db.localCharacterIDByGUID = type(db.localCharacterIDByGUID) == "table"
-        and db.localCharacterIDByGUID or {}
-    db.professionRecipeIndex = {}
-    db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
-    db.professionIndexDataIncomplete = true
-    db.professionIndexRepairNeeded = true
 end
 
 function GGM.InitializeDatabase(existing)
@@ -247,7 +191,6 @@ function GGM.InitializeDatabase(existing)
             professionRecipeIndex = {},
             professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
             professionIndexRepairCandidates = {},
-            professionIndexDataIncomplete = false,
             professionIndexRepairNeeded = false,
         }, nil
     end
@@ -256,25 +199,7 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-invalid"
     end
 
-    if existing.schemaVersion == 1 or existing.schemaVersion == 2 or existing.schemaVersion == 3 then
-        if type(existing.characters) ~= "table" then
-            return nil, "database-characters-invalid"
-        end
-        if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
-            return nil, "database-local-characters-invalid"
-        end
-        if existing.professions ~= nil and type(existing.professions) ~= "table" then
-            return nil, "database-professions-invalid"
-        end
-        if existing.schemaVersion == 1 then
-            for characterKey, record in pairs(existing.characters) do
-                migrateSchemaOneRecord(record, characterKey)
-            end
-        end
-        existing.localCharacters = existing.localCharacters or {}
-        existing.professions = existing.professions or {}
-        existing.schemaVersion = GGM.SCHEMA_VERSION
-    elseif existing.schemaVersion ~= GGM.SCHEMA_VERSION then
+    if existing.schemaVersion ~= GGM.SCHEMA_VERSION then
         return nil, "unsupported-schema-version:" .. tostring(existing.schemaVersion)
     end
 
@@ -282,27 +207,15 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-characters-invalid"
     end
 
-    if existing.localCharacters ~= nil and type(existing.localCharacters) ~= "table" then
+    if type(existing.localCharacters) ~= "table" then
         return nil, "database-local-characters-invalid"
     end
-    existing.localCharacters = existing.localCharacters or {}
-    if existing.professions ~= nil and type(existing.professions) ~= "table" then
+    if type(existing.professions) ~= "table" then
         return nil, "database-professions-invalid"
     end
 
-    existing.professions = existing.professions or {}
-    local indexOk, indexErr = GGM.InitializeProfessionIndexState(existing)
-    if not indexOk then
-        if indexErr ~= "profession-character-id-exhausted" then return nil, indexErr end
-        markProfessionIndexUnavailable(existing)
-        return existing, nil
-    end
-    local cacheOk, cacheErr = GGM.EnsureProfessionIndex(existing, true)
-    if not cacheOk then
-        if cacheErr ~= "profession-character-id-exhausted" then return nil, cacheErr end
-        markProfessionIndexUnavailable(existing)
-        return existing, nil
-    end
+    local indexOk, indexErr = GGM.EnsureProfessionIndex(existing, true)
+    if not indexOk then return nil, indexErr end
     return existing, nil
 end
 
@@ -360,6 +273,11 @@ function GGM.GetProfessionRecord(db, characterKey)
     return record, nil
 end
 
+local schemaOneSlotKeys = {
+    "HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "WRIST", "HANDS", "WAIST",
+    "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2", "MAIN_HAND", "OFF_HAND",
+}
+
 function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-invalid"
@@ -372,23 +290,20 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     if not GGM.IsProfessionGUID(identity.guid) then
         return false, "profession-identity-guid-invalid"
     end
-    local snapshotValid, snapshotErr = GGM.ValidateProfessionSnapshot(snapshot)
+    local snapshotValid, snapshotErr = GGM.ValidateProfessionCapture(snapshot)
     if not snapshotValid then return false, snapshotErr end
 
     local guildMembershipVerified = type(options) == "table"
         and options.guildMembershipVerified == true
 
-    local stateReady, stateErr = GGM.InitializeProfessionIndexState(db)
-    if not stateReady then return false, stateErr end
-
-    local localID, characterErr, rekeyed = GGM.PrepareProfessionCharacterForSave(
+    local localID, characterErr = GGM.PrepareProfessionCharacterForSave(
         db,
         identity,
         guildMembershipVerified
     )
     if characterErr then return false, characterErr end
 
-    local indexOk, indexErr = GGM.EnsureProfessionIndex(db)
+    local indexOk, indexErr = GGM.EnsureProfessionIndex(db, true)
     if not indexOk then return false, indexErr end
 
     if localID == nil then
@@ -409,31 +324,21 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
             identity = copyIdentity(identity),
             snapshots = {},
         }
-        db.professions[identity.key] = record
     end
+
+    local indexed, reconcileErr = GGM.ReconcileProfessionRecipeMembership(
+        db,
+        localID,
+        snapshot
+    )
+    if not indexed then return false, reconcileErr end
 
     record.identity = copyIdentity(identity)
     record.snapshots[snapshot.professionID] = copyProfessionSnapshot(snapshot)
+    db.professions[identity.key] = record
 
     local entry = db.professionCharacters[localID]
-    local activityChanged = guildMembershipVerified and entry.active ~= true
-    if activityChanged then entry.active = true end
-
-    if rekeyed or activityChanged or db.professionIndexDataIncomplete then
-        local rebuilt = GGM.RebuildProfessionRecipeIndex(db)
-        if not rebuilt then
-            db.professionRecipeIndexVersion = 0
-            db.professionIndexRepairNeeded = true
-        end
-        return true, nil
-    end
-
-    local indexed = GGM.ReconcileProfessionRecipeMembership(db, localID, snapshot)
-    if not indexed then
-        db.professionRecipeIndexVersion = 0
-        db.professionIndexRepairNeeded = true
-        return true, nil
-    end
+    if guildMembershipVerified and entry.active ~= true then entry.active = true end
     return true, nil
 end
 

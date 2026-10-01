@@ -41,8 +41,9 @@ local function requiredTradeSkillApi(api)
     return trade
 end
 
-function GGM.ValidateProfessionSnapshot(snapshot)
+local function validateProfessionMetadata(snapshot)
     if type(snapshot) ~= "table" then return false, "profession-snapshot-invalid" end
+    if snapshot.complete ~= true then return false, "profession-snapshot-incomplete" end
     if not positiveInteger(snapshot.professionID) then return false, "profession-id-invalid" end
     if not nonEmptyString(snapshot.professionName) then return false, "profession-name-invalid" end
     if not nonNegativeInteger(snapshot.capturedAt) then return false, "profession-captured-at-invalid" end
@@ -51,6 +52,21 @@ function GGM.ValidateProfessionSnapshot(snapshot)
         return false, "profession-source-invalid"
     end
     if snapshot.status ~= GGM.PROFESSION_CACHE_STATUS then return false, "profession-status-invalid" end
+    return true, nil
+end
+
+function GGM.ValidateProfessionSnapshot(snapshot)
+    local valid, err = validateProfessionMetadata(snapshot)
+    if not valid then return false, err end
+    if snapshot.recipes ~= nil then
+        return false, "profession-snapshot-recipes-present"
+    end
+    return true, nil
+end
+
+function GGM.ValidateProfessionCapture(snapshot)
+    local valid, err = validateProfessionMetadata(snapshot)
+    if not valid then return false, err end
     if type(snapshot.recipes) ~= "table" then
         return false, "profession-recipes-invalid"
     end
@@ -131,6 +147,7 @@ function GGM.CaptureLinkedProfessionSnapshot(api, source)
     end
 
     local snapshot = {
+        complete = true,
         professionID = info.professionID,
         professionName = info.professionName,
         capturedAt = capturedAt,
@@ -139,7 +156,7 @@ function GGM.CaptureLinkedProfessionSnapshot(api, source)
         recipes = recipes,
     }
 
-    local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+    local valid, err = GGM.ValidateProfessionCapture(snapshot)
     if not valid then return nil, err end
     return snapshot, nil
 end
