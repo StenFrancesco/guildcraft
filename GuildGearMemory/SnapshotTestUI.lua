@@ -1319,6 +1319,34 @@ local function parseRequestedIdentity(message)
     }, nil
 end
 
+local function getProfessionCharacterCacheStatus()
+    local cache = GGM.professionCharacterCache
+    if type(cache) ~= "table" then
+        local createError = GGM.lastProfessionCharacterCacheError
+        if createError then
+            return "not created (error: " .. tostring(createError) .. ")"
+        end
+        return "not created"
+    end
+
+    local warmup = cache.warmup
+    if type(warmup) ~= "table" then
+        return "error (warm-up state unavailable)"
+    end
+
+    local cacheError = warmup.error or GGM.lastProfessionCharacterCacheError
+    if cacheError then
+        return "error (" .. tostring(cacheError) .. ")"
+    end
+    if warmup.complete == true then
+        return "ready"
+    end
+    if warmup.running == true then
+        return "warming"
+    end
+    return "created; waiting to start"
+end
+
 local function printAddonStatus(api)
     local chatFrame = api.DEFAULT_CHAT_FRAME
     local emit
@@ -1331,6 +1359,7 @@ local function printAddonStatus(api)
     if not emit then return end
 
     emit("Guild Gear Memory status:")
+    emit("Profession lookup cache: " .. getProfessionCharacterCacheStatus())
     if GGM.startupError then
         emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
         return
