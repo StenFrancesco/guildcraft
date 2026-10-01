@@ -44,9 +44,59 @@ T.test("captures only learned recipes from an open linked profession", function(
     T.assertEqual(snapshot.capturedAt, 1700004000)
     T.assertEqual(snapshot.source, "guild-profession-link")
     T.assertEqual(snapshot.status, "cached")
+    T.assertTrue(snapshot.complete)
     T.assertEqual(#snapshot.recipes, 2)
     T.assertEqual(snapshot.recipes[1].recipeID, 100)
     T.assertEqual(snapshot.recipes[2].recipeID, 300)
+end)
+
+T.test("successful profession capture is explicitly complete", function()
+    local GGM = loadModule()
+    local api = {
+        time = function() return 1700004000 end,
+        C_TradeSkillUI = {
+            IsTradeSkillLinked = function() return true end,
+            IsTradeSkillReady = function() return true end,
+            GetBaseProfessionInfo = function()
+                return { professionID = 164, professionName = "Blacksmithing" }
+            end,
+            GetAllRecipeIDs = function() return { 100 } end,
+            GetRecipeInfo = function()
+                return { recipeID = 100, name = "Copper Bracers", learned = true }
+            end,
+        },
+    }
+
+    local capture, err = GGM.CaptureLinkedProfessionSnapshot(
+        api,
+        GGM.PROFESSION_SOURCE_GUILD_LINK
+    )
+
+    T.assertNil(err)
+    T.assertTrue(capture.complete)
+    T.assertTrue(GGM.ValidateProfessionCapture(capture))
+    T.assertEqual(capture.recipes[1].recipeID, 100)
+end)
+
+T.test("persisted profession metadata is complete and contains no recipes", function()
+    local GGM = loadModule()
+    local metadata = {
+        complete = true,
+        professionID = 164,
+        professionName = "Blacksmithing",
+        capturedAt = 1700004000,
+        source = GGM.PROFESSION_SOURCE_PLAYER,
+        status = GGM.PROFESSION_CACHE_STATUS,
+    }
+
+    local valid, err = GGM.ValidateProfessionSnapshot(metadata)
+    T.assertTrue(valid)
+    T.assertNil(err)
+
+    metadata.recipes = {}
+    local invalid, invalidErr = GGM.ValidateProfessionSnapshot(metadata)
+    T.assertFalse(invalid)
+    T.assertEqual(invalidErr, "profession-snapshot-recipes-present")
 end)
 
 T.test("capture fails when the open profession is not linked", function()
@@ -193,6 +243,7 @@ end)
 T.test("profession validation rejects non-array recipe keys", function()
     local GGM = loadModule()
     local snapshot = {
+        complete = true,
         professionID = 164,
         professionName = "Blacksmithing",
         capturedAt = 1700004000,
@@ -201,7 +252,7 @@ T.test("profession validation rejects non-array recipe keys", function()
         recipes = { garbage = true },
     }
 
-    local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+    local valid, err = GGM.ValidateProfessionCapture(snapshot)
 
     T.assertFalse(valid)
     T.assertEqual(err, "profession-recipes-invalid")
@@ -210,6 +261,7 @@ end)
 T.test("profession validation rejects sparse recipe arrays", function()
     local GGM = loadModule()
     local snapshot = {
+        complete = true,
         professionID = 164,
         professionName = "Blacksmithing",
         capturedAt = 1700004000,
@@ -221,7 +273,7 @@ T.test("profession validation rejects sparse recipe arrays", function()
         },
     }
 
-    local valid, err = GGM.ValidateProfessionSnapshot(snapshot)
+    local valid, err = GGM.ValidateProfessionCapture(snapshot)
 
     T.assertFalse(valid)
     T.assertEqual(err, "profession-recipes-invalid")

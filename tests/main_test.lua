@@ -649,6 +649,35 @@ T.test("unsupported saved schema blocks tracking instead of overwriting data", f
     end)
 end)
 
+T.test("unsupported schema four SavedVariables remain untouched for manual reset", function()
+    local onEvent
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+    local oldDB = { schemaVersion = 4, characters = { sentinel = true } }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        GuildGearMemoryDB = oldDB,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+        GGM.InitializeDatabase = function(existing)
+            T.assertTrue(existing == oldDB)
+            return nil, "unsupported-schema-version:4"
+        end
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+
+        T.assertTrue(_G.GuildGearMemoryDB == oldDB)
+        T.assertTrue(_G.GuildGearMemoryDB.characters.sentinel)
+        T.assertEqual(GGM.startupError, "unsupported-schema-version:4")
+        T.assertNil(GGM.db)
+    end)
+end)
+
 T.test("addon loaded creates and registers guild sync without sending a logical message", function()
     local onEvent
     local publishCount = 0

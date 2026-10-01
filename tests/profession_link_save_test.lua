@@ -389,6 +389,7 @@ T.test("first player profession save activates and indexes the player after curr
     controller.activeSource = "player"
     GGM.CaptureLinkedProfessionSnapshot = function(_, source)
         return {
+            complete = true,
             professionID = 164, professionName = "Blacksmithing",
             capturedAt = 1700000000, source = source,
             status = GGM.PROFESSION_CACHE_STATUS,
