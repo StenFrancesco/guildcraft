@@ -1070,9 +1070,14 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         emptyModel.message = "Current guild member identities could not be confirmed."
         return emptyModel
     end
+    local indexValid = GGM.EnsureProfessionIndex(db, true)
+    if not indexValid then
+        emptyModel.message = "Saved profession data could not be verified."
+        return emptyModel
+    end
 
     local hasSnapshot, incomplete = false, false
-    local recipesByID = {}
+    local validSnapshotsByLocalID = {}
     for localID, member in pairs(db.professionCharacters) do
         if member.active == true then
             local canonical = db.professions[member.key]
@@ -1096,45 +1101,52 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                     if not valid then
                         incomplete = true
                     else
-                        for _, recipe in ipairs(snapshot.recipes) do
-                            local row = recipesByID[recipe.recipeID]
-                            if not row then
-                                row = {
-                                    recipeID = recipe.recipeID,
-                                    name = recipe.name,
-                                    nameCapturedAt = snapshot.capturedAt,
-                                    nameOwnerKey = member.key,
-                                    knownBy = {},
-                                }
-                                recipesByID[recipe.recipeID] = row
-                            else
-                                if row.name ~= recipe.name then incomplete = true end
-                                if snapshot.capturedAt > row.nameCapturedAt
-                                    or (snapshot.capturedAt == row.nameCapturedAt and member.key < row.nameOwnerKey) then
-                                    row.name = recipe.name
-                                    row.nameCapturedAt = snapshot.capturedAt
-                                    row.nameOwnerKey = member.key
-                                end
-                            end
-                            row.knownBy[#row.knownBy + 1] = {
-                                key = member.key,
-                                name = canonical.identity.name,
-                                realm = canonical.identity.realm,
-                                capturedAt = snapshot.capturedAt,
-                                savedDate = catalogSavedDate(api, snapshot.capturedAt),
-                            }
-                        end
+                        validSnapshotsByLocalID[localID] = snapshot
                     end
                 end
             end
         end
     end
 
+    local recipesByID = {}
+    local indexedRecipes = db.professionRecipeIndex[professionID]
+    if indexedRecipes ~= nil and type(indexedRecipes) ~= "table" then
+        incomplete = true
+        indexedRecipes = nil
+    end
+    for recipeID, indexedRecipe in pairs(indexedRecipes or {}) do
+        if not positiveInteger(recipeID) or type(indexedRecipe) ~= "table"
+            or not nonEmptyString(indexedRecipe.name) or type(indexedRecipe.crafters) ~= "table" then
+            incomplete = true
+        else
+            local row = { recipeID = recipeID, name = indexedRecipe.name, knownBy = {} }
+            for _, localID in ipairs(indexedRecipe.crafters) do
+                local member = db.professionCharacters[localID]
+                if member and member.active == true then
+                    local snapshot = validSnapshotsByLocalID[localID]
+                    if not snapshot then
+                        incomplete = true
+                    else
+                        local canonical = db.professions[member.key]
+                        row.knownBy[#row.knownBy + 1] = {
+                            key = member.key,
+                            name = canonical.identity.name,
+                            realm = canonical.identity.realm,
+                            capturedAt = snapshot.capturedAt,
+                            savedDate = catalogSavedDate(api, snapshot.capturedAt),
+                        }
+                    end
+                end
+            end
+            if #row.knownBy > 0 then
+                table.sort(row.knownBy, catalogOwnerLess)
+                recipesByID[recipeID] = row
+            end
+        end
+    end
+
     local recipes = {}
     for _, recipe in pairs(recipesByID) do
-        table.sort(recipe.knownBy, catalogOwnerLess)
-        recipe.nameCapturedAt = nil
-        recipe.nameOwnerKey = nil
         recipes[#recipes + 1] = recipe
     end
     table.sort(recipes, function(left, right)

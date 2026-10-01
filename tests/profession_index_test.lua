@@ -36,6 +36,35 @@ local function indexedMetadata(GGM, professionID)
     }
 end
 
+T.test("profession browser reads saved recipes from the schema five recipe index", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local snapshot = indexedSnapshot(GGM, 164, 41234)
+    snapshot.professionName = "Blacksmithing"
+    snapshot.recipes[1].name = "Copper Bracers"
+
+    local saved, saveErr = GGM.SaveProfessionSnapshot(db, identity, snapshot, {
+        guildMembershipVerified = true,
+    })
+
+    T.assertTrue(saved, saveErr)
+    T.assertNil(db.professions[identity.key].snapshots[164].recipes)
+    T.assertEqual(db.professionRecipeIndex[164][41234].name, "Copper Bracers")
+    T.assertEqual(db.professionRecipeIndex[164][41234].crafters[1], 1)
+
+    GGM.professionRosterMembershipCurrent = true
+    local model = GGM.BuildProfessionRecipeCatalog(db, 164, "Blacksmithing", {})
+
+    T.assertEqual(model.state, "ready")
+    T.assertTrue(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(model.recipes[1].recipeID, 41234)
+    T.assertEqual(model.recipes[1].name, "Copper Bracers")
+    T.assertEqual(model.recipes[1].knownBy[1].key, identity.key)
+    T.assertEqual(model.recipes[1].knownBy[1].capturedAt, snapshot.capturedAt)
+end)
+
 T.test("first-run database creates profession index state", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
@@ -1518,26 +1547,38 @@ T.test("failed roster rename preserves the old key and inactive state on a colli
     T.assertEqual(db.professions["Bob-Silvermoon"].identity.guid, "Player-1-B")
 end)
 
+local catalogRecipeFixtures = setmetatable({}, { __mode = "k" })
+
 local function catalogSnapshot(GGM, professionID, capturedAt, recipes, professionName)
-    return {
+    local snapshot = {
+        complete = true,
         professionID = professionID,
         professionName = professionName or "Localized profession",
         capturedAt = capturedAt,
         source = GGM.PROFESSION_SOURCE_PLAYER,
         status = GGM.PROFESSION_CACHE_STATUS,
-        recipes = recipes or {},
     }
+    catalogRecipeFixtures[snapshot] = recipes or {}
+    return snapshot
 end
 
 local function catalogDB(members)
+    local GGM = loadModules()
     local db = {
+        schemaVersion = GGM.SCHEMA_VERSION,
         professions = {},
         professionCharacters = {},
         localCharacterIDByGUID = {},
+        nextLocalCharacterID = 1,
+        professionRecipeIndex = {},
+        professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
+        professionIndexRepairCandidates = {},
+        professionIndexRepairNeeded = false,
     }
 
     for index, member in ipairs(members) do
         local localID = member.localID or index
+        db.nextLocalCharacterID = math.max(db.nextLocalCharacterID, localID + 1)
         db.professionCharacters[localID] = {
             guid = member.guid,
             key = member.key,
@@ -1553,6 +1594,39 @@ local function catalogDB(members)
             },
             snapshots = member.snapshots,
         }
+
+        if type(member.snapshots) == "table" then
+            for professionID, snapshot in pairs(member.snapshots) do
+                local recipes = catalogRecipeFixtures[snapshot]
+                if type(professionID) == "number" and type(recipes) == "table" then
+                    local professionRecipes = db.professionRecipeIndex[professionID]
+                    if type(professionRecipes) ~= "table" then
+                        professionRecipes = {}
+                        db.professionRecipeIndex[professionID] = professionRecipes
+                    end
+                    for _, recipe in ipairs(recipes) do
+                        local indexedRecipe = professionRecipes[recipe.recipeID]
+                        if type(indexedRecipe) ~= "table" then
+                            indexedRecipe = { name = recipe.name, crafters = {} }
+                            professionRecipes[recipe.recipeID] = indexedRecipe
+                        end
+                        local alreadyIndexed = false
+                        for _, existingID in ipairs(indexedRecipe.crafters) do
+                            if existingID == localID then alreadyIndexed = true; break end
+                        end
+                        if not alreadyIndexed then
+                            indexedRecipe.crafters[#indexedRecipe.crafters + 1] = localID
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    for _, professionRecipes in pairs(db.professionRecipeIndex) do
+        for _, recipe in pairs(professionRecipes) do
+            table.sort(recipe.crafters)
+        end
     end
 
     return db
@@ -1803,7 +1877,7 @@ T.test("catalog keeps safely attributable recipes when another active snapshot i
     assertTablesEqual(db, before)
 end)
 
-T.test("catalog marks conflicting recipe names incomplete and uses the newest snapshot name", function()
+T.test("catalog uses the persisted recipe name and retains each crafter's saved date", function()
     local GGM = loadModules()
     local db = catalogDB({
         {
@@ -1819,15 +1893,17 @@ T.test("catalog marks conflicting recipe names incomplete and uses the newest sn
 
     local model = buildCatalog(GGM, db, 171, "Alchemy", {})
 
-    T.assertEqual(model.state, "incomplete")
+    T.assertEqual(model.state, "ready")
     T.assertTrue(model.hasSnapshot)
     T.assertEqual(#model.recipes, 1)
-    T.assertEqual(model.recipes[1].name, "New Name")
+    T.assertEqual(model.recipes[1].name, "Old Name")
     T.assertEqual(#model.recipes[1].knownBy, 2)
+    T.assertEqual(model.recipes[1].knownBy[1].capturedAt, 1700000000)
+    T.assertEqual(model.recipes[1].knownBy[2].capturedAt, 1700000100)
     assertTablesEqual(db, before)
 end)
 
-T.test("catalog resolves equally recent conflicting names by character key", function()
+T.test("catalog uses the persisted name when crafter snapshots have equal timestamps", function()
     local GGM = loadModules()
     local db = catalogDB({
         {
@@ -1842,8 +1918,8 @@ T.test("catalog resolves equally recent conflicting names by character key", fun
 
     local model = buildCatalog(GGM, db, 171, "Alchemy", {})
 
-    T.assertEqual(model.state, "incomplete")
-    T.assertEqual(model.recipes[1].name, "Name from Amy")
+    T.assertEqual(model.state, "ready")
+    T.assertEqual(model.recipes[1].name, "Name from Zoe")
     T.assertEqual(model.recipes[1].knownBy[1].key, "Amy-Silvermoon")
     T.assertEqual(model.recipes[1].knownBy[2].key, "Zoe-Silvermoon")
 end)
