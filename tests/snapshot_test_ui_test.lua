@@ -4,7 +4,10 @@ local makeRecord
 local function loadUI()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
@@ -413,6 +416,182 @@ local function showBrowser(GGM, api, db)
     GGM.ShowGuildGearBrowserWindow(api, db)
     return GGM.guildGearBrowserFrame
 end
+
+local function professionCatalog(state, recipes, message, hasSnapshot)
+    return { state = state, recipes = recipes or {}, message = message, hasSnapshot = hasSnapshot }
+end
+
+local function installProfessionCatalogStub(GGM, catalog, calls)
+    GGM.professionRosterMembershipCurrent = true
+    GGM.BuildProfessionRecipeCatalog = function(db, professionID, professionLabel, api)
+        calls[#calls + 1] = { db = db, professionID = professionID, professionLabel = professionLabel, api = api }
+        return catalog(professionID, professionLabel)
+    end
+end
+
+T.test("profession page defers catalog construction until database assignment and selects each profession ID", function()
+    local GGM = loadUI()
+    local calls = {}
+    installProfessionCatalogStub(GGM, function()
+        return professionCatalog("ready", { { recipeID = 1, name = "Copper Ore", knownBy = {} } })
+    end, calls)
+    local api, db = makeBrowserAPI(), { schemaVersion = GGM.SCHEMA_VERSION, characters = {} }
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    GGM.guildGearBrowserFrame = frame
+
+    T.assertEqual(#calls, 0)
+    T.assertEqual(frame.selectedProfession, "Alchemy")
+    T.assertNil(frame.db)
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(#calls, 1)
+    T.assertTrue(calls[1].db == db)
+    T.assertEqual(calls[1].professionID, 171)
+    T.assertTrue(calls[1].api == api)
+
+    local expected = {
+        { key = "Alchemy", id = 171 }, { key = "Blacksmithing", id = 164 },
+        { key = "Enchanting", id = 333 }, { key = "Engineering", id = 202 },
+        { key = "Leatherworking", id = 165 }, { key = "Tailoring", id = 197 },
+    }
+    T.assertEqual(calls[1].professionID, expected[1].id)
+    for index = 2, #expected do
+        local profession = expected[index]
+        local button = frame.professionButtons[index]
+        T.assertEqual(button.professionID, profession.id)
+        T.assertEqual(button.key, profession.key)
+        button.scripts.OnClick(button)
+        T.assertEqual(frame.selectedProfession, profession.key)
+        T.assertEqual(#calls, index, "each profession selection should build one local catalog")
+        T.assertEqual(calls[#calls].professionID, profession.id)
+    end
+end)
+
+T.test("profession search filters cached recipes only, changing profession clears query, and tab entry refreshes locally", function()
+    local GGM = loadUI()
+    local calls = {}
+    installProfessionCatalogStub(GGM, function()
+        return professionCatalog("ready", {
+            { recipeID = 10, name = "Copper Bracers", knownBy = { { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", savedDate = "saved 2026-09-01" } } },
+            { recipeID = 11, name = "Silver Ring", knownBy = { { key = "Bea-Silvermoon", name = "Bea", realm = "Silvermoon", savedDate = "saved 2026-09-02" } } },
+        })
+    end, calls)
+    local api, db = makeBrowserAPI(), { schemaVersion = GGM.SCHEMA_VERSION, characters = {}, professions = {}, marker = "preserve" }
+    local forbidden = function() error("profession browser interaction must remain local and read-only") end
+    for _, name in ipairs({ "GuildRoster", "GetGuildRosterInfo", "GetProfessions", "GetProfessionInfo", "SendAddonMessage" }) do
+        api[name] = forbidden
+    end
+    api.C_TradeSkillUI = { GetRecipeInfo = forbidden, GetProfessionInfoBySkillLineID = forbidden }
+    for _, name in ipairs({ "EnsureProfessionIndex", "ValidateProfessionIndexCache", "ReconcileProfessionRoster" }) do
+        GGM[name] = forbidden
+    end
+    local function copy(value)
+        if type(value) ~= "table" then return value end
+        local result = {}
+        for key, child in pairs(value) do result[copy(key)] = copy(child) end
+        return result
+    end
+    local function equal(left, right)
+        if type(left) ~= type(right) then return false end
+        if type(left) ~= "table" then return left == right end
+        for key, value in pairs(left) do if not equal(value, right[key]) then return false end end
+        for key in pairs(right) do if left[key] == nil then return false end end
+        return true
+    end
+    local before = copy(db)
+    local frame = showBrowser(GGM, api, db)
+    local builderCalls = #calls
+
+    frame.professionSearchBox:SetText("COPPER")
+    T.assertEqual(#calls, builderCalls)
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Copper Bracers")
+    T.assertTrue(string.find(frame.professionRecipeRows[1].knownBy.text, "saved 2026-09-01", 1, true) ~= nil)
+
+    frame.professionButtons[2].scripts.OnClick(frame.professionButtons[2])
+    T.assertEqual(frame.professionSearchBox:GetText(), "")
+    T.assertEqual(#frame.filteredProfessionRecipes, 2)
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    T.assertEqual(#calls, builderCalls + 2)
+    T.assertEqual(frame.professionSearchBox:GetText(), "")
+
+    frame.professionSearchBox:SetText("ring")
+    builderCalls = #calls
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    T.assertEqual(#calls, builderCalls + 1)
+    T.assertEqual(frame.professionSearchBox:GetText(), "ring")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Silver Ring")
+    T.assertTrue(equal(db, before), "opening, selecting, searching, and tab entry must not mutate SavedVariables")
+end)
+
+T.test("profession messages preserve unavailable and empty base states and distinguish a filtered no-match", function()
+    local GGM = loadUI()
+    local mode = "unavailable"
+    local calls = {}
+    installProfessionCatalogStub(GGM, function()
+        if mode == "unavailable" then return professionCatalog("unavailable", {}, "Current guild membership could not be confirmed.", nil) end
+        if mode == "identities" then return professionCatalog("unavailable", {}, "Current guild member identities could not be confirmed.", nil) end
+        if mode == "incomplete" then return professionCatalog("incomplete", {}, "Some saved profession data is incomplete.", true) end
+        if mode == "incomplete-safe" then
+            return professionCatalog("incomplete", { { recipeID = 22, name = "Azure Dye", knownBy = {} } },
+                "Some saved profession data is incomplete.", true)
+        end
+        if mode == "no-snapshot" then return professionCatalog("empty", {}, "No saved Alchemy snapshots for current guild members.", false) end
+        if mode == "no-recipes" then return professionCatalog("empty", {}, "Saved Alchemy snapshots contain no learned recipes.", true) end
+        return professionCatalog("ready", { { recipeID = 22, name = "Azure Dye", knownBy = {} } })
+    end, calls)
+    local frame = showBrowser(GGM, makeBrowserAPI(), { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+
+    T.assertEqual(frame.professionStatus.text, "Current guild membership could not be confirmed.")
+    mode = "identities"; GGM.SelectProfession(frame, "Alchemy")
+    T.assertEqual(frame.professionStatus.text, "Current guild member identities could not be confirmed.")
+    mode = "incomplete"; GGM.SelectProfession(frame, "Alchemy")
+    T.assertEqual(frame.professionStatus.text, "Some saved profession data is incomplete.")
+    mode = "no-snapshot"; GGM.SelectProfession(frame, "Alchemy")
+    T.assertEqual(frame.professionStatus.text, "No saved Alchemy snapshots for current guild members.")
+    mode = "no-recipes"; GGM.SelectProfession(frame, "Alchemy")
+    T.assertEqual(frame.professionStatus.text, "Saved Alchemy snapshots contain no learned recipes.")
+    mode = "incomplete-safe"; GGM.SelectProfession(frame, "Alchemy")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    frame.professionSearchBox:SetText("missing")
+    T.assertEqual(frame.professionStatus.text,
+        "Some saved profession data is incomplete. No recipes match this search.")
+    mode = "ready"; GGM.SelectProfession(frame, "Alchemy")
+    frame.professionSearchBox:SetText("missing")
+    T.assertEqual(frame.professionStatus.text, "No recipes match this search.")
+end)
+
+T.test("visible profession catalog refreshes locally after roster reconciliation succeeds or fails", function()
+    local GGM = loadUI()
+    local calls = 0
+    GGM.professionRosterMembershipCurrent = true
+    GGM.BuildProfessionRecipeCatalog = function()
+        calls = calls + 1
+        if not GGM.professionRosterMembershipCurrent then
+            return professionCatalog("unavailable", {}, "Current guild membership could not be confirmed.")
+        end
+        return professionCatalog("ready", { { recipeID = calls, name = "Recipe " .. calls, knownBy = {} } })
+    end
+    local api = makeBrowserAPI()
+    for _, name in ipairs({ "GuildRoster", "SendAddonMessage" }) do
+        api[name] = function() error("catalog refresh must not request roster data or send messages") end
+    end
+    local frame = showBrowser(GGM, api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 2")
+
+    -- A completed reconciliation refreshes the currently visible catalog from local saved data.
+    GGM.professionRosterMembershipCurrent = true
+    T.assertTrue(GGM.RefreshVisibleProfessionCatalog())
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 3")
+
+    -- A failed reconciliation clears stale owners by rebuilding the fail-closed unavailable model.
+    GGM.professionRosterMembershipCurrent = false
+    T.assertTrue(GGM.RefreshVisibleProfessionCatalog())
+    T.assertEqual(frame.professionStatus.text, "Current guild membership could not be confirmed.")
+    T.assertEqual(#frame.filteredProfessionRecipes, 0)
+end)
 
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
     local GGM = loadUI()
