@@ -20,6 +20,10 @@ frame:RegisterEvent("GUILD_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_GUILD_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
+local function scheduleProfessionCacheChunk(callback)
+    C_Timer.After(0, callback)
+end
+
 local function publishConfirmedSlot(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
     if not GGM.guildSync then
         return
@@ -58,6 +62,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GuildGearMemoryDB = db
         GGM.db = db
         GGM.startupError = nil
+
+        local professionCache, professionCacheErr =
+            GGM.CreateProfessionCharacterCache(db)
+
+        GGM.professionCharacterCache = professionCache
+        GGM.lastProfessionCharacterCacheError = professionCacheErr
 
         local professionLinkSave, professionControllerErr = GGM.CreateProfessionLinkSaveController(_G, db)
         if professionLinkSave then
@@ -99,7 +109,25 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
         C_Timer.After(1, function()
-            if GGM.gearTracker or GGM.startupError or not GGM.db then
+            if GGM.startupError or not GGM.db then
+                return
+            end
+
+            if GGM.professionCharacterCache then
+                local warmupOk, warmupErr =
+                    GGM.StartProfessionCharacterCacheWarmup(
+                        GGM.professionCharacterCache,
+                        scheduleProfessionCacheChunk
+                    )
+
+                if warmupOk then
+                    GGM.lastProfessionCharacterCacheError = nil
+                else
+                    GGM.lastProfessionCharacterCacheError = warmupErr
+                end
+            end
+
+            if GGM.gearTracker then
                 return
             end
 

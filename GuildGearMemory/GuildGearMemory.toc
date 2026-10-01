@@ -10,6 +10,7 @@ CharacterIdentity.lua
 GearSnapshot.lua
 ProfessionSnapshot.lua
 ProfessionIndex.lua
+ProfessionCharacterCache.lua
 Storage.lua
 StableGearTracker.lua
 LocalGearMemory.lua
