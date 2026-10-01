@@ -126,6 +126,13 @@ local function highestReservedRegistryID(db)
     for localID in pairs(db.professionCharacters) do
         if positiveInteger(localID) and localID > highest then highest = localID end
     end
+    local candidates = db.professionIndexRepairCandidates
+    if type(candidates) == "table" then
+        for _, candidate in pairs(candidates) do
+            local localID = type(candidate) == "table" and candidate.localID or nil
+            if positiveInteger(localID) and localID > highest then highest = localID end
+        end
+    end
     return highest
 end
 
@@ -406,6 +413,29 @@ function GGM.SetProfessionCharacterActive(db, localID, active)
     return true, nil
 end
 
+local function insertCrafterID(crafters, localID)
+    for position, existingID in ipairs(crafters) do
+        if existingID == localID then return false end
+        if existingID > localID then
+            table.insert(crafters, position, localID)
+            return true
+        end
+    end
+    table.insert(crafters, localID)
+    return true
+end
+
+local function removeCrafterID(crafters, localID)
+    for position, existingID in ipairs(crafters) do
+        if existingID == localID then
+            table.remove(crafters, position)
+            return true
+        end
+        if existingID > localID then return false end
+    end
+    return false
+end
+
 local function addRecipeMembership(index, professionID, recipe, localID)
     local profession = index[professionID]
     if type(profession) ~= "table" then
@@ -422,7 +452,7 @@ local function addRecipeMembership(index, professionID, recipe, localID)
         profession[recipe.recipeID] = entry
     end
 
-    entry.crafters[localID] = true
+    insertCrafterID(entry.crafters, localID)
 end
 
 local function removeMembershipFromProfession(index, professionID, localID)
@@ -432,8 +462,8 @@ local function removeMembershipFromProfession(index, professionID, localID)
     for recipeID, entry in pairs(profession) do
         local crafters = type(entry) == "table" and entry.crafters or nil
         if type(crafters) == "table" then
-            crafters[localID] = nil
-            if next(crafters) == nil then
+            removeCrafterID(crafters, localID)
+            if #crafters == 0 then
                 profession[recipeID] = nil
             end
         end
@@ -504,6 +534,32 @@ local function registryConsistent(db)
     return true
 end
 
+local function crafterListConsistent(db, crafters)
+    if type(crafters) ~= "table" or next(crafters) == nil then return false end
+
+    local count = 0
+    for position in pairs(crafters) do
+        if not positiveInteger(position) then return false end
+        count = count + 1
+    end
+
+    local previousID = 0
+    for position = 1, count do
+        local localID = rawget(crafters, position)
+        local entry = db.professionCharacters[localID]
+        if not positiveInteger(localID)
+            or localID <= previousID
+            or type(entry) ~= "table"
+            or not GGM.IsProfessionGUID(entry.guid)
+            or db.localCharacterIDByGUID[entry.guid] ~= localID then
+            return false
+        end
+        previousID = localID
+    end
+
+    return true
+end
+
 recipeIndexConsistent = function(db)
     if type(db) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
@@ -519,20 +575,8 @@ recipeIndexConsistent = function(db)
                 or type(recipe) ~= "table"
                 or not nonEmptyString(recipe.name)
                 or #recipe.name > GGM.PROFESSION_MAX_NAME_BYTES
-                or type(recipe.crafters) ~= "table"
-                or next(recipe.crafters) == nil then
+                or not crafterListConsistent(db, recipe.crafters) then
                 return false
-            end
-
-            for localID, present in pairs(recipe.crafters) do
-                local entry = db.professionCharacters[localID]
-                if not positiveInteger(localID)
-                    or present ~= true
-                    or type(entry) ~= "table"
-                    or not GGM.IsProfessionGUID(entry.guid)
-                    or db.localCharacterIDByGUID[entry.guid] ~= localID then
-                    return false
-                end
             end
         end
     end
@@ -617,16 +661,13 @@ local function recipeCatalogAssociationsRemainStable(db, rebuiltEntries, rebuilt
         for recipeID, recipe in pairs(recipes) do
             if not positiveInteger(recipeID)
                 or type(recipe) ~= "table"
-                or type(recipe.crafters) ~= "table"
-                or next(recipe.crafters) == nil then
+                or not crafterListConsistent(db, recipe.crafters) then
                 return false
             end
-            for localID, present in pairs(recipe.crafters) do
+            for _, localID in ipairs(recipe.crafters) do
                 local previous = db.professionCharacters[localID]
                 local rebuilt = rebuiltEntries[localID]
-                if not positiveInteger(localID)
-                    or present ~= true
-                    or type(previous) ~= "table"
+                if type(previous) ~= "table"
                     or not GGM.IsProfessionGUID(previous.guid)
                     or db.localCharacterIDByGUID[previous.guid] ~= localID
                     or type(rebuilt) ~= "table"
@@ -915,7 +956,7 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
     local recipe = type(profession) == "table" and profession[recipeID] or nil
     local results = {}
     if type(recipe) == "table" and type(recipe.crafters) == "table" then
-        for localID in pairs(recipe.crafters) do
+        for _, localID in ipairs(recipe.crafters) do
             local entry = db.professionCharacters[localID]
             if type(entry) == "table" then
                 table.insert(results, {

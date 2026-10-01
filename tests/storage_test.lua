@@ -47,7 +47,7 @@ T.test("database initialization creates schema five on first run", function()
     T.assertEqual(type(db.localCharacters), "table")
     T.assertNil(next(db.localCharacters))
     T.assertEqual(type(db.professions), "table")
-    T.assertEqual(db.professionRecipeIndexVersion, 2)
+    T.assertEqual(db.professionRecipeIndexVersion, 3)
 end)
 
 T.test("schema four is rejected without mutating the old database", function()
@@ -100,6 +100,58 @@ T.test("schema one through three are rejected without automatic migration", func
         T.assertEqual(existing.schemaVersion, schemaVersion)
         T.assertTrue(existing.marker == oldMarker)
     end
+end)
+
+T.test("schema five rejects version two profession crafter sets without mutation", function()
+    local GGM = loadModules()
+    local identity = {
+        key = "Alice-Silvermoon",
+        name = "Alice",
+        realm = "Silvermoon",
+        guid = "Player-1-A",
+    }
+    local oldIndex = {
+        [164] = {
+            [100] = {
+                name = "Copper Bracers",
+                crafters = { [1] = true },
+            },
+        },
+    }
+    local existing = {
+        schemaVersion = GGM.SCHEMA_VERSION,
+        characters = {},
+        localCharacters = {},
+        professions = {
+            [identity.key] = {
+                identity = identity,
+                snapshots = {},
+            },
+        },
+        nextLocalCharacterID = 2,
+        professionCharacters = {
+            [1] = {
+                guid = identity.guid,
+                key = identity.key,
+                active = false,
+            },
+        },
+        localCharacterIDByGUID = {
+            [identity.guid] = 1,
+        },
+        professionRecipeIndex = oldIndex,
+        professionRecipeIndexVersion = 2,
+        professionIndexRepairCandidates = {},
+        professionIndexRepairNeeded = false,
+    }
+
+    local db, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(db)
+    T.assertEqual(err, "profession-index-invalid")
+    T.assertTrue(existing.professionRecipeIndex == oldIndex)
+    T.assertEqual(existing.professionRecipeIndexVersion, 2)
+    T.assertEqual(existing.professionRecipeIndex[164][100].crafters[1], true)
 end)
 
 T.test("schema five initialization rejects missing required tables without synthesizing them", function()
@@ -575,7 +627,8 @@ T.test("saving a profession capture stores metadata only and catalogs recipes", 
     local localID = db.localCharacterIDByGUID[identity.guid]
     local recipe = db.professionRecipeIndex[164][100]
     T.assertEqual(recipe.name, "Copper Bracers")
-    T.assertTrue(recipe.crafters[localID])
+    T.assertEqual(#recipe.crafters, 1)
+    T.assertEqual(recipe.crafters[1], localID)
 end)
 
 T.test("invalid profession refresh preserves membership and last complete metadata", function()
@@ -611,7 +664,9 @@ T.test("invalid profession refresh preserves membership and last complete metada
     T.assertFalse(saved)
     T.assertEqual(err, "profession-snapshot-incomplete")
     T.assertEqual(db.professions[identity.key].snapshots[164].capturedAt, 10)
-    T.assertTrue(db.professionRecipeIndex[164][100].crafters[localID])
+    local recipe = db.professionRecipeIndex[164][100]
+    T.assertEqual(#recipe.crafters, 1)
+    T.assertEqual(recipe.crafters[1], localID)
 end)
 
 T.test("saving profession data creates a profession-only character entry", function()
@@ -669,8 +724,10 @@ T.test("re-saving the same profession replaces that profession snapshot predicta
     T.assertNil(record.snapshots[164].recipes)
     local localID = db.localCharacterIDByGUID[identity.guid]
     T.assertNil(db.professionRecipeIndex[164][100])
-    T.assertEqual(db.professionRecipeIndex[164][300].name, "Iron Buckle")
-    T.assertTrue(db.professionRecipeIndex[164][300].crafters[localID])
+    local recipe = db.professionRecipeIndex[164][300]
+    T.assertEqual(recipe.name, "Iron Buckle")
+    T.assertEqual(#recipe.crafters, 1)
+    T.assertEqual(recipe.crafters[1], localID)
 end)
 
 T.test("saving a second profession preserves the first profession", function()
@@ -768,8 +825,12 @@ T.test("saving a profession snapshot updates only that profession membership", f
 
     T.assertNil(db.professionRecipeIndex[164][100])
     T.assertNil(db.professionRecipeIndex[164][200])
-    T.assertTrue(db.professionRecipeIndex[164][400].crafters[localID])
-    T.assertTrue(db.professionRecipeIndex[171][300].crafters[localID])
+    local blacksmithingRecipe = db.professionRecipeIndex[164][400]
+    T.assertEqual(#blacksmithingRecipe.crafters, 1)
+    T.assertEqual(blacksmithingRecipe.crafters[1], localID)
+    local alchemyRecipe = db.professionRecipeIndex[171][300]
+    T.assertEqual(#alchemyRecipe.crafters, 1)
+    T.assertEqual(alchemyRecipe.crafters[1], localID)
 end)
 
 T.test("two characters may share one profession recipe bucket", function()
@@ -787,9 +848,12 @@ T.test("two characters may share one profession recipe bucket", function()
     assert(GGM.SaveProfessionSnapshot(db, bob, snapshot, { guildMembershipVerified = true }))
 
     local recipe = db.professionRecipeIndex[171][300]
+    local aliceID = db.localCharacterIDByGUID[alice.guid]
+    local bobID = db.localCharacterIDByGUID[bob.guid]
     T.assertEqual(recipe.name, "Potion")
-    T.assertTrue(recipe.crafters[db.localCharacterIDByGUID[alice.guid]])
-    T.assertTrue(recipe.crafters[db.localCharacterIDByGUID[bob.guid]])
+    T.assertEqual(#recipe.crafters, 2)
+    T.assertEqual(recipe.crafters[1], aliceID)
+    T.assertEqual(recipe.crafters[2], bobID)
 end)
 
 T.test("two complete snapshots share one catalog recipe and store no duplicate recipe arrays", function()
@@ -820,8 +884,9 @@ T.test("two complete snapshots share one catalog recipe and store no duplicate r
     local bobID = db.localCharacterIDByGUID[bob.guid]
 
     T.assertEqual(recipe.name, "Minor Healing Potion")
-    T.assertTrue(recipe.crafters[aliceID])
-    T.assertTrue(recipe.crafters[bobID])
+    T.assertEqual(#recipe.crafters, 2)
+    T.assertEqual(recipe.crafters[1], aliceID)
+    T.assertEqual(recipe.crafters[2], bobID)
     T.assertNil(db.professions[alice.key].snapshots[171].recipes)
     T.assertNil(db.professions[bob.key].snapshots[171].recipes)
 end)
@@ -845,7 +910,9 @@ T.test("a local-player save cannot reactivate a departed profession character", 
     assert(GGM.SaveProfessionSnapshot(db, identity, snapshot))
 
     T.assertFalse(db.professionCharacters[localID].active)
-    T.assertTrue(db.professionRecipeIndex[164][100].crafters[localID])
+    local recipe = db.professionRecipeIndex[164][100]
+    T.assertEqual(#recipe.crafters, 1)
+    T.assertEqual(recipe.crafters[1], localID)
     T.assertNotNil(db.professions[identity.key].snapshots[164])
 end)
 
@@ -944,7 +1011,10 @@ T.test("verified same-GUID rename merges disjoint profession records", function(
     T.assertNil(db.professions[oldIdentity.key])
     T.assertNotNil(db.professions[renamed.key].snapshots[164])
     T.assertNotNil(db.professions[renamed.key].snapshots[171])
-    T.assertTrue(db.professionRecipeIndex[171][300].crafters[db.localCharacterIDByGUID[oldIdentity.guid]])
+    local recipe = db.professionRecipeIndex[171][300]
+    local localID = db.localCharacterIDByGUID[oldIdentity.guid]
+    T.assertEqual(#recipe.crafters, 1)
+    T.assertEqual(recipe.crafters[1], localID)
 end)
 
 T.test("same-GUID rename with overlapping profession snapshots fails without mutation", function()

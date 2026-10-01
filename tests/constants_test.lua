@@ -48,6 +48,12 @@ T.test("schema version is five", function()
     T.assertEqual(GGM.SCHEMA_VERSION, 5)
 end)
 
+T.test("profession recipe index version is three", function()
+    local GGM = {}
+    T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.assertEqual(GGM.PROFESSION_RECIPE_INDEX_VERSION, 3)
+end)
+
 T.test("profession snapshot limits are conservative", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
