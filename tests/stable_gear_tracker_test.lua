@@ -3,6 +3,7 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     T.loadAddonFile("GuildGearMemory/StableGearTracker.lua", GGM)
@@ -27,10 +28,10 @@ local function makeEnvironment(GGM)
     local now = 1700000000
 
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
-        slotIDs[slot.inventoryName] = index
-        slotKeysByID[slot.key] = index
-        itemIDs[index] = 4000 + index
-        itemLinks[index] = "|Hitem:" .. tostring(4000 + index) .. "|h[Shared " .. slot.key .. "]|h"
+        slotIDs[slot.inventoryName] = slot.inventorySlotID
+        slotKeysByID[slot.key] = slot.inventorySlotID
+        itemIDs[slot.inventorySlotID] = 4000 + index
+        itemLinks[slot.inventorySlotID] = "|Hitem:" .. tostring(4000 + index) .. "|h[Shared " .. slot.key .. "]|h"
     end
 
     local api = {
@@ -130,14 +131,30 @@ local function makeTracker(GGM, api, db, stabilityDelaySeconds, onPublished)
         return true, nil, notificationError
     end
 
+    local baseline, baselineErr = GGM.BuildRuntimeGearSnapshot(api, record.gear)
+    assert(baseline, baselineErr)
+
     return GGM.CreateStableGearTracker(
         api,
         "Alice-Silvermoon",
-        record.gear,
+        baseline,
         stabilityDelaySeconds,
         persistConfirmedSlot
     )
 end
+
+T.test("reconstructed item links compare by raw item identity despite display wrappers", function()
+    local GGM = loadModules()
+    local api, db, _, slotIDs, setSlot = makeEnvironment(GGM)
+    local tracker = assert(makeTracker(GGM, api, db, 300))
+
+    setSlot("HEAD", 4001, "|cff00ff00|Hitem:4001|h[Localized Shared Head]|h|r")
+    local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
+
+    T.assertNil(err)
+    T.assertEqual(state, "shared")
+    T.assertNil(tracker.pendingBySlot.HEAD)
+end)
 
 T.test("a changed slot becomes pending without changing shared state", function()
     local GGM = loadModules()
@@ -154,7 +171,7 @@ T.test("a changed slot becomes pending without changing shared state", function(
     T.assertEqual(timers[1].delay, 300)
 
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 4001)
 end)
 
 T.test("a repeated event for the same pending item does not restart its timer", function()
@@ -188,7 +205,7 @@ T.test("reverting to shared gear cancels and removes pending state", function()
 
     timers[1]:Fire()
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 4001)
 end)
 
 T.test("changing a pending slot to another new item restarts only that slot", function()
@@ -210,7 +227,7 @@ T.test("changing a pending slot to another new item restarts only that slot", fu
     timers[2]:Fire()
 
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 9002)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 9002)
     T.assertEqual(record.gear.capturedAt, 1700000300)
     T.assertNil(tracker.pendingBySlot.HEAD)
 end)
@@ -234,8 +251,8 @@ T.test("different slots keep independent pending timers", function()
     timers[1]:Fire()
 
     local afterHead = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(afterHead.gear.slots.HEAD.itemID, 9001)
-    T.assertEqual(afterHead.gear.slots.NECK.itemID, 4002)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(afterHead.gear, "HEAD")).itemID, 9001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(afterHead.gear, "NECK")).itemID, 4002)
     T.assertNil(tracker.pendingBySlot.HEAD)
     T.assertNotNil(tracker.pendingBySlot.NECK)
 
@@ -243,7 +260,7 @@ T.test("different slots keep independent pending timers", function()
     timers[2]:Fire()
 
     local afterNeck = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(afterNeck.gear.slots.NECK.itemID, 9002)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(afterNeck.gear, "NECK")).itemID, 9002)
     T.assertNil(tracker.pendingBySlot.NECK)
 end)
 
@@ -259,16 +276,20 @@ T.test("timer expiry re-reads current gear and never confirms a stale candidate"
     timers[1]:Fire()
 
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 4001)
     T.assertEqual(#timers, 2)
     T.assertNotNil(tracker.pendingBySlot.HEAD)
     T.assertEqual(tracker.pendingBySlot.HEAD.slot.itemID, 9002)
 end)
 
-T.test("tracker creation rejects a persisted slot id that disagrees with the current runtime slot id", function()
+T.test("tracker creation rejects a runtime slot id that disagrees with the catalog", function()
     local GGM = loadModules()
     local api, db = makeEnvironment(GGM)
-    db.characters["Alice-Silvermoon"].gear.slots.HEAD.inventorySlotID = 999
+    local original = api.GetInventorySlotInfo
+    api.GetInventorySlotInfo = function(name)
+        if name == "HeadSlot" then return 99 end
+        return original(name)
+    end
 
     local tracker, err = makeTracker(GGM, api, db, 300)
 
@@ -294,7 +315,7 @@ T.test("timer creation returning nil fails closed without publishing pending sta
     T.assertNil(tracker.pendingBySlot.HEAD)
 
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 4001)
 end)
 
 T.test("timer creation throwing fails closed without publishing pending state", function()
@@ -315,7 +336,7 @@ T.test("timer creation throwing fails closed without publishing pending state", 
     T.assertNil(tracker.pendingBySlot.HEAD)
 
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 4001)
 end)
 
 T.test("timer creation returning a non-cancelable handle fails closed", function()
@@ -336,7 +357,7 @@ T.test("timer creation returning a non-cancelable handle fails closed", function
     T.assertNil(tracker.pendingBySlot.HEAD)
 
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 4001)
 end)
 
 T.test("an untracked equipment slot is ignored", function()
@@ -370,7 +391,7 @@ T.test("confirmed slot callback fires once after sequence and slot are persisted
                 confirmedAt = confirmedAt,
                 confirmedSequence = confirmedSequence,
                 persistedSequence = record.confirmedSequence,
-                persistedItemID = record.gear.slots[slotKey].itemID,
+                persistedItemID = assert(GGM.GetStoredGearSlot(record.gear, slotKey)).itemID,
             })
         end
     ))
@@ -410,11 +431,12 @@ T.test("a thrown confirmation callback leaves the slot unconfirmed and retryable
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot = makeEnvironment(GGM)
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    local baseline = assert(GGM.BuildRuntimeGearSnapshot(api, record.gear))
     local callbackCount = 0
     local tracker = assert(GGM.CreateStableGearTracker(
         api,
         "Alice-Silvermoon",
-        record.gear,
+        baseline,
         300,
         function()
             callbackCount = callbackCount + 1
@@ -432,7 +454,7 @@ T.test("a thrown confirmation callback leaves the slot unconfirmed and retryable
     T.assertTrue(string.find(tracker.lastError, "storage callback exploded", 1, true) ~= nil)
     T.assertEqual(tracker.lastConfirmationCallbackError, tracker.lastError)
     local unchangedRecord = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(unchangedRecord.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(unchangedRecord.gear, "HEAD")).itemID, 4001)
 
     local state, err = GGM.HandlePlayerEquipmentChanged(tracker, slotIDs.HEAD)
     T.assertNil(err)
@@ -453,7 +475,7 @@ T.test("confirmation callback failure never rolls back a persisted confirmation"
     timers[1]:Fire()
 
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(record.gear.slots.HEAD.itemID, 9400)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, 9400)
     T.assertEqual(record.confirmedSequence, 1)
     T.assertNotNil(tracker.lastConfirmationCallbackError)
 end)
@@ -462,6 +484,7 @@ T.test("stable tracker reports a confirmed slot without writing storage", functi
     local GGM = loadModules()
     local api, db, timers, slotIDs, setSlot, setTime = makeEnvironment(GGM)
     local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    local baseline = assert(GGM.BuildRuntimeGearSnapshot(api, record.gear))
     local confirmed
     GGM.UpdateConfirmedCharacterSlot = function()
         error("stable tracker must not write storage")
@@ -470,7 +493,7 @@ T.test("stable tracker reports a confirmed slot without writing storage", functi
     local tracker = assert(GGM.CreateStableGearTracker(
         api,
         "Alice-Silvermoon",
-        record.gear,
+        baseline,
         300,
         function(characterKey, slotKey, slotValue, confirmedAt)
             confirmed = {
@@ -493,6 +516,6 @@ T.test("stable tracker reports a confirmed slot without writing storage", functi
     T.assertEqual(confirmed.slotKey, "HEAD")
     T.assertEqual(confirmed.itemID, 9500)
     T.assertEqual(confirmed.confirmedAt, 1700000300)
-    T.assertEqual(savedRecord.gear.slots.HEAD.itemID, 4001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(savedRecord.gear, "HEAD")).itemID, 4001)
     T.assertEqual(savedRecord.confirmedSequence, 0)
 end)

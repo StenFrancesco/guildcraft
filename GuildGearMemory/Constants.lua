@@ -1,7 +1,9 @@
 local _, GGM = ...
 
-GGM.SCHEMA_VERSION = 5
+GGM.SCHEMA_VERSION = 6
 GGM.DEFAULT_STABILITY_DELAY_SECONDS = 300
+GGM.GEAR_MAX_ITEM_STRING_BYTES = 320
+GGM.GEAR_MAX_ITEM_ID = 2147483647
 
 GGM.PROFESSION_MAX_RECIPES = 4096
 GGM.PROFESSION_MAX_NAME_BYTES = 128
@@ -52,25 +54,25 @@ GGM.SYNC_MAX_RACE_ID = 255
 GGM.SYNC_MAX_DISPLAY_ID = 2147483647
 
 GGM.TRACKED_SLOTS = {
-    { key = "HEAD", inventoryName = "HeadSlot" },
-    { key = "NECK", inventoryName = "NeckSlot" },
-    { key = "SHOULDER", inventoryName = "ShoulderSlot" },
-    { key = "BACK", inventoryName = "BackSlot" },
-    { key = "CHEST", inventoryName = "ChestSlot" },
-    { key = "SHIRT", inventoryName = "ShirtSlot" },
-    { key = "TABARD", inventoryName = "TabardSlot" },
-    { key = "WRIST", inventoryName = "WristSlot" },
-    { key = "HANDS", inventoryName = "HandsSlot" },
-    { key = "WAIST", inventoryName = "WaistSlot" },
-    { key = "LEGS", inventoryName = "LegsSlot" },
-    { key = "FEET", inventoryName = "FeetSlot" },
-    { key = "FINGER_1", inventoryName = "Finger0Slot" },
-    { key = "FINGER_2", inventoryName = "Finger1Slot" },
-    { key = "TRINKET_1", inventoryName = "Trinket0Slot" },
-    { key = "TRINKET_2", inventoryName = "Trinket1Slot" },
-    { key = "MAIN_HAND", inventoryName = "MainHandSlot" },
-    { key = "OFF_HAND", inventoryName = "SecondaryHandSlot" },
-    { key = "RANGED", inventoryName = "RangedSlot" },
+    { key = "HEAD", inventoryName = "HeadSlot", inventorySlotID = 1 },
+    { key = "NECK", inventoryName = "NeckSlot", inventorySlotID = 2 },
+    { key = "SHOULDER", inventoryName = "ShoulderSlot", inventorySlotID = 3 },
+    { key = "BACK", inventoryName = "BackSlot", inventorySlotID = 15 },
+    { key = "CHEST", inventoryName = "ChestSlot", inventorySlotID = 5 },
+    { key = "SHIRT", inventoryName = "ShirtSlot", inventorySlotID = 4 },
+    { key = "TABARD", inventoryName = "TabardSlot", inventorySlotID = 19 },
+    { key = "WRIST", inventoryName = "WristSlot", inventorySlotID = 9 },
+    { key = "HANDS", inventoryName = "HandsSlot", inventorySlotID = 10 },
+    { key = "WAIST", inventoryName = "WaistSlot", inventorySlotID = 6 },
+    { key = "LEGS", inventoryName = "LegsSlot", inventorySlotID = 7 },
+    { key = "FEET", inventoryName = "FeetSlot", inventorySlotID = 8 },
+    { key = "FINGER_1", inventoryName = "Finger0Slot", inventorySlotID = 11 },
+    { key = "FINGER_2", inventoryName = "Finger1Slot", inventorySlotID = 12 },
+    { key = "TRINKET_1", inventoryName = "Trinket0Slot", inventorySlotID = 13 },
+    { key = "TRINKET_2", inventoryName = "Trinket1Slot", inventorySlotID = 14 },
+    { key = "MAIN_HAND", inventoryName = "MainHandSlot", inventorySlotID = 16 },
+    { key = "OFF_HAND", inventoryName = "SecondaryHandSlot", inventorySlotID = 17 },
+    { key = "RANGED", inventoryName = "RangedSlot", inventorySlotID = 18 },
 }
 
 -- Some WoW variants expose a ranged equipment slot and others do not. Keep it

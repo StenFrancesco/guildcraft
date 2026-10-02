@@ -75,7 +75,7 @@ function GGM.CreateStableGearTracker(api, characterKey, savedSnapshot, stability
         return nil, snapshotErr
     end
 
-    local resolvedSlots, resolveErr = GGM.ResolvePlayerGearSlots(api, savedSnapshot.slots)
+    local resolvedSlots, resolveErr = GGM.ResolvePlayerGearSlots(api)
     if not resolvedSlots then
         return nil, resolveErr
     end

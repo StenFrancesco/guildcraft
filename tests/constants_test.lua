@@ -7,32 +7,33 @@ T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", fun
     T.assertEqual(#GGM.TRACKED_SLOTS, 19)
 
     local expected = {
-        HEAD = "HeadSlot",
-        NECK = "NeckSlot",
-        SHOULDER = "ShoulderSlot",
-        BACK = "BackSlot",
-        CHEST = "ChestSlot",
-        SHIRT = "ShirtSlot",
-        TABARD = "TabardSlot",
-        WRIST = "WristSlot",
-        HANDS = "HandsSlot",
-        WAIST = "WaistSlot",
-        LEGS = "LegsSlot",
-        FEET = "FeetSlot",
-        FINGER_1 = "Finger0Slot",
-        FINGER_2 = "Finger1Slot",
-        TRINKET_1 = "Trinket0Slot",
-        TRINKET_2 = "Trinket1Slot",
-        MAIN_HAND = "MainHandSlot",
-        OFF_HAND = "SecondaryHandSlot",
-        RANGED = "RangedSlot",
+        HEAD = { name = "HeadSlot", id = 1 },
+        NECK = { name = "NeckSlot", id = 2 },
+        SHOULDER = { name = "ShoulderSlot", id = 3 },
+        BACK = { name = "BackSlot", id = 15 },
+        CHEST = { name = "ChestSlot", id = 5 },
+        SHIRT = { name = "ShirtSlot", id = 4 },
+        TABARD = { name = "TabardSlot", id = 19 },
+        WRIST = { name = "WristSlot", id = 9 },
+        HANDS = { name = "HandsSlot", id = 10 },
+        WAIST = { name = "WaistSlot", id = 6 },
+        LEGS = { name = "LegsSlot", id = 7 },
+        FEET = { name = "FeetSlot", id = 8 },
+        FINGER_1 = { name = "Finger0Slot", id = 11 },
+        FINGER_2 = { name = "Finger1Slot", id = 12 },
+        TRINKET_1 = { name = "Trinket0Slot", id = 13 },
+        TRINKET_2 = { name = "Trinket1Slot", id = 14 },
+        MAIN_HAND = { name = "MainHandSlot", id = 16 },
+        OFF_HAND = { name = "SecondaryHandSlot", id = 17 },
+        RANGED = { name = "RangedSlot", id = 18 },
     }
 
     local seen = {}
     local expectedOrder = { "HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "SHIRT", "TABARD", "WRIST", "HANDS", "WAIST", "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2", "MAIN_HAND", "OFF_HAND", "RANGED" }
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
         T.assertEqual(slot.key, expectedOrder[index])
-        T.assertEqual(slot.inventoryName, expected[slot.key], "unexpected slot mapping for " .. tostring(slot.key))
+        T.assertEqual(slot.inventoryName, expected[slot.key].name, "unexpected slot mapping for " .. tostring(slot.key))
+        T.assertEqual(slot.inventorySlotID, expected[slot.key].id, "unexpected inventory slot ID for " .. tostring(slot.key))
         T.assertFalse(seen[slot.key] == true, "duplicate slot key " .. tostring(slot.key))
         seen[slot.key] = true
     end
@@ -42,10 +43,11 @@ T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", fun
     end
 end)
 
-T.test("schema version is five", function()
+T.test("schema version is six and protocol version stays five", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.assertEqual(GGM.SCHEMA_VERSION, 5)
+    T.assertEqual(GGM.SCHEMA_VERSION, 6)
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
 end)
 
 T.test("profession recipe index version is three", function()
