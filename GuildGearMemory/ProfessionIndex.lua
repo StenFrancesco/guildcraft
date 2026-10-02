@@ -1279,6 +1279,15 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         return left.recipeID < right.recipeID
     end)
 
+    if not membershipCurrent and hasSnapshot ~= true then
+        return {
+            state = "unavailable",
+            hasSnapshot = nil,
+            recipes = {},
+            message = rosterWarning,
+        }
+    end
+
     if incomplete or hasSnapshot == nil then
         return {
             state = "incomplete",
@@ -1288,15 +1297,6 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                 "Some saved profession data is incomplete.",
                 rosterWarning
             ),
-        }
-    end
-
-    if not membershipCurrent and hasSnapshot ~= true then
-        return {
-            state = "unavailable",
-            hasSnapshot = nil,
-            recipes = {},
-            message = rosterWarning,
         }
     end
 
