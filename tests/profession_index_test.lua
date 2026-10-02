@@ -2127,6 +2127,37 @@ T.test("unconfirmed roster with malformed local snapshot data remains unavailabl
     assertTablesEqual(db, before)
 end)
 
+T.test("unconfirmed roster with an invalid selected local snapshot remains unavailable", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalInvalid-Silvermoon",
+            name = "LocalInvalid",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL-INVALID",
+            active = false,
+            localOwned = true,
+            snapshots = {
+                [171] = {
+                    professionID = 171,
+                    recipes = "not-a-recipe-list",
+                },
+            },
+        },
+    })
+    local before = copyTable(db)
+    GGM.professionRosterMembershipCurrent = false
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "unavailable")
+    T.assertNil(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 0)
+    T.assertEqual(model.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
+    assertTablesEqual(db, before)
+end)
+
 T.test("confirmed roster combines current guild and local out-of-guild crafters but excludes other former members", function()
     local GGM = loadModules()
     local db = catalogDB({

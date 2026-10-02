@@ -1199,6 +1199,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         rosterWarning = unconfirmedRosterMessage()
     end
     local hasSnapshot, incomplete = false, false
+    local validSelectedSnapshot = false
     local validSnapshotsByLocalID = {}
 
     for localID, member in pairs(db.professionCharacters) do
@@ -1224,6 +1225,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                     if not valid then
                         incomplete = true
                     else
+                        validSelectedSnapshot = true
                         validSnapshotsByLocalID[localID] = snapshot
                     end
                 end
@@ -1279,7 +1281,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         return left.recipeID < right.recipeID
     end)
 
-    if not membershipCurrent and hasSnapshot ~= true then
+    if not membershipCurrent and not validSelectedSnapshot then
         return {
             state = "unavailable",
             hasSnapshot = nil,
