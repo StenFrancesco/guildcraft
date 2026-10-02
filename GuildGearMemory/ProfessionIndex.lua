@@ -1,5 +1,6 @@
 local _, GGM = ...
 local recipeIndexConsistent
+local MAX_SAFE_INTEGER = 9007199254740991
 
 local function nonEmptyString(value)
     return type(value) == "string" and value ~= ""
@@ -14,7 +15,7 @@ end
 
 local function canAdvance(value)
     local advanced = value + 1
-    return positiveInteger(advanced) and advanced > value
+    return value < MAX_SAFE_INTEGER and positiveInteger(advanced) and advanced > value
 end
 
 local function highestReservedID(professionCharacters, localCharacterIDByGUID, repairCandidates)
@@ -918,11 +919,12 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
     return true, nil
 end
 
-function GGM.EnsureProfessionIndex(db, validateFully)
+function GGM.EnsureProfessionIndex(db, validateFully, expectedSchemaVersion)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-professions-invalid"
     end
-    if db.schemaVersion ~= nil and db.schemaVersion ~= GGM.SCHEMA_VERSION then
+    local requiredSchemaVersion = expectedSchemaVersion or GGM.SCHEMA_VERSION
+    if db.schemaVersion ~= nil and db.schemaVersion ~= requiredSchemaVersion then
         return false, "unsupported-schema-version:" .. tostring(db.schemaVersion)
     end
 

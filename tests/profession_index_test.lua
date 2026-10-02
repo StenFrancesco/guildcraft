@@ -36,7 +36,7 @@ local function indexedMetadata(GGM, professionID)
     }
 end
 
-T.test("profession browser reads saved recipes from the schema five recipe index", function()
+T.test("profession browser reads saved recipes from the schema six recipe index", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
@@ -69,7 +69,7 @@ T.test("first-run database creates profession index state", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
 
-    T.assertEqual(db.schemaVersion, 5)
+    T.assertEqual(db.schemaVersion, 6)
     T.assertEqual(db.nextLocalCharacterID, 1)
     T.assertEqual(type(db.professionCharacters), "table")
     T.assertEqual(type(db.localCharacterIDByGUID), "table")
