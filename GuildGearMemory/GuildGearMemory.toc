@@ -1,4 +1,5 @@
-## Interface: 120000
+# Midnight / Mainline 12.0 and WoW: Forever 1.60.1.
+## Interface: 120000, 16001
 ## Title: Guild Gear Memory
 ## Notes: Local last-known gear memory for guild characters
 ## Author: Guild Gear Memory contributors

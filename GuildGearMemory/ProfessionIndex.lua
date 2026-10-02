@@ -448,9 +448,14 @@ local function addRecipeMembership(index, professionID, recipe, localID)
     if type(entry) ~= "table" then
         entry = {
             name = recipe.name,
+            outputIcon = recipe.outputIcon,
             crafters = {},
         }
         profession[recipe.recipeID] = entry
+    elseif recipe.outputIcon ~= nil then
+        -- Recipe output icons are stable metadata keyed by recipe ID. A new
+        -- capture can fill the field for older cached memberships.
+        entry.outputIcon = recipe.outputIcon
     end
 
     insertCrafterID(entry.crafters, localID)
@@ -647,6 +652,7 @@ recipeIndexConsistent = function(db)
                 or type(recipe) ~= "table"
                 or not nonEmptyString(recipe.name)
                 or #recipe.name > GGM.PROFESSION_MAX_NAME_BYTES
+                or (recipe.outputIcon ~= nil and not positiveInteger(recipe.outputIcon))
                 or not crafterListConsistent(db, recipe.crafters) then
                 return false
             end
@@ -1245,7 +1251,12 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
             or not nonEmptyString(indexedRecipe.name) or type(indexedRecipe.crafters) ~= "table" then
             incomplete = true
         else
-            local row = { recipeID = recipeID, name = indexedRecipe.name, knownBy = {} }
+            local row = {
+                recipeID = recipeID,
+                name = indexedRecipe.name,
+                outputIcon = indexedRecipe.outputIcon,
+                knownBy = {},
+            }
             for _, localID in ipairs(indexedRecipe.crafters) do
                 local member = db.professionCharacters[localID]
                 if catalogCharacterEligible(db, member, membershipCurrent) then
