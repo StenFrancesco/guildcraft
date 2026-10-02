@@ -1080,6 +1080,7 @@ local function catalogMemberOwnershipIsTrusted(db)
         or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
+        or not localOwnershipSetIsTrusted(db)
         or db.professionIndexRepairNeeded == true then
         return false
     end
@@ -1156,27 +1157,52 @@ local function catalogOwnerLess(left, right)
     return left.key < right.key
 end
 
+local function catalogCharacterEligible(db, member, membershipCurrent)
+    if type(member) ~= "table" then return false end
+    return isLocallyOwnedGUID(db, member.guid)
+        or (membershipCurrent and member.active == true)
+end
+
+local function joinCatalogMessages(primary, secondary)
+    if primary and secondary then return primary .. " " .. secondary end
+    return primary or secondary
+end
+
+local function unconfirmedRosterMessage()
+    return "Current guild membership could not be confirmed. Showing saved local characters only."
+end
+
 function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api)
-    local emptyModel = { state = "unavailable", hasSnapshot = nil, recipes = {}, message = nil }
-    if GGM.professionRosterMembershipCurrent ~= true then
-        emptyModel.message = "Current guild membership could not be confirmed."
-        return emptyModel
-    end
-    if not positiveInteger(professionID) or not nonEmptyString(professionLabel)
+    local emptyModel = {
+        state = "unavailable",
+        hasSnapshot = nil,
+        recipes = {},
+        message = nil,
+    }
+
+    if not positiveInteger(professionID)
+        or not nonEmptyString(professionLabel)
         or not catalogMemberOwnershipIsTrusted(db) then
-        emptyModel.message = "Current guild member identities could not be confirmed."
+        emptyModel.message = "Saved profession character identities could not be confirmed."
         return emptyModel
     end
+
     local indexValid = GGM.EnsureProfessionIndex(db, true)
     if not indexValid then
         emptyModel.message = "Saved profession data could not be verified."
         return emptyModel
     end
 
+    local membershipCurrent = GGM.professionRosterMembershipCurrent == true
+    local rosterWarning
+    if not membershipCurrent then
+        rosterWarning = unconfirmedRosterMessage()
+    end
     local hasSnapshot, incomplete = false, false
     local validSnapshotsByLocalID = {}
+
     for localID, member in pairs(db.professionCharacters) do
-        if member.active == true then
+        if catalogCharacterEligible(db, member, membershipCurrent) then
             local canonical = db.professions[member.key]
             local snapshots = canonical.snapshots
             if type(snapshots) ~= "table" then
@@ -1211,6 +1237,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         incomplete = true
         indexedRecipes = nil
     end
+
     for recipeID, indexedRecipe in pairs(indexedRecipes or {}) do
         if not positiveInteger(recipeID) or type(indexedRecipe) ~= "table"
             or not nonEmptyString(indexedRecipe.name) or type(indexedRecipe.crafters) ~= "table" then
@@ -1219,7 +1246,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
             local row = { recipeID = recipeID, name = indexedRecipe.name, knownBy = {} }
             for _, localID in ipairs(indexedRecipe.crafters) do
                 local member = db.professionCharacters[localID]
-                if member and member.active == true then
+                if catalogCharacterEligible(db, member, membershipCurrent) then
                     local snapshot = validSnapshotsByLocalID[localID]
                     if not snapshot then
                         incomplete = true
@@ -1253,16 +1280,53 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
     end)
 
     if incomplete or hasSnapshot == nil then
-        return { state = "incomplete", hasSnapshot = hasSnapshot, recipes = recipes,
-            message = "Some saved profession data is incomplete." }
+        return {
+            state = "incomplete",
+            hasSnapshot = hasSnapshot,
+            recipes = recipes,
+            message = joinCatalogMessages(
+                "Some saved profession data is incomplete.",
+                rosterWarning
+            ),
+        }
     end
+
+    if not membershipCurrent and hasSnapshot ~= true then
+        return {
+            state = "unavailable",
+            hasSnapshot = nil,
+            recipes = {},
+            message = rosterWarning,
+        }
+    end
+
     if not hasSnapshot then
-        return { state = "empty", hasSnapshot = false, recipes = recipes,
-            message = "No saved " .. professionLabel .. " snapshots for current guild members." }
+        return {
+            state = "empty",
+            hasSnapshot = false,
+            recipes = recipes,
+            message = "No saved " .. professionLabel
+                .. " snapshots for local characters or current guild members.",
+        }
     end
+
     if #recipes == 0 then
-        return { state = "empty", hasSnapshot = true, recipes = recipes,
-            message = "Saved " .. professionLabel .. " snapshots contain no learned recipes." }
+        return {
+            state = "empty",
+            hasSnapshot = true,
+            recipes = recipes,
+            message = joinCatalogMessages(
+                "Saved " .. professionLabel
+                    .. " snapshots contain no learned recipes.",
+                rosterWarning
+            ),
+        }
     end
-    return { state = "ready", hasSnapshot = true, recipes = recipes, message = nil }
+
+    return {
+        state = "ready",
+        hasSnapshot = true,
+        recipes = recipes,
+        message = rosterWarning,
+    }
 end

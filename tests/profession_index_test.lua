@@ -1782,6 +1782,9 @@ local function catalogDB(members)
         professions = {},
         professionCharacters = {},
         localCharacterIDByGUID = {},
+        characters = {},
+        localCharacters = {},
+        localCharacterGUIDs = {},
         nextLocalCharacterID = 1,
         professionRecipeIndex = {},
         professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
@@ -1798,6 +1801,9 @@ local function catalogDB(members)
             active = member.active,
         }
         db.localCharacterIDByGUID[member.guid] = localID
+        if member.localOwned == true then
+            db.localCharacterGUIDs[member.guid] = true
+        end
         db.professions[member.key] = {
             identity = {
                 key = member.key,
@@ -1943,7 +1949,8 @@ T.test("catalog distinguishes no snapshot from a valid empty snapshot", function
     local noSnapshot = buildCatalog(GGM, db, 164, "Blacksmithing", {})
     T.assertEqual(noSnapshot.state, "empty")
     T.assertFalse(noSnapshot.hasSnapshot)
-    T.assertEqual(noSnapshot.message, "No saved Blacksmithing snapshots for current guild members.")
+    T.assertEqual(noSnapshot.message,
+        "No saved Blacksmithing snapshots for local characters or current guild members.")
     assertTablesEqual(db, before)
 
     local emptySnapshot = buildCatalog(GGM, db, 171, "Alchemy", {})
@@ -2006,7 +2013,8 @@ T.test("catalog fails closed without confirmed membership or unambiguous canonic
     T.assertEqual(unconfirmed.state, "unavailable")
     T.assertNil(unconfirmed.hasSnapshot)
     T.assertEqual(#unconfirmed.recipes, 0)
-    T.assertEqual(unconfirmed.message, "Current guild membership could not be confirmed.")
+    T.assertEqual(unconfirmed.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
     assertTablesEqual(db, before)
 
     local ambiguous = catalogDB({ member })
@@ -2021,6 +2029,163 @@ T.test("catalog fails closed without confirmed membership or unambiguous canonic
     T.assertNil(unavailable.hasSnapshot)
     T.assertEqual(#unavailable.recipes, 0)
     assertTablesEqual(ambiguous, beforeAmbiguous)
+end)
+
+T.test("unconfirmed roster still shows a saved locally owned out-of-guild profession", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalAlt-Silvermoon",
+            name = "LocalAlt",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL",
+            active = false,
+            localOwned = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000000, {
+                    { recipeID = 100, name = "Local Recipe" },
+                }),
+            },
+        },
+        {
+            key = "StaleGuildie-Silvermoon",
+            name = "StaleGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-STALE",
+            active = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000100, {
+                    { recipeID = 200, name = "Hidden Stale Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = false
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "ready")
+    T.assertTrue(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(model.recipes[1].recipeID, 100)
+    T.assertEqual(#model.recipes[1].knownBy, 1)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "LocalAlt-Silvermoon")
+    T.assertEqual(model.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
+end)
+
+T.test("unconfirmed roster with no local snapshot exposes no non-local owner", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "CachedGuildie-Silvermoon",
+            name = "CachedGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-CACHED",
+            active = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000000, {
+                    { recipeID = 100, name = "Cached Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = false
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "unavailable")
+    T.assertNil(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 0)
+    T.assertEqual(model.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
+end)
+
+T.test("confirmed roster combines current guild and local out-of-guild crafters but excludes other former members", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalAlt-Silvermoon",
+            name = "LocalAlt",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL",
+            active = false,
+            localOwned = true,
+            snapshots = {
+                [164] = catalogSnapshot(GGM, 164, 1700000000, {
+                    { recipeID = 100, name = "Shared Recipe" },
+                }),
+            },
+        },
+        {
+            key = "CurrentGuildie-Silvermoon",
+            name = "CurrentGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-CURRENT",
+            active = true,
+            snapshots = {
+                [164] = catalogSnapshot(GGM, 164, 1700000100, {
+                    { recipeID = 100, name = "Shared Recipe" },
+                }),
+            },
+        },
+        {
+            key = "FormerAlt-Silvermoon",
+            name = "FormerAlt",
+            realm = "Silvermoon",
+            guid = "Player-1-FORMER",
+            active = false,
+            snapshots = {
+                [164] = catalogSnapshot(GGM, 164, 1700000200, {
+                    { recipeID = 100, name = "Shared Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = true
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 164, "Blacksmithing", {})
+
+    T.assertEqual(model.state, "ready")
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(#model.recipes[1].knownBy, 2)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "CurrentGuildie-Silvermoon")
+    T.assertEqual(model.recipes[1].knownBy[2].key, "LocalAlt-Silvermoon")
+    T.assertNil(model.message)
+end)
+
+T.test("locally owned character with no saved selected profession creates no owner row", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalNoSnapshot-Silvermoon",
+            name = "LocalNoSnapshot",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL",
+            active = false,
+            localOwned = true,
+            snapshots = {},
+        },
+        {
+            key = "CurrentGuildie-Silvermoon",
+            name = "CurrentGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-CURRENT",
+            active = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000000, {
+                    { recipeID = 100, name = "Guild Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = true
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(#model.recipes[1].knownBy, 1)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "CurrentGuildie-Silvermoon")
 end)
 
 T.test("catalog rejects canonical profession identity key name realm disagreement without mutation", function()
