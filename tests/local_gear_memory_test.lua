@@ -6,6 +6,7 @@ local function loadModules()
     T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/StableGearTracker.lua", GGM)
     T.loadAddonFile("GuildGearMemory/LocalGearMemory.lua", GGM)
     return GGM
@@ -90,6 +91,49 @@ T.test("capture and store writes the local player's complete record", function()
     T.assertEqual(record.identity.key, "Alice-Silvermoon")
     T.assertTrue(record.complete)
     T.assertEqual(record.gear.capturedAt, 1700000100)
+end)
+
+T.test("recording local player ownership reads only the player GUID", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = {
+        UnitGUID = function(unit)
+            T.assertEqual(unit, "player")
+            return "Player-1234-ABCDEF"
+        end,
+        UnitFullName = function()
+            error("ownership recording must not resolve name or realm")
+        end,
+        GetInventorySlotInfo = function()
+            error("ownership recording must not inspect gear")
+        end,
+        C_TradeSkillUI = {
+            GetProfessionInfoBySkillLineID = function()
+                error("ownership recording must not inspect professions")
+            end,
+        },
+    }
+
+    local recorded, err = GGM.RecordLocalPlayerOwnership(api, db)
+
+    T.assertTrue(recorded)
+    T.assertNil(err)
+    T.assertTrue(GGM.IsLocalCharacterGUID(db, "Player-1234-ABCDEF"))
+    T.assertNil(next(db.professions))
+    T.assertNil(next(db.localCharacters))
+end)
+
+T.test("recording local player ownership fails closed when GUID is unavailable", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+
+    local recorded, err = GGM.RecordLocalPlayerOwnership({
+        UnitGUID = function() return nil end,
+    }, db)
+
+    T.assertFalse(recorded)
+    T.assertEqual(err, "player-guid-unavailable")
+    T.assertNil(next(db.localCharacterGUIDs))
 end)
 
 T.test("recapture keeps gear complete when the optional ranged slot is unavailable", function()

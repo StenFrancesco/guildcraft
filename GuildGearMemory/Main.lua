@@ -104,6 +104,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
+        local ownershipRecorded, ownershipErr = GGM.RecordLocalPlayerOwnership(
+            _G,
+            GGM.db
+        )
+        if ownershipRecorded then
+            GGM.lastLocalOwnershipError = nil
+        else
+            GGM.lastLocalOwnershipError = ownershipErr
+        end
+
         C_Timer.After(1, function()
             if GGM.gearTracker or GGM.startupError or not GGM.db then
                 return
