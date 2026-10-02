@@ -472,6 +472,77 @@ local function removeMembershipFromProfession(index, professionID, localID)
     if next(profession) == nil then index[professionID] = nil end
 end
 
+local function localOwnershipSetIsTrusted(db)
+    if type(db) ~= "table" or type(db.localCharacterGUIDs) ~= "table" then
+        return false
+    end
+    for guid, owned in pairs(db.localCharacterGUIDs) do
+        if not GGM.IsProfessionGUID(guid) or owned ~= true then
+            return false
+        end
+    end
+    return true
+end
+
+local function isLocallyOwnedGUID(db, guid)
+    return type(db.localCharacterGUIDs) == "table"
+        and db.localCharacterGUIDs[guid] == true
+end
+
+local function hasUnresolvedLegacyLocalMarker(db, characterKey, guid)
+    return type(db.localCharacters) == "table"
+        and db.localCharacters[characterKey] == true
+        and not isLocallyOwnedGUID(db, guid)
+end
+
+local function removeCrafterFromAllProfessions(index, localID)
+    local professionIDs = {}
+    for professionID in pairs(index) do
+        professionIDs[#professionIDs + 1] = professionID
+    end
+    table.sort(professionIDs)
+
+    for _, professionID in ipairs(professionIDs) do
+        removeMembershipFromProfession(index, professionID, localID)
+    end
+end
+
+local function purgeProfessionCharacter(db, localID)
+    local entry = db.professionCharacters[localID]
+    if type(entry) ~= "table" then return end
+    if hasUnresolvedLegacyLocalMarker(db, entry.key, entry.guid) then return end
+
+    removeCrafterFromAllProfessions(db.professionRecipeIndex, localID)
+    db.professions[entry.key] = nil
+    db.localCharacterIDByGUID[entry.guid] = nil
+    db.professionCharacters[localID] = nil
+    db.localCharacters[entry.key] = nil
+    if type(db.professionIndexRepairCandidates) == "table" then
+        db.professionIndexRepairCandidates[entry.guid] = nil
+    end
+end
+
+local function purgeDepartedGearRecords(db, currentByGUID)
+    local keysToRemove = {}
+
+    for characterKey, record in pairs(db.characters) do
+        local identity = type(record) == "table" and record.identity or nil
+        local guid = type(identity) == "table" and identity.guid or nil
+        if GGM.IsProfessionGUID(guid)
+            and currentByGUID[guid] == nil
+            and not isLocallyOwnedGUID(db, guid)
+            and not hasUnresolvedLegacyLocalMarker(db, characterKey, guid) then
+            keysToRemove[#keysToRemove + 1] = characterKey
+        end
+    end
+
+    table.sort(keysToRemove)
+    for _, characterKey in ipairs(keysToRemove) do
+        db.characters[characterKey] = nil
+        db.localCharacters[characterKey] = nil
+    end
+end
+
 function GGM.ReconcileProfessionRecipeMembership(db, localID, capture)
     if not positiveInteger(localID) then
         return false, "profession-character-id-invalid"
@@ -826,7 +897,10 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
-        or type(db.professionRecipeIndex) ~= "table" then
+        or type(db.professionRecipeIndex) ~= "table"
+        or type(db.characters) ~= "table"
+        or type(db.localCharacters) ~= "table"
+        or type(db.localCharacterGUIDs) ~= "table" then
         return false, "profession-roster-unavailable"
     end
 
@@ -862,6 +936,10 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
             currentByGUID[identity.guid] = identity
             currentByKey[identity.key] = identity.guid
         end
+    end
+
+    if not localOwnershipSetIsTrusted(db) or not recipeIndexConsistent(db) then
+        return false, "profession-index-invalid"
     end
 
     if not registryConsistent(db) then
@@ -911,9 +989,26 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         end
     end
 
+    local purgeLocalIDs = {}
+    for localID, entry in pairs(db.professionCharacters) do
+        if currentByGUID[entry.guid] == nil
+            and not isLocallyOwnedGUID(db, entry.guid)
+            and not hasUnresolvedLegacyLocalMarker(db, entry.key, entry.guid) then
+            purgeLocalIDs[#purgeLocalIDs + 1] = localID
+        end
+    end
+    table.sort(purgeLocalIDs)
+
     for _, entry in pairs(db.professionCharacters) do
         entry.active = currentByGUID[entry.guid] ~= nil
     end
+
+    for _, localID in ipairs(purgeLocalIDs) do
+        purgeProfessionCharacter(db, localID)
+    end
+
+    purgeDepartedGearRecords(db, currentByGUID)
+    db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
 
     GGM.professionRosterMembershipCurrent = true
     return true, nil

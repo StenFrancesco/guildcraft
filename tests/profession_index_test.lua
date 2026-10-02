@@ -1237,7 +1237,218 @@ T.test("incremental profession reconciliation removes only one character from on
     T.assertEqual(db.professionRecipeIndex[171][300].crafters[2], bobID)
 end)
 
-T.test("guild roster reconciliation deactivates departed characters but lookup retains them", function()
+local function guildRosterAPI(rows)
+    return {
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function(includeOffline)
+            T.assertTrue(includeOffline)
+            return #rows
+        end,
+        GetGuildRosterInfo = function(index)
+            local row = rows[index]
+            return row.name, nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, row.guid
+        end,
+        GetRealmName = function() return "Silvermoon" end,
+    }
+end
+
+T.test("complete roster purges departed non-local gear profession registry and recipe references", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local localAlt = indexedIdentity(GGM, "LocalAlt-Silvermoon", "Player-1-LOCAL")
+    local departed = indexedIdentity(GGM, "Departed-Silvermoon", "Player-1-GONE")
+
+    local localCapture = indexedSnapshot(GGM, 164, 100)
+    localCapture.recipes[1].name = "Shared Recipe"
+    local departedCapture = indexedSnapshot(GGM, 164, 100)
+    departedCapture.recipes[1].name = "Shared Recipe"
+
+    assert(GGM.SaveProfessionSnapshot(db, localAlt, localCapture))
+    assert(GGM.SaveProfessionSnapshot(db, departed, departedCapture, {
+        guildMembershipVerified = true,
+    }))
+    assert(GGM.MarkLocalCharacterGUID(db, localAlt.guid))
+
+    db.characters[localAlt.key] = {
+        complete = true,
+        identity = localAlt,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    db.characters[departed.key] = {
+        complete = true,
+        identity = departed,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+
+    local localID = db.localCharacterIDByGUID[localAlt.guid]
+    local departedID = db.localCharacterIDByGUID[departed.guid]
+    local nextIDBefore = db.nextLocalCharacterID
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertTrue(GGM.professionRosterMembershipCurrent)
+
+    T.assertNotNil(db.professions[localAlt.key])
+    T.assertNotNil(db.characters[localAlt.key])
+    T.assertEqual(db.localCharacterIDByGUID[localAlt.guid], localID)
+    T.assertFalse(db.professionCharacters[localID].active)
+
+    T.assertNil(db.professions[departed.key])
+    T.assertNil(db.characters[departed.key])
+    T.assertNil(db.localCharacterIDByGUID[departed.guid])
+    T.assertNil(db.professionCharacters[departedID])
+
+    T.assertEqual(#db.professionRecipeIndex[164][100].crafters, 1)
+    T.assertEqual(db.professionRecipeIndex[164][100].crafters[1], localID)
+    T.assertEqual(db.nextLocalCharacterID, nextIDBefore)
+end)
+
+T.test("complete roster purges an absent non-local gear-only record", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = indexedIdentity(GGM, "GearOnly-Silvermoon", "Player-1-GEAR")
+    db.characters[identity.key] = {
+        complete = true,
+        identity = identity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNil(db.characters[identity.key])
+end)
+
+T.test("complete roster retains unresolved schema five local records", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local key = "UnresolvedLocal-Silvermoon"
+    local gearIdentity = indexedIdentity(GGM, key, "Player-1-LEGACY-GEAR")
+    local professionIdentity = indexedIdentity(GGM, key, "Player-1-LEGACY-PROFESSION")
+
+    assert(GGM.SaveProfessionSnapshot(db, professionIdentity,
+        indexedSnapshot(GGM, 164, 100), { guildMembershipVerified = true }))
+    db.characters[key] = {
+        complete = true,
+        identity = gearIdentity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    db.localCharacters[key] = true
+    db.schemaVersion = 5
+    db.localCharacterGUIDs = nil
+
+    local migrated, migrationErr = GGM.InitializeDatabase(db)
+
+    T.assertNil(migrationErr)
+    T.assertTrue(migrated == db)
+    T.assertFalse(GGM.IsLocalCharacterGUID(db, gearIdentity.guid))
+    T.assertFalse(GGM.IsLocalCharacterGUID(db, professionIdentity.guid))
+    local localID = db.localCharacterIDByGUID[professionIdentity.guid]
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNotNil(db.characters[key])
+    T.assertNotNil(db.professions[key])
+    T.assertNotNil(db.professionCharacters[localID])
+    T.assertTrue(db.localCharacters[key])
+    T.assertEqual(db.professionRecipeIndex[164][100].crafters[1], localID)
+end)
+
+T.test("complete roster keeps an absent locally owned gear-only record", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = indexedIdentity(GGM, "LocalGear-Silvermoon", "Player-1-LOCALGEAR")
+    db.characters[identity.key] = {
+        complete = true,
+        identity = identity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    assert(GGM.MarkLocalCharacterGUID(db, identity.guid))
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNotNil(db.characters[identity.key])
+end)
+
+T.test("incomplete roster does not purge cached non-local data", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = indexedIdentity(GGM, "Cached-Silvermoon", "Player-1-CACHED")
+    local capture = indexedSnapshot(GGM, 164, 100)
+
+    assert(GGM.SaveProfessionSnapshot(db, identity, capture, {
+        guildMembershipVerified = true,
+    }))
+    db.characters[identity.key] = {
+        complete = true,
+        identity = identity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    local indexBefore = db.professionRecipeIndex
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 0 end,
+        GetGuildRosterInfo = function()
+            error("zero-count roster must fail before row reads")
+        end,
+    }, db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-roster-incomplete")
+    T.assertFalse(GGM.professionRosterMembershipCurrent)
+    T.assertNotNil(db.professions[identity.key])
+    T.assertNotNil(db.characters[identity.key])
+    T.assertEqual(db.localCharacterIDByGUID[identity.guid], localID)
+    T.assertTrue(db.professionRecipeIndex == indexBefore)
+end)
+
+T.test("not being in a guild purges non-local data but retains local data", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local localAlt = indexedIdentity(GGM, "LocalAlt-Silvermoon", "Player-1-LOCAL")
+    local cachedGuild = indexedIdentity(GGM, "Guildie-Silvermoon", "Player-1-GUILD")
+
+    assert(GGM.SaveProfessionSnapshot(db, localAlt, indexedSnapshot(GGM, 171, 200)))
+    assert(GGM.SaveProfessionSnapshot(db, cachedGuild, indexedSnapshot(GGM, 171, 201), {
+        guildMembershipVerified = true,
+    }))
+    assert(GGM.MarkLocalCharacterGUID(db, localAlt.guid))
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return false end,
+    }, db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNotNil(db.professions[localAlt.key])
+    T.assertNil(db.professions[cachedGuild.key])
+end)
+
+T.test("guild roster reconciliation keeps absent locally owned characters available", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
@@ -1248,6 +1459,7 @@ T.test("guild roster reconciliation deactivates departed characters but lookup r
         recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
     assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    assert(GGM.MarkLocalCharacterGUID(db, identity.guid))
     local localID = db.localCharacterIDByGUID[identity.guid]
 
     local ok, err = GGM.ReconcileProfessionGuildRoster({
@@ -1303,6 +1515,7 @@ T.test("guild roster departure changes activity without changing recipe catalog"
         recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
     assert(GGM.SaveProfessionSnapshot(db, identity, capture, { guildMembershipVerified = true }))
+    assert(GGM.MarkLocalCharacterGUID(db, identity.guid))
     local localID = db.localCharacterIDByGUID[identity.guid]
     local catalog = db.professionRecipeIndex
     local recipe = catalog[164][100]
