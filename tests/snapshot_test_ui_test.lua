@@ -596,26 +596,25 @@ end)
 T.test("profession owner rows show name realm and date without ownership badges", function()
     local GGM = loadUI()
     local calls = {}
+    local localOwner = {
+        key = "Alice-Silvermoon",
+        name = "Alice",
+        realm = "Silvermoon",
+        savedDate = "2026-10-01",
+    }
+    local guildOwner = {
+        key = "Bob-ArgentDawn",
+        name = "Bob",
+        realm = "ArgentDawn",
+        savedDate = "2026-09-30",
+    }
 
     installProfessionCatalogStub(GGM, function()
         return professionCatalog("ready", {
             {
                 recipeID = 100,
                 name = "Copper Bracers",
-                knownBy = {
-                    {
-                        key = "Alice-Silvermoon",
-                        name = "Alice",
-                        realm = "Silvermoon",
-                        savedDate = "2026-10-01",
-                    },
-                    {
-                        key = "Bob-ArgentDawn",
-                        name = "Bob",
-                        realm = "ArgentDawn",
-                        savedDate = "2026-09-30",
-                    },
-                },
+                knownBy = { localOwner, guildOwner },
             },
         })
     end, calls)
@@ -628,21 +627,8 @@ T.test("profession owner rows show name realm and date without ownership badges"
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
 
     local text = frame.professionRecipeRows[1].knownBy.text
-    T.assertTrue(string.find(
-        text,
-        "Alice-Silvermoon — 2026-10-01",
-        1,
-        true
-    ) ~= nil)
-    T.assertTrue(string.find(
-        text,
-        "Bob-ArgentDawn — 2026-09-30",
-        1,
-        true
-    ) ~= nil)
-    T.assertNil(string.find(text, "[Local]", 1, true))
-    T.assertNil(string.find(text, "[Guild]", 1, true))
-    T.assertNil(string.find(text, "Mine:", 1, true))
+    T.assertEqual(text,
+        "Known by: Alice-Silvermoon — 2026-10-01\nBob-ArgentDawn — 2026-09-30")
 end)
 
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
