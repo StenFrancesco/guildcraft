@@ -593,6 +593,58 @@ T.test("visible profession catalog refreshes locally after roster reconciliation
     T.assertEqual(#frame.filteredProfessionRecipes, 0)
 end)
 
+T.test("profession owner rows show name realm and date without ownership badges", function()
+    local GGM = loadUI()
+    local calls = {}
+
+    installProfessionCatalogStub(GGM, function()
+        return professionCatalog("ready", {
+            {
+                recipeID = 100,
+                name = "Copper Bracers",
+                knownBy = {
+                    {
+                        key = "Alice-Silvermoon",
+                        name = "Alice",
+                        realm = "Silvermoon",
+                        savedDate = "2026-10-01",
+                    },
+                    {
+                        key = "Bob-ArgentDawn",
+                        name = "Bob",
+                        realm = "ArgentDawn",
+                        savedDate = "2026-09-30",
+                    },
+                },
+            },
+        })
+    end, calls)
+
+    local frame = showBrowser(
+        GGM,
+        makeBrowserAPI(),
+        { schemaVersion = GGM.SCHEMA_VERSION, characters = {} }
+    )
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+
+    local text = frame.professionRecipeRows[1].knownBy.text
+    T.assertTrue(string.find(
+        text,
+        "Alice-Silvermoon — 2026-10-01",
+        1,
+        true
+    ) ~= nil)
+    T.assertTrue(string.find(
+        text,
+        "Bob-ArgentDawn — 2026-09-30",
+        1,
+        true
+    ) ~= nil)
+    T.assertNil(string.find(text, "[Local]", 1, true))
+    T.assertNil(string.find(text, "[Guild]", 1, true))
+    T.assertNil(string.find(text, "Mine:", 1, true))
+end)
+
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM))
