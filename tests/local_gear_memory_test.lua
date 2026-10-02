@@ -3,6 +3,7 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
     T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
@@ -18,9 +19,9 @@ local function makeApi(GGM)
     local timers = {}
 
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
-        slotIDs[slot.inventoryName] = index
-        itemIDs[index] = 3000 + index
-        itemLinks[index] = "|Hitem:" .. tostring(3000 + index) .. "|h[Test]|h"
+        slotIDs[slot.inventoryName] = slot.inventorySlotID
+        itemIDs[slot.inventorySlotID] = 3000 + index
+        itemLinks[slot.inventorySlotID] = "|Hitem:" .. tostring(3000 + index) .. "|h[Test]|h"
     end
 
     return {
@@ -112,12 +113,14 @@ T.test("recapture keeps gear complete when the optional ranged slot is unavailab
 
     T.assertNil(err)
     T.assertNotNil(record)
-    T.assertTrue(record.gear.slots.RANGED.unavailable)
+    T.assertNil(record.gear.slots[18])
+    T.assertTrue(record.gear.unavailableSlots[18])
     T.assertEqual(record.gear.capturedAt, 1700000200)
 
     local preserved = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
     T.assertEqual(preserved.gear.capturedAt, 1700000200)
-    T.assertTrue(preserved.gear.slots.RANGED.unavailable)
+    T.assertNil(preserved.gear.slots[18])
+    T.assertTrue(preserved.gear.unavailableSlots[18])
 end)
 
 T.test("get local record returns missing when no complete snapshot exists", function()
@@ -148,6 +151,48 @@ T.test("starting tracking on first run creates a shared baseline with no pending
     T.assertEqual(record.gear.capturedAt, 1700000100)
 end)
 
+T.test("tracking startup rebuilds runtime slots from compact gear without wrapper-only changes", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = makeApi(GGM)
+    local identity = assert(GGM.BuildPlayerIdentity(api))
+    local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
+    snapshot.slots.HEAD.itemLink = "|Hitem:2001:4:5|h[Original Name]|h"
+    snapshot.slots.HEAD.itemID = 2001
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 0))
+
+    api.GetInventoryItemID = function(_, slotID) return 2000 + slotID end
+    api.GetInventoryItemLink = function(_, slotID)
+        if slotID == 1 then return "|cff00ff00|Hitem:2001:4:5|h[Localized Name]|h|r" end
+        return "|Hitem:" .. tostring(2000 + slotID) .. "|h[Test]|h"
+    end
+
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 300)
+    T.assertNil(err)
+    T.assertNotNil(tracker)
+    T.assertNil(tracker.pendingBySlot.HEAD)
+end)
+
+T.test("tracking startup persists client-unavailable ranged gear in compact form", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local api = makeApi(GGM)
+    local originalSlotInfo = api.GetInventorySlotInfo
+    api.GetInventorySlotInfo = function(inventoryName)
+        if inventoryName == "RangedSlot" then return nil end
+        return originalSlotInfo(inventoryName)
+    end
+
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 300)
+
+    T.assertNil(err)
+    T.assertNotNil(tracker)
+    T.assertTrue(tracker.confirmedSlots.RANGED.unavailable)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
+    T.assertNil(record.gear.slots[18])
+    T.assertTrue(record.gear.unavailableSlots[18])
+end)
+
 T.test("starting tracking with an existing record preserves shared gear and starts pending differences", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
@@ -170,13 +215,13 @@ T.test("starting tracking with an existing record preserves shared gear and star
     T.assertEqual(timers[1].delay, 5)
 
     local beforeConfirm = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(beforeConfirm.gear.slots.HEAD.itemID, 3001)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(beforeConfirm.gear, "HEAD")).itemID, 3001)
     T.assertEqual(beforeConfirm.gear.capturedAt, 1700000100)
 
     timers[1]:Fire()
 
     local afterConfirm = assert(GGM.GetCompleteCharacterRecord(db, "Alice-Silvermoon"))
-    T.assertEqual(afterConfirm.gear.slots.HEAD.itemID, 9999)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(afterConfirm.gear, "HEAD")).itemID, 9999)
     T.assertEqual(afterConfirm.gear.capturedAt, 1700000200)
 end)
 
@@ -192,7 +237,7 @@ T.test("local tracking persists a confirmed slot before invoking its sync callba
             itemID = slotValue.itemID,
             confirmedAt = confirmedAt,
             confirmedSequence = confirmedSequence,
-            persistedItemID = record.gear.slots[slotKey].itemID,
+            persistedItemID = assert(GGM.GetStoredGearSlot(record.gear, slotKey)).itemID,
             persistedSequence = record.confirmedSequence,
             persistedAt = record.gear.capturedAt,
         })
@@ -251,7 +296,7 @@ T.test("tracking does not confirm a slot when persistence throws", function()
     T.assertEqual(tracker.confirmedSlots.HEAD.itemID, previousItemID)
     T.assertNil(tracker.pendingBySlot.HEAD)
     T.assertNotNil(tracker.lastError)
-    T.assertEqual(record.gear.slots.HEAD.itemID, previousItemID)
+    T.assertEqual(assert(GGM.GetStoredGearSlot(record.gear, "HEAD")).itemID, previousItemID)
     T.assertEqual(record.confirmedSequence, 0)
     T.assertEqual(publishCount, 0)
 end)

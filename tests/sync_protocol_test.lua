@@ -3,6 +3,7 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SyncProtocol.lua", GGM)
     return GGM
@@ -16,7 +17,7 @@ local function makeSnapshot(GGM)
     local snapshot = { complete = true, capturedAt = 1700001000, slots = {} }
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         snapshot.slots[trackedSlot.key] = {
-            inventorySlotID = index,
+            inventorySlotID = trackedSlot.inventorySlotID,
             itemID = 5000 + index,
             itemLink = "|Hitem:" .. tostring(5000 + index) .. ":0:0|h[Test:" .. trackedSlot.key .. "]|h",
         }
@@ -69,6 +70,9 @@ T.test("slot update protocol round trips explicit bounded fields", function()
     T.assertEqual(message.slotValue.inventorySlotID, 1)
     T.assertEqual(message.slotValue.itemID, 9001)
     T.assertEqual(message.slotValue.itemLink, slotValue.itemLink)
+    local decodedItemString, decodedItemID = GGM.ExtractItemString(message.slotValue.itemLink)
+    T.assertEqual(decodedItemString, "item:9001:1:2:3")
+    T.assertEqual(decodedItemID, message.slotValue.itemID)
     T.assertEqual(message.confirmedAt, 1700001200)
 end)
 
@@ -126,11 +130,19 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
     T.assertEqual(message.snapshot.slots.HEAD.itemID, 5001)
     T.assertEqual(message.snapshot.slots.OFF_HAND.itemID, false)
     T.assertEqual(message.snapshot.slots.OFF_HAND.itemLink, false)
+    local _, fields = parseFields(payload)
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local offset = 19 + (index - 1) * 4
+        T.assertEqual(fields[offset], trackedSlot.key)
         if trackedSlot.key == "RANGED" then
             T.assertTrue(message.snapshot.slots.RANGED.unavailable)
         else
-            T.assertEqual(message.snapshot.slots[trackedSlot.key].inventorySlotID, index)
+            T.assertEqual(message.snapshot.slots[trackedSlot.key].inventorySlotID, trackedSlot.inventorySlotID)
+        end
+        if not message.snapshot.slots[trackedSlot.key].unavailable
+            and message.snapshot.slots[trackedSlot.key].itemID ~= false then
+            local _, decodedItemID = GGM.ExtractItemString(message.snapshot.slots[trackedSlot.key].itemLink)
+            T.assertEqual(decodedItemID, message.snapshot.slots[trackedSlot.key].itemID)
         end
     end
 end)
@@ -231,7 +243,11 @@ end)
 T.test("protocol rejects oversized item links before transport", function()
     local GGM = loadModules()
     local identity = makeIdentity("Alice", "Silvermoon", "Player-1234-AAAA")
-    local slotValue = { inventorySlotID = 1, itemID = 9001, itemLink = string.rep("x", GGM.SYNC_MAX_ITEM_LINK_BYTES + 1) }
+    local slotValue = {
+        inventorySlotID = 1,
+        itemID = 9001,
+        itemLink = "|Hitem:9001|h" .. string.rep("x", GGM.SYNC_MAX_ITEM_LINK_BYTES + 1) .. "|h",
+    }
     local payload, err = GGM.EncodeSyncSlotUpdate(identity, 1, "HEAD", slotValue, 1700001200)
     T.assertNil(payload)
     T.assertEqual(err, "sync-item-link-too-long")

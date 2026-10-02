@@ -1,9 +1,10 @@
 local T = require("tests.testlib")
-local makeRecord
+local makeRecord, compactRecord
 
 local function loadUI()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
     T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
@@ -16,11 +17,11 @@ end
 
 T.test("guild gear browser includes only valid records sorted by name then realm without mutation", function()
     local GGM = loadUI()
-    local zulu = makeRecord(GGM)
+    local zulu = compactRecord(GGM, makeRecord(GGM))
     zulu.identity = { key = "zULu-Zenith", name = "zULu", realm = "Zenith" }
-    local alpha = makeRecord(GGM)
+    local alpha = compactRecord(GGM, makeRecord(GGM))
     alpha.identity = { key = "ALPHA-amber", name = "ALPHA", realm = "amber" }
-    local sameNameFirstRealm = makeRecord(GGM)
+    local sameNameFirstRealm = compactRecord(GGM, makeRecord(GGM))
     sameNameFirstRealm.identity = { key = "Alpha-Azure", name = "Alpha", realm = "Azure" }
     local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {
         [zulu.identity.key] = zulu,
@@ -31,7 +32,7 @@ T.test("guild gear browser includes only valid records sorted by name then realm
         ["malformed"] = { complete = true, identity = { key = "wrong", name = "Bad", realm = "Realm" } },
         ["invalid-snapshot"] = { complete = true, identity = { key = "invalid-snapshot", name = "invalid", realm = "snapshot" }, gear = { complete = false } },
     } }
-    local beforeZuluName, beforeAlphaSlot = zulu.identity.name, alpha.gear.slots.HEAD.itemID
+    local beforeZuluName, beforeAlphaSlot = zulu.identity.name, alpha.gear.slots[1]
 
     local entries = GGM.BuildGuildGearBrowserEntries(db)
 
@@ -42,7 +43,7 @@ T.test("guild gear browser includes only valid records sorted by name then realm
     T.assertTrue(entries[1].record == alpha)
     T.assertTrue(db.characters[alpha.identity.key] == alpha)
     T.assertEqual(zulu.identity.name, beforeZuluName)
-    T.assertEqual(alpha.gear.slots.HEAD.itemID, beforeAlphaSlot)
+    T.assertEqual(alpha.gear.slots[1], beforeAlphaSlot)
     T.assertNil(GGM.BuildGuildGearBrowserEntries(nil)[1])
 end)
 
@@ -93,9 +94,8 @@ end)
 
 T.test("guild gear browser detail renders captured time and all saved or empty slots", function()
     local GGM = loadUI()
-    local record = makeRecord(GGM)
-    local empty = record.gear.slots.OFF_HAND
-    empty.itemID, empty.itemLink = false, false
+    local record = compactRecord(GGM, makeRecord(GGM))
+    record.gear.slots[17] = nil
     local iconCalls, textureCalls = {}, {}
     local api = {
         date = function(format, timestamp)
@@ -129,16 +129,16 @@ T.test("guild gear browser detail renders captured time and all saved or empty s
         T.assertEqual(row.key, trackedSlot.key)
         if trackedSlot.key == "OFF_HAND" then
             T.assertTrue(row.empty)
-            T.assertEqual(row.itemID, false)
-            T.assertEqual(row.itemLink, false)
+            T.assertNil(row.itemID)
+            T.assertNil(row.itemLink)
             T.assertEqual(row.icon, "texture:" .. trackedSlot.inventoryName)
             T.assertEqual(row.slotTexture, "texture:" .. trackedSlot.inventoryName)
         else
-            local saved = record.gear.slots[trackedSlot.key]
+            local savedID = 4000 + index
             T.assertFalse(row.empty)
-            T.assertEqual(row.itemID, saved.itemID)
-            T.assertEqual(row.itemLink, saved.itemLink)
-            T.assertEqual(row.icon, "icon:" .. saved.itemID)
+            T.assertEqual(row.itemID, savedID)
+            T.assertEqual(row.itemLink, "|Hitem:" .. savedID .. "|h[Item " .. savedID .. "]|h")
+            T.assertEqual(row.icon, "icon:" .. savedID)
         end
     end
     T.assertEqual(#iconCalls, #GGM.TRACKED_SLOTS - 1)
@@ -146,8 +146,8 @@ end)
 
 T.test("guild gear browser detail rejects invalid or incomplete records", function()
     local GGM = loadUI()
-    local malformed = makeRecord(GGM)
-    malformed.gear.slots.HEAD.itemLink = false
+    local malformed = compactRecord(GGM, makeRecord(GGM))
+    malformed.gear.slots[1] = "item:invalid"
 
     T.assertFalse(GGM.BuildGuildGearBrowserDetail(nil, {}).hasRecord)
     T.assertFalse(GGM.BuildGuildGearBrowserDetail({ complete = false }, {}).hasRecord)
@@ -156,14 +156,14 @@ end)
 
 T.test("guild gear browser detail falls back to slot texture when item icon is unavailable", function()
     local GGM = loadUI()
-    local record = makeRecord(GGM)
+    local record = compactRecord(GGM, makeRecord(GGM))
     local model = GGM.BuildGuildGearBrowserDetail(record, {
         GetItemIcon = function() return nil end,
         GetInventorySlotInfo = function() return 1, "slot-texture" end,
     })
 
-    T.assertEqual(model.slots[1].itemID, record.gear.slots.HEAD.itemID)
-    T.assertEqual(model.slots[1].itemLink, record.gear.slots.HEAD.itemLink)
+    T.assertEqual(model.slots[1].itemID, 4001)
+    T.assertEqual(model.slots[1].itemLink, "|Hitem:4001|h[Item 4001]|h")
     T.assertEqual(model.slots[1].icon, "slot-texture")
 end)
 
@@ -172,7 +172,7 @@ makeRecord = function(GGM)
 
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
         slots[slot.key] = {
-            inventorySlotID = index,
+            inventorySlotID = slot.inventorySlotID,
             itemID = 4000 + index,
             itemLink = "|Hitem:" .. tostring(4000 + index) .. "|h[Test " .. slot.key .. "]|h",
         }
@@ -193,6 +193,92 @@ makeRecord = function(GGM)
         },
     }
 end
+
+compactRecord = function(GGM, record)
+    local snapshot = { complete = true, capturedAt = record.gear.capturedAt, slots = {} }
+    for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+        local slot = record.gear.slots[trackedSlot.key]
+        if slot then
+            snapshot.slots[trackedSlot.key] = {
+                inventorySlotID = trackedSlot.inventorySlotID,
+                itemID = slot.itemID,
+                itemLink = slot.itemLink,
+                unavailable = slot.unavailable,
+            }
+        end
+    end
+    record.gear = assert(GGM.CreateStoredGear(snapshot))
+    return record
+end
+
+T.test("compact browser and snapshot models derive equipped empty and unavailable states", function()
+    local GGM = loadUI()
+    local record = compactRecord(GGM, makeRecord(GGM))
+    record.gear.slots[17] = nil
+    record.gear.slots[18] = nil
+    record.gear.unavailableSlots[18] = true
+    local api = {
+        C_Item = { GetItemNameByID = function(itemID) return "Named " .. itemID end },
+        GetItemIcon = function(itemID) return "icon:" .. itemID end,
+        GetInventorySlotInfo = function(slotName)
+            for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+                if slot.inventoryName == slotName then return slot.inventorySlotID, "texture:" .. slotName end
+            end
+        end,
+    }
+    local detail = GGM.BuildGuildGearBrowserDetail(record, api)
+    T.assertTrue(detail.hasRecord)
+    local byKey = {}
+    for _, row in ipairs(detail.slots) do byKey[row.key] = row end
+    T.assertEqual(byKey.HEAD.itemID, 4001)
+    T.assertEqual(byKey.HEAD.itemLink, "|Hitem:4001|h[Named 4001]|h")
+    T.assertEqual(byKey.HEAD.icon, "icon:4001")
+    T.assertEqual(byKey.OFF_HAND.statusText, "Empty")
+    T.assertTrue(byKey.OFF_HAND.empty)
+    T.assertEqual(byKey.RANGED.statusText, "No data")
+    T.assertTrue(byKey.RANGED.unavailable)
+    T.assertEqual(record.gear.slots[1], "item:4001")
+
+    local view = GGM.BuildSnapshotViewModel(record, nil, api)
+    T.assertTrue(view.hasSnapshot)
+    T.assertEqual(view.slots[1].valueText, "|Hitem:4001|h[Named 4001]|h")
+    T.assertEqual(view.slots[19].valueText, "No data")
+end)
+
+T.test("sequence-gap compact baseline remains visible while malformed stale data is hidden", function()
+    local GGM = loadUI()
+    local record = compactRecord(GGM, makeRecord(GGM))
+    record.complete, record.completeness = false, "incomplete"
+    record.refreshNeeded, record.incompleteReason = true, "sequence-gap"
+    record.requiredBaselineSequence, record.confirmedSequence = 2, 1
+    record.gear.complete = false
+    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = { [record.identity.key] = record } }
+    local entries = GGM.BuildGuildGearBrowserEntries(db)
+    T.assertEqual(#entries, 1)
+    local model = GGM.BuildGuildGearBrowserDetail(entries[1].record, {})
+    T.assertTrue(model.hasRecord)
+    T.assertEqual(model.completenessText, "Refresh needed")
+    T.assertEqual(model.slots[1].itemID, 4001)
+
+    local malformedCases = {
+        function(gear) gear.slots[1] = "item:broken" end,
+        function(gear) gear.slots[99] = "item:1" end,
+        function(gear) gear.unavailableSlots[1] = true end,
+    }
+    for _, makeMalformed in ipairs(malformedCases) do
+        local malformed = compactRecord(GGM, makeRecord(GGM))
+        malformed.complete, malformed.completeness = false, "incomplete"
+        malformed.refreshNeeded, malformed.incompleteReason = true, "sequence-gap"
+        malformed.requiredBaselineSequence, malformed.confirmedSequence = 2, 1
+        malformed.gear.complete = false
+        makeMalformed(malformed.gear)
+        entries = GGM.BuildGuildGearBrowserEntries({
+            schemaVersion = GGM.SCHEMA_VERSION,
+            characters = { [malformed.identity.key] = malformed },
+        })
+        T.assertEqual(#entries, 0)
+    end
+end)
 
 local function newTextControl()
     return {
@@ -234,7 +320,7 @@ end
 
 T.test("snapshot view model exposes saved identity time completeness and every tracked slot", function()
     local GGM = loadUI()
-    local record = makeRecord(GGM)
+    local record = compactRecord(GGM, makeRecord(GGM))
 
     local model = GGM.BuildSnapshotViewModel(record, function(format, timestamp)
         T.assertEqual(format, "%Y-%m-%d %H:%M:%S")
@@ -249,14 +335,13 @@ T.test("snapshot view model exposes saved identity time completeness and every t
     T.assertEqual(model.completenessText, "Complete")
     T.assertEqual(#model.slots, #GGM.TRACKED_SLOTS)
     T.assertEqual(model.slots[1].key, "HEAD")
-    T.assertEqual(model.slots[1].valueText, record.gear.slots.HEAD.itemLink)
+    T.assertEqual(model.slots[1].valueText, "|Hitem:4001|h[Item 4001]|h")
 end)
 
 T.test("snapshot view model displays an empty saved equipment slot explicitly", function()
     local GGM = loadUI()
-    local record = makeRecord(GGM)
-    record.gear.slots.OFF_HAND.itemID = false
-    record.gear.slots.OFF_HAND.itemLink = false
+    local record = compactRecord(GGM, makeRecord(GGM))
+    record.gear.slots[17] = nil
 
     local model = GGM.BuildSnapshotViewModel(record)
 
@@ -297,7 +382,7 @@ T.test("malformed identity records become the no saved snapshot state", function
     }
 
     for _, makeMalformed in ipairs(cases) do
-        local record = makeRecord(GGM)
+        local record = compactRecord(GGM, makeRecord(GGM))
         makeMalformed(record)
         local model = GGM.BuildSnapshotViewModel(record)
         T.assertFalse(model.hasSnapshot)
@@ -308,15 +393,15 @@ end)
 T.test("malformed slot records become the no saved snapshot state", function()
     local GGM = loadUI()
     local cases = {
-        function(slot) slot.inventorySlotID = "1" end,
-        function(slot) slot.itemID = 4001; slot.itemLink = false end,
-        function(slot) slot.itemID = false; slot.itemLink = "not-empty" end,
-        function(slot) slot.itemID = nil; slot.itemLink = nil end,
+        function(gear) gear.slots[99] = "item:1" end,
+        function(gear) gear.slots[1] = "item:broken" end,
+        function(gear) gear.slots[1], gear.unavailableSlots[1] = "item:1", true end,
+        function(gear) gear.unavailableSlots[1] = true end,
     }
 
     for _, makeMalformed in ipairs(cases) do
-        local record = makeRecord(GGM)
-        makeMalformed(record.gear.slots.HEAD)
+        local record = compactRecord(GGM, makeRecord(GGM))
+        makeMalformed(record.gear)
         local model = GGM.BuildSnapshotViewModel(record)
         T.assertFalse(model.hasSnapshot)
         T.assertEqual(model.emptyStateText, "No saved snapshot")
@@ -407,7 +492,37 @@ end
 local function makeDB(GGM, records)
     local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {} }
     for _, record in ipairs(records or {}) do
-        db.characters[record.identity.key] = record
+        local displayRecord = {}
+        for key, value in pairs(record) do
+            if key ~= "identity" and key ~= "gear" then displayRecord[key] = value end
+        end
+        displayRecord.identity = {}
+        for key, value in pairs(record.identity or {}) do displayRecord.identity[key] = value end
+        if type(record.gear) == "table" and GGM.ValidateStoredGear(record.gear) == true then
+            local slots, unavailableSlots = {}, {}
+            for key, value in pairs(record.gear.slots or {}) do slots[key] = value end
+            for key, value in pairs(record.gear.unavailableSlots or {}) do unavailableSlots[key] = value end
+            displayRecord.gear = {
+                complete = record.gear.complete,
+                capturedAt = record.gear.capturedAt,
+                slots = slots,
+                unavailableSlots = unavailableSlots,
+            }
+        else
+            local runtime = { complete = true, capturedAt = record.gear and record.gear.capturedAt, slots = {} }
+            for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
+                runtime.slots[trackedSlot.key] = record.gear and record.gear.slots
+                    and record.gear.slots[trackedSlot.key]
+            end
+            local compact = GGM.CreateStoredGear(runtime)
+            if compact then
+                if record.gear.complete == false then compact.complete = false end
+                displayRecord.gear = compact
+            else
+                displayRecord.gear = record.gear
+            end
+        end
+        db.characters[displayRecord.identity.key] = displayRecord
     end
     return db
 end
@@ -416,6 +531,21 @@ local function showBrowser(GGM, api, db)
     GGM.ShowGuildGearBrowserWindow(api, db)
     return GGM.guildGearBrowserFrame
 end
+
+T.test("compact browser tooltip receives a hyperlink rebuilt from the exact item string", function()
+    local GGM = loadUI()
+    local record = compactRecord(GGM, makeRecord(GGM))
+    record.gear.slots[1] = "item:4001:5:6"
+    local tooltip = { SetOwner = function() end, Show = function() end }
+    function tooltip:SetHyperlink(link) self.link = link end
+    function tooltip:Hide() end
+    local api = makeBrowserAPI()
+    api.GameTooltip = tooltip
+    api.C_Item = { GetItemNameByID = function() return "Headgear" end }
+    local frame = showBrowser(GGM, api, makeDB(GGM, { record }))
+    frame.slotButtons[1].scripts.OnEnter(frame.slotButtons[1])
+    T.assertEqual(tooltip.link, "|Hitem:4001:5:6|h[Headgear]|h")
+end)
 
 local function professionCatalog(state, recipes, message, hasSnapshot)
     return { state = state, recipes = recipes or {}, message = message, hasSnapshot = hasSnapshot }
@@ -675,7 +805,8 @@ end)
 T.test("guild gear browser hides the model stage when detail has no valid record", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
-    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
+    local db = makeDB(GGM, { record })
+    local frame = showBrowser(GGM, makeBrowserAPI(), db)
 
     -- WoW frames are shown by default; model that initial state in the UI stub.
     frame.modelStage.visible = true
@@ -687,7 +818,7 @@ T.test("guild gear browser hides the model stage when detail has no valid record
     frame.searchBox:SetText("")
     T.assertTrue(frame.modelStage.visible)
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
-    record.gear.slots.HEAD.itemLink = false
+    db.characters[record.identity.key].gear.slots[1] = "item:invalid"
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
     T.assertFalse(frame.modelStage.visible)
     T.assertEqual(frame.detailEmpty.text, "No saved gear is available for this character")
@@ -771,7 +902,7 @@ end)
 
 T.test("browser detail carries the saved record for 2D portrait rendering", function()
     local GGM = loadUI()
-    local record = makeRecord(GGM)
+    local record = compactRecord(GGM, makeRecord(GGM))
     local detail = GGM.BuildGuildGearBrowserDetail(record, makeBrowserAPI())
 
     T.assertEqual(detail.modelState, "render-unavailable")
@@ -872,22 +1003,21 @@ end)
 
 T.test("browser missing portrait data preserves incomplete and refresh-needed gear details and hides by tab", function()
     local GGM = loadUI()
-    local legacy = makeRecord(GGM)
+    local legacy = compactRecord(GGM, makeRecord(GGM))
     legacy.identity.raceID, legacy.identity.sex, legacy.identity.displayID = nil, nil, nil
-    legacy.complete, legacy.completeness, legacy.gear.complete = false, "incomplete", false
-    legacy.gear.slots.SHIRT, legacy.gear.slots.TABARD, legacy.gear.slots.RANGED = nil, nil, nil
+    legacy.complete, legacy.completeness = false, "incomplete"
+    legacy.refreshNeeded, legacy.incompleteReason, legacy.requiredBaselineSequence = true, "sequence-gap", 2
+    legacy.confirmedSequence = 1
+    legacy.gear.complete = false
     local api = makeModelBrowserAPI()
     local frame = showBrowser(GGM, api, makeDB(GGM, { legacy }))
 
     T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
-    T.assertEqual(frame.completenessLine.text, "Incomplete")
+    T.assertEqual(frame.completenessLine.text, "Refresh needed")
     T.assertEqual(frame.capturedLine.text, "saved-1700000100")
     T.assertTrue(frame.slotButtons[1].visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
-    local refresh = makeRecord(GGM)
-    refresh.complete, refresh.completeness, refresh.gear.complete = false, "incomplete", false
-    refresh.refreshNeeded, refresh.incompleteReason, refresh.requiredBaselineSequence = true, "sequence-gap", 2
-    GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { refresh }))
+    GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { legacy }))
     T.assertEqual(frame.completenessLine.text, "Refresh needed")
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     T.assertFalse(frame.characterModelView.model.visible)
@@ -917,7 +1047,7 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     T.assertEqual(emptySlot.key, "OFF_HAND")
     T.assertEqual(emptySlot.label.text, "Off hand")
     T.assertEqual(emptySlot.status.text, "Empty")
-    T.assertTrue(emptySlot.itemLink == false)
+    T.assertNil(emptySlot.itemLink)
     T.assertTrue(emptySlot.label.width <= 92)
     T.assertTrue(emptySlot.status.width <= 92)
 end)
@@ -995,6 +1125,29 @@ T.test("ggm slash command opens the local guild gear browser", function()
     T.assertTrue(calledDB == db)
 end)
 
+T.test("unsupported schema status gives backup and removal guidance with cleared data scope", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = {
+        SlashCmdList = {},
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, message)
+            table.insert(messages, message)
+        end },
+    }
+    GGM.startupError = "unsupported-schema-version:5"
+
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("No automatic migration", 1, true) ~= nil)
+    T.assertTrue(output:find("back up", 1, true) ~= nil)
+    T.assertTrue(output:find("GuildGearMemory.lua", 1, true) ~= nil)
+    T.assertTrue(output:find("cached gear", 1, true) ~= nil)
+    T.assertTrue(output:find("profession snapshots/index data", 1, true) ~= nil)
+    T.assertTrue(output:find("local-character metadata", 1, true) ~= nil)
+end)
+
 T.test("snapshot slash command can explicitly request exactly one named character", function()
     local GGM = loadUI()
     local requestedSync, requestedTarget, requestCount, browserCount
@@ -1065,32 +1218,30 @@ T.test("paper doll layout uses the requested left right and bottom slot order", 
     end
 end)
 
-T.test("incomplete detail marks migrated missing slots unavailable, not empty", function()
+T.test("compact absent optional and required slots render as empty", function()
     local GGM = loadUI()
-    local record = makeRecord(GGM)
-    record.complete, record.completeness, record.gear.complete = false, "incomplete", false
-    record.gear.slots.SHIRT, record.gear.slots.TABARD, record.gear.slots.RANGED = nil, nil, nil
+    local record = compactRecord(GGM, makeRecord(GGM))
+    record.gear.slots[4], record.gear.slots[18], record.gear.unavailableSlots[18] = nil, nil, nil
     local entries = GGM.BuildGuildGearBrowserEntries(makeDB(GGM, { record }))
     T.assertEqual(#entries, 1)
     local model = GGM.BuildGuildGearBrowserDetail(entries[1].record, {})
     T.assertTrue(model.hasRecord)
-    T.assertFalse(model.complete)
-    T.assertEqual(model.completenessText, "Incomplete")
+    T.assertTrue(model.complete)
+    T.assertEqual(model.completenessText, "Complete")
     local found = {}
     for _, row in ipairs(model.slots) do
         found[row.key] = row
     end
-    T.assertTrue(found.SHIRT.unavailable)
-    T.assertFalse(found.SHIRT.empty)
-    T.assertEqual(found.SHIRT.valueText, "No data")
+    T.assertFalse(found.SHIRT.unavailable)
+    T.assertTrue(found.SHIRT.empty)
     T.assertFalse(found.HEAD.unavailable)
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
-    T.assertEqual(frame.completenessLine.text, "Incomplete")
+    T.assertEqual(frame.completenessLine.text, "Complete")
     local shirtIndex
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do if slot.key == "SHIRT" then shirtIndex = index end end
-    T.assertTrue(frame.slotButtons[shirtIndex].unavailable)
+    T.assertTrue(frame.slotButtons[shirtIndex].empty)
     T.assertEqual(frame.slotButtons[shirtIndex].label.text, "Shirt")
-    T.assertEqual(frame.slotButtons[shirtIndex].status.text, "No data")
+    T.assertEqual(frame.slotButtons[shirtIndex].status.text, "Empty")
     T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 98)
     T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 98)
 end)
