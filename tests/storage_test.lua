@@ -36,16 +36,18 @@ local function makeIdentity()
     }
 end
 
-T.test("database initialization creates schema five on first run", function()
+T.test("database initialization creates schema six with GUID ownership state", function()
     local GGM = loadModules()
 
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 5)
+    T.assertEqual(db.schemaVersion, 6)
     T.assertEqual(type(db.characters), "table")
     T.assertEqual(type(db.localCharacters), "table")
     T.assertNil(next(db.localCharacters))
+    T.assertEqual(type(db.localCharacterGUIDs), "table")
+    T.assertNil(next(db.localCharacterGUIDs))
     T.assertEqual(type(db.professions), "table")
     T.assertEqual(db.professionRecipeIndexVersion, 3)
 end)
@@ -102,7 +104,152 @@ T.test("schema one through three are rejected without automatic migration", func
     end
 end)
 
-T.test("schema five rejects version two profession crafter sets without mutation", function()
+T.test("schema five migrates a resolved legacy local key to its stored GUID", function()
+    local GGM = loadModules()
+    local existing = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+
+    assert(GGM.SaveCompleteCharacterRecord(existing, identity, makeSnapshot(GGM), 0))
+    existing.localCharacters[identity.key] = true
+    existing.schemaVersion = 5
+    existing.localCharacterGUIDs = nil
+
+    local migrated, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(err)
+    T.assertTrue(migrated == existing)
+    T.assertEqual(migrated.schemaVersion, 6)
+    T.assertTrue(migrated.localCharacterGUIDs[identity.guid])
+    T.assertTrue(migrated.localCharacters[identity.key])
+end)
+
+T.test("schema five can resolve legacy local ownership from a profession identity", function()
+    local GGM = loadModules()
+    local existing = assert(GGM.InitializeDatabase(nil))
+    local identity = {
+        key = "Alt-Silvermoon",
+        name = "Alt",
+        realm = "Silvermoon",
+        guid = "Player-9-ALT",
+    }
+    local capture = {
+        complete = true,
+        professionID = 164,
+        professionName = "Blacksmithing",
+        capturedAt = 1700004000,
+        source = GGM.PROFESSION_SOURCE_PLAYER,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+
+    assert(GGM.SaveProfessionSnapshot(existing, identity, capture))
+    existing.localCharacters[identity.key] = true
+    existing.schemaVersion = 5
+    existing.localCharacterGUIDs = nil
+
+    local migrated, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(err)
+    T.assertTrue(migrated.localCharacterGUIDs[identity.guid])
+    T.assertNotNil(migrated.professions[identity.key])
+    T.assertEqual(migrated.professionRecipeIndex[164][100].crafters[1],
+        migrated.localCharacterIDByGUID[identity.guid])
+end)
+
+T.test("schema five leaves unresolved legacy local keys unclassified", function()
+    local GGM = loadModules()
+    local existing = assert(GGM.InitializeDatabase(nil))
+
+    existing.localCharacters["Unknown-Silvermoon"] = true
+    existing.characters["NameOnly-Silvermoon"] = {
+        identity = {
+            key = "NameOnly-Silvermoon",
+            name = "NameOnly",
+            realm = "Silvermoon",
+        },
+    }
+    existing.localCharacters["NameOnly-Silvermoon"] = true
+    existing.schemaVersion = 5
+    existing.localCharacterGUIDs = nil
+
+    local migrated, err = GGM.InitializeDatabase(existing)
+
+    T.assertNil(err)
+    T.assertNil(next(migrated.localCharacterGUIDs))
+    T.assertTrue(migrated.localCharacters["Unknown-Silvermoon"])
+    T.assertTrue(migrated.localCharacters["NameOnly-Silvermoon"])
+end)
+
+T.test("schema five migration is deterministic and safe to retry", function()
+    local GGM = loadModules()
+    local existing = assert(GGM.InitializeDatabase(nil))
+    local identity = makeIdentity()
+
+    assert(GGM.SaveCompleteCharacterRecord(existing, identity, makeSnapshot(GGM), 0))
+    existing.localCharacters[identity.key] = true
+    existing.schemaVersion = 5
+    existing.localCharacterGUIDs = nil
+
+    local first = assert(GGM.InitializeDatabase(existing))
+    local second = assert(GGM.InitializeDatabase(first))
+
+    T.assertTrue(second == existing)
+    T.assertEqual(second.schemaVersion, 6)
+    T.assertTrue(second.localCharacterGUIDs[identity.guid])
+end)
+
+T.test("schema six rejects malformed GUID ownership state", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    db.localCharacterGUIDs = { ["Player-1-A"] = false }
+
+    local initialized, err = GGM.InitializeDatabase(db)
+
+    T.assertNil(initialized)
+    T.assertEqual(err, "database-local-character-guids-invalid")
+end)
+
+T.test("GUID ownership marks and queries only explicit valid GUIDs", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+
+    T.assertFalse(GGM.IsLocalCharacterGUID(db, "Player-1-A"))
+    T.assertTrue(GGM.MarkLocalCharacterGUID(db, "Player-1-A"))
+    T.assertTrue(GGM.IsLocalCharacterGUID(db, "Player-1-A"))
+    T.assertFalse(GGM.IsLocalCharacterGUID(db, "Player-1-B"))
+
+    for _, guid in ipairs({ "", 42, false, {} }) do
+        local ok, err = GGM.MarkLocalCharacterGUID(db, guid)
+        T.assertFalse(ok)
+        T.assertEqual(err, "character-guid-invalid")
+    end
+end)
+
+T.test("saving a player profession does not infer local GUID ownership", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = {
+        key = "Alice-Silvermoon",
+        name = "Alice",
+        realm = "Silvermoon",
+        guid = "Player-1-A",
+    }
+    local capture = {
+        complete = true,
+        professionID = 164,
+        professionName = "Blacksmithing",
+        capturedAt = 1700004000,
+        source = GGM.PROFESSION_SOURCE_PLAYER,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 100, name = "Copper Bracers" } },
+    }
+
+    assert(GGM.SaveProfessionSnapshot(db, identity, capture))
+
+    T.assertFalse(GGM.IsLocalCharacterGUID(db, identity.guid))
+end)
+
+T.test("schema six rejects version two profession crafter sets without mutation", function()
     local GGM = loadModules()
     local identity = {
         key = "Alice-Silvermoon",
@@ -122,6 +269,7 @@ T.test("schema five rejects version two profession crafter sets without mutation
         schemaVersion = GGM.SCHEMA_VERSION,
         characters = {},
         localCharacters = {},
+        localCharacterGUIDs = {},
         professions = {
             [identity.key] = {
                 identity = identity,
@@ -154,12 +302,13 @@ T.test("schema five rejects version two profession crafter sets without mutation
     T.assertEqual(existing.professionRecipeIndex[164][100].crafters[1], true)
 end)
 
-T.test("schema five initialization rejects missing required tables without synthesizing them", function()
+T.test("schema six initialization rejects missing required tables without synthesizing them", function()
     local GGM = loadModules()
     local existing = {
         schemaVersion = GGM.SCHEMA_VERSION,
         characters = {},
         localCharacters = {},
+        localCharacterGUIDs = {},
         professions = {},
     }
 
@@ -170,7 +319,7 @@ T.test("schema five initialization rejects missing required tables without synth
     T.assertNil(existing.professionRecipeIndex)
 end)
 
-T.test("schema five catalog corruption fails closed without clearing authoritative data", function()
+T.test("schema six catalog corruption fails closed without clearing authoritative data", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
@@ -582,18 +731,18 @@ T.test("new complete records persist confirmed sequence zero", function()
 
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
-    T.assertEqual(db.schemaVersion, 5)
+    T.assertEqual(db.schemaVersion, 6)
     T.assertEqual(db.characters[identity.key].confirmedSequence, 0)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(GGM.GetConfirmedSequence(record), 0)
 end)
 
-T.test("new schema five database initializes profession storage", function()
+T.test("new schema six database initializes profession storage", function()
     local GGM = loadModules()
     local db, err = GGM.InitializeDatabase(nil)
 
     T.assertNil(err)
-    T.assertEqual(db.schemaVersion, 5)
+    T.assertEqual(db.schemaVersion, 6)
     T.assertNotNil(db.professions)
 end)
 

@@ -178,12 +178,76 @@ function GGM.GetConfirmedSequence(record)
     return readConfirmedSequence(record)
 end
 
+local PREVIOUS_SCHEMA_VERSION = 5
+
+local function validLocalCharacterGUIDs(value)
+    if type(value) ~= "table" then return false end
+    for guid, owned in pairs(value) do
+        if not GGM.IsProfessionGUID(guid) or owned ~= true then
+            return false
+        end
+    end
+    return true
+end
+
+local function storedIdentityGUID(record, expectedKey)
+    local identity = type(record) == "table" and record.identity or nil
+    if type(identity) ~= "table"
+        or identity.key ~= expectedKey
+        or not GGM.IsProfessionGUID(identity.guid) then
+        return nil
+    end
+    return identity.guid
+end
+
+local function resolveLegacyLocalGUID(db, characterKey)
+    local gearGUID = storedIdentityGUID(db.characters[characterKey], characterKey)
+    local professionGUID = storedIdentityGUID(db.professions[characterKey], characterKey)
+
+    if gearGUID and professionGUID and gearGUID ~= professionGUID then
+        return nil
+    end
+    return gearGUID or professionGUID
+end
+
+local function migrateSchemaFive(db)
+    if type(db.characters) ~= "table" then
+        return nil, "database-characters-invalid"
+    end
+    if type(db.localCharacters) ~= "table" then
+        return nil, "database-local-characters-invalid"
+    end
+    if type(db.professions) ~= "table" then
+        return nil, "database-professions-invalid"
+    end
+
+    local indexOk, indexErr = GGM.EnsureProfessionIndex(
+        db,
+        true,
+        PREVIOUS_SCHEMA_VERSION
+    )
+    if not indexOk then return nil, indexErr end
+
+    local migratedLocalGUIDs = {}
+    for characterKey, owned in pairs(db.localCharacters) do
+        if owned == true and type(characterKey) == "string" and characterKey ~= "" then
+            local guid = resolveLegacyLocalGUID(db, characterKey)
+            if guid then migratedLocalGUIDs[guid] = true end
+        end
+    end
+
+    db.localCharacterGUIDs = migratedLocalGUIDs
+    db.schemaVersion = GGM.SCHEMA_VERSION
+    return db, nil
+end
+
 function GGM.InitializeDatabase(existing)
     if existing == nil then
         return {
             schemaVersion = GGM.SCHEMA_VERSION,
             characters = {},
             localCharacters = {},
+            localCharacterGUIDs = {},
             professions = {},
             nextLocalCharacterID = 1,
             professionCharacters = {},
@@ -199,7 +263,10 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-invalid"
     end
 
-    if existing.schemaVersion ~= GGM.SCHEMA_VERSION then
+    if existing.schemaVersion == PREVIOUS_SCHEMA_VERSION then
+        local migrated, migrationErr = migrateSchemaFive(existing)
+        if not migrated then return nil, migrationErr end
+    elseif existing.schemaVersion ~= GGM.SCHEMA_VERSION then
         return nil, "unsupported-schema-version:" .. tostring(existing.schemaVersion)
     end
 
@@ -209,6 +276,9 @@ function GGM.InitializeDatabase(existing)
 
     if type(existing.localCharacters) ~= "table" then
         return nil, "database-local-characters-invalid"
+    end
+    if not validLocalCharacterGUIDs(existing.localCharacterGUIDs) then
+        return nil, "database-local-character-guids-invalid"
     end
     if type(existing.professions) ~= "table" then
         return nil, "database-professions-invalid"
@@ -242,6 +312,31 @@ function GGM.IsLocalCharacter(db, characterKey)
         and type(db.localCharacters) == "table"
         and type(characterKey) == "string"
         and db.localCharacters[characterKey] == true
+end
+
+function GGM.MarkLocalCharacterGUID(db, guid)
+    if type(db) ~= "table" then
+        return false, "database-invalid"
+    end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then
+        return false, "unsupported-schema-version:" .. tostring(db.schemaVersion)
+    end
+    if type(db.localCharacterGUIDs) ~= "table" then
+        return false, "database-local-character-guids-invalid"
+    end
+    if not GGM.IsProfessionGUID(guid) then
+        return false, "character-guid-invalid"
+    end
+
+    db.localCharacterGUIDs[guid] = true
+    return true, nil
+end
+
+function GGM.IsLocalCharacterGUID(db, guid)
+    return type(db) == "table"
+        and type(db.localCharacterGUIDs) == "table"
+        and GGM.IsProfessionGUID(guid)
+        and db.localCharacterGUIDs[guid] == true
 end
 
 function GGM.GetProfessionRecord(db, characterKey)

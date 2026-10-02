@@ -42,10 +42,10 @@ T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", fun
     end
 end)
 
-T.test("schema version is five", function()
+T.test("schema version is six", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.assertEqual(GGM.SCHEMA_VERSION, 5)
+    T.assertEqual(GGM.SCHEMA_VERSION, 6)
 end)
 
 T.test("profession recipe index version is three", function()

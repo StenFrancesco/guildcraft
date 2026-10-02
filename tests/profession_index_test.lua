@@ -36,7 +36,7 @@ local function indexedMetadata(GGM, professionID)
     }
 end
 
-T.test("profession browser reads saved recipes from the schema five recipe index", function()
+T.test("profession browser reads saved recipes from the schema six recipe index", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
@@ -69,7 +69,7 @@ T.test("first-run database creates profession index state", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
 
-    T.assertEqual(db.schemaVersion, 5)
+    T.assertEqual(db.schemaVersion, 6)
     T.assertEqual(db.nextLocalCharacterID, 1)
     T.assertEqual(type(db.professionCharacters), "table")
     T.assertEqual(type(db.localCharacterIDByGUID), "table")
@@ -1237,7 +1237,218 @@ T.test("incremental profession reconciliation removes only one character from on
     T.assertEqual(db.professionRecipeIndex[171][300].crafters[2], bobID)
 end)
 
-T.test("guild roster reconciliation deactivates departed characters but lookup retains them", function()
+local function guildRosterAPI(rows)
+    return {
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function(includeOffline)
+            T.assertTrue(includeOffline)
+            return #rows
+        end,
+        GetGuildRosterInfo = function(index)
+            local row = rows[index]
+            return row.name, nil, nil, nil, nil, nil, nil, nil,
+                nil, nil, nil, nil, nil, nil, nil, nil, row.guid
+        end,
+        GetRealmName = function() return "Silvermoon" end,
+    }
+end
+
+T.test("complete roster purges departed non-local gear profession registry and recipe references", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local localAlt = indexedIdentity(GGM, "LocalAlt-Silvermoon", "Player-1-LOCAL")
+    local departed = indexedIdentity(GGM, "Departed-Silvermoon", "Player-1-GONE")
+
+    local localCapture = indexedSnapshot(GGM, 164, 100)
+    localCapture.recipes[1].name = "Shared Recipe"
+    local departedCapture = indexedSnapshot(GGM, 164, 100)
+    departedCapture.recipes[1].name = "Shared Recipe"
+
+    assert(GGM.SaveProfessionSnapshot(db, localAlt, localCapture))
+    assert(GGM.SaveProfessionSnapshot(db, departed, departedCapture, {
+        guildMembershipVerified = true,
+    }))
+    assert(GGM.MarkLocalCharacterGUID(db, localAlt.guid))
+
+    db.characters[localAlt.key] = {
+        complete = true,
+        identity = localAlt,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    db.characters[departed.key] = {
+        complete = true,
+        identity = departed,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+
+    local localID = db.localCharacterIDByGUID[localAlt.guid]
+    local departedID = db.localCharacterIDByGUID[departed.guid]
+    local nextIDBefore = db.nextLocalCharacterID
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertTrue(GGM.professionRosterMembershipCurrent)
+
+    T.assertNotNil(db.professions[localAlt.key])
+    T.assertNotNil(db.characters[localAlt.key])
+    T.assertEqual(db.localCharacterIDByGUID[localAlt.guid], localID)
+    T.assertFalse(db.professionCharacters[localID].active)
+
+    T.assertNil(db.professions[departed.key])
+    T.assertNil(db.characters[departed.key])
+    T.assertNil(db.localCharacterIDByGUID[departed.guid])
+    T.assertNil(db.professionCharacters[departedID])
+
+    T.assertEqual(#db.professionRecipeIndex[164][100].crafters, 1)
+    T.assertEqual(db.professionRecipeIndex[164][100].crafters[1], localID)
+    T.assertEqual(db.nextLocalCharacterID, nextIDBefore)
+end)
+
+T.test("complete roster purges an absent non-local gear-only record", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = indexedIdentity(GGM, "GearOnly-Silvermoon", "Player-1-GEAR")
+    db.characters[identity.key] = {
+        complete = true,
+        identity = identity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNil(db.characters[identity.key])
+end)
+
+T.test("complete roster retains unresolved schema five local records", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local key = "UnresolvedLocal-Silvermoon"
+    local gearIdentity = indexedIdentity(GGM, key, "Player-1-LEGACY-GEAR")
+    local professionIdentity = indexedIdentity(GGM, key, "Player-1-LEGACY-PROFESSION")
+
+    assert(GGM.SaveProfessionSnapshot(db, professionIdentity,
+        indexedSnapshot(GGM, 164, 100), { guildMembershipVerified = true }))
+    db.characters[key] = {
+        complete = true,
+        identity = gearIdentity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    db.localCharacters[key] = true
+    db.schemaVersion = 5
+    db.localCharacterGUIDs = nil
+
+    local migrated, migrationErr = GGM.InitializeDatabase(db)
+
+    T.assertNil(migrationErr)
+    T.assertTrue(migrated == db)
+    T.assertFalse(GGM.IsLocalCharacterGUID(db, gearIdentity.guid))
+    T.assertFalse(GGM.IsLocalCharacterGUID(db, professionIdentity.guid))
+    local localID = db.localCharacterIDByGUID[professionIdentity.guid]
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNotNil(db.characters[key])
+    T.assertNotNil(db.professions[key])
+    T.assertNotNil(db.professionCharacters[localID])
+    T.assertTrue(db.localCharacters[key])
+    T.assertEqual(db.professionRecipeIndex[164][100].crafters[1], localID)
+end)
+
+T.test("complete roster keeps an absent locally owned gear-only record", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = indexedIdentity(GGM, "LocalGear-Silvermoon", "Player-1-LOCALGEAR")
+    db.characters[identity.key] = {
+        complete = true,
+        identity = identity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    assert(GGM.MarkLocalCharacterGUID(db, identity.guid))
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster(guildRosterAPI({
+        { name = "Current-Silvermoon", guid = "Player-1-CURRENT" },
+    }), db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNotNil(db.characters[identity.key])
+end)
+
+T.test("incomplete roster does not purge cached non-local data", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local identity = indexedIdentity(GGM, "Cached-Silvermoon", "Player-1-CACHED")
+    local capture = indexedSnapshot(GGM, 164, 100)
+
+    assert(GGM.SaveProfessionSnapshot(db, identity, capture, {
+        guildMembershipVerified = true,
+    }))
+    db.characters[identity.key] = {
+        complete = true,
+        identity = identity,
+        gear = { complete = true, capturedAt = 1, slots = {} },
+        confirmedSequence = 0,
+    }
+    local localID = db.localCharacterIDByGUID[identity.guid]
+    local indexBefore = db.professionRecipeIndex
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 0 end,
+        GetGuildRosterInfo = function()
+            error("zero-count roster must fail before row reads")
+        end,
+    }, db)
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-roster-incomplete")
+    T.assertFalse(GGM.professionRosterMembershipCurrent)
+    T.assertNotNil(db.professions[identity.key])
+    T.assertNotNil(db.characters[identity.key])
+    T.assertEqual(db.localCharacterIDByGUID[identity.guid], localID)
+    T.assertTrue(db.professionRecipeIndex == indexBefore)
+end)
+
+T.test("not being in a guild purges non-local data but retains local data", function()
+    local GGM = loadModules()
+    local db = assert(GGM.InitializeDatabase(nil))
+    local localAlt = indexedIdentity(GGM, "LocalAlt-Silvermoon", "Player-1-LOCAL")
+    local cachedGuild = indexedIdentity(GGM, "Guildie-Silvermoon", "Player-1-GUILD")
+
+    assert(GGM.SaveProfessionSnapshot(db, localAlt, indexedSnapshot(GGM, 171, 200)))
+    assert(GGM.SaveProfessionSnapshot(db, cachedGuild, indexedSnapshot(GGM, 171, 201), {
+        guildMembershipVerified = true,
+    }))
+    assert(GGM.MarkLocalCharacterGUID(db, localAlt.guid))
+
+    local ok, err = GGM.ReconcileProfessionGuildRoster({
+        IsInGuild = function() return false end,
+    }, db)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertNotNil(db.professions[localAlt.key])
+    T.assertNil(db.professions[cachedGuild.key])
+end)
+
+T.test("guild roster reconciliation keeps absent locally owned characters available", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
@@ -1248,6 +1459,7 @@ T.test("guild roster reconciliation deactivates departed characters but lookup r
         recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
     assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
+    assert(GGM.MarkLocalCharacterGUID(db, identity.guid))
     local localID = db.localCharacterIDByGUID[identity.guid]
 
     local ok, err = GGM.ReconcileProfessionGuildRoster({
@@ -1303,6 +1515,7 @@ T.test("guild roster departure changes activity without changing recipe catalog"
         recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
     assert(GGM.SaveProfessionSnapshot(db, identity, capture, { guildMembershipVerified = true }))
+    assert(GGM.MarkLocalCharacterGUID(db, identity.guid))
     local localID = db.localCharacterIDByGUID[identity.guid]
     local catalog = db.professionRecipeIndex
     local recipe = catalog[164][100]
@@ -1569,6 +1782,9 @@ local function catalogDB(members)
         professions = {},
         professionCharacters = {},
         localCharacterIDByGUID = {},
+        characters = {},
+        localCharacters = {},
+        localCharacterGUIDs = {},
         nextLocalCharacterID = 1,
         professionRecipeIndex = {},
         professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
@@ -1585,6 +1801,9 @@ local function catalogDB(members)
             active = member.active,
         }
         db.localCharacterIDByGUID[member.guid] = localID
+        if member.localOwned == true then
+            db.localCharacterGUIDs[member.guid] = true
+        end
         db.professions[member.key] = {
             identity = {
                 key = member.key,
@@ -1730,7 +1949,8 @@ T.test("catalog distinguishes no snapshot from a valid empty snapshot", function
     local noSnapshot = buildCatalog(GGM, db, 164, "Blacksmithing", {})
     T.assertEqual(noSnapshot.state, "empty")
     T.assertFalse(noSnapshot.hasSnapshot)
-    T.assertEqual(noSnapshot.message, "No saved Blacksmithing snapshots for current guild members.")
+    T.assertEqual(noSnapshot.message,
+        "No saved Blacksmithing snapshots for local characters or current guild members.")
     assertTablesEqual(db, before)
 
     local emptySnapshot = buildCatalog(GGM, db, 171, "Alchemy", {})
@@ -1793,7 +2013,8 @@ T.test("catalog fails closed without confirmed membership or unambiguous canonic
     T.assertEqual(unconfirmed.state, "unavailable")
     T.assertNil(unconfirmed.hasSnapshot)
     T.assertEqual(#unconfirmed.recipes, 0)
-    T.assertEqual(unconfirmed.message, "Current guild membership could not be confirmed.")
+    T.assertEqual(unconfirmed.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
     assertTablesEqual(db, before)
 
     local ambiguous = catalogDB({ member })
@@ -1808,6 +2029,220 @@ T.test("catalog fails closed without confirmed membership or unambiguous canonic
     T.assertNil(unavailable.hasSnapshot)
     T.assertEqual(#unavailable.recipes, 0)
     assertTablesEqual(ambiguous, beforeAmbiguous)
+end)
+
+T.test("unconfirmed roster still shows a saved locally owned out-of-guild profession", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalAlt-Silvermoon",
+            name = "LocalAlt",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL",
+            active = false,
+            localOwned = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000000, {
+                    { recipeID = 100, name = "Local Recipe" },
+                }),
+            },
+        },
+        {
+            key = "StaleGuildie-Silvermoon",
+            name = "StaleGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-STALE",
+            active = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000100, {
+                    { recipeID = 200, name = "Hidden Stale Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = false
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "ready")
+    T.assertTrue(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(model.recipes[1].recipeID, 100)
+    T.assertEqual(#model.recipes[1].knownBy, 1)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "LocalAlt-Silvermoon")
+    T.assertEqual(model.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
+end)
+
+T.test("unconfirmed roster with no local snapshot exposes no non-local owner", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "CachedGuildie-Silvermoon",
+            name = "CachedGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-CACHED",
+            active = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000000, {
+                    { recipeID = 100, name = "Cached Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = false
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "unavailable")
+    T.assertNil(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 0)
+    T.assertEqual(model.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
+end)
+
+T.test("unconfirmed roster with malformed local snapshot data remains unavailable", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalBroken-Silvermoon",
+            name = "LocalBroken",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL-BROKEN",
+            active = false,
+            localOwned = true,
+            snapshots = false,
+        },
+    })
+    local before = copyTable(db)
+    GGM.professionRosterMembershipCurrent = false
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "unavailable")
+    T.assertNil(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 0)
+    T.assertEqual(model.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
+    assertTablesEqual(db, before)
+end)
+
+T.test("unconfirmed roster with an invalid selected local snapshot remains unavailable", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalInvalid-Silvermoon",
+            name = "LocalInvalid",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL-INVALID",
+            active = false,
+            localOwned = true,
+            snapshots = {
+                [171] = {
+                    professionID = 171,
+                    recipes = "not-a-recipe-list",
+                },
+            },
+        },
+    })
+    local before = copyTable(db)
+    GGM.professionRosterMembershipCurrent = false
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(model.state, "unavailable")
+    T.assertNil(model.hasSnapshot)
+    T.assertEqual(#model.recipes, 0)
+    T.assertEqual(model.message,
+        "Current guild membership could not be confirmed. Showing saved local characters only.")
+    assertTablesEqual(db, before)
+end)
+
+T.test("confirmed roster combines current guild and local out-of-guild crafters but excludes other former members", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalAlt-Silvermoon",
+            name = "LocalAlt",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL",
+            active = false,
+            localOwned = true,
+            snapshots = {
+                [164] = catalogSnapshot(GGM, 164, 1700000000, {
+                    { recipeID = 100, name = "Shared Recipe" },
+                }),
+            },
+        },
+        {
+            key = "CurrentGuildie-Silvermoon",
+            name = "CurrentGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-CURRENT",
+            active = true,
+            snapshots = {
+                [164] = catalogSnapshot(GGM, 164, 1700000100, {
+                    { recipeID = 100, name = "Shared Recipe" },
+                }),
+            },
+        },
+        {
+            key = "FormerAlt-Silvermoon",
+            name = "FormerAlt",
+            realm = "Silvermoon",
+            guid = "Player-1-FORMER",
+            active = false,
+            snapshots = {
+                [164] = catalogSnapshot(GGM, 164, 1700000200, {
+                    { recipeID = 100, name = "Shared Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = true
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 164, "Blacksmithing", {})
+
+    T.assertEqual(model.state, "ready")
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(#model.recipes[1].knownBy, 2)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "CurrentGuildie-Silvermoon")
+    T.assertEqual(model.recipes[1].knownBy[2].key, "LocalAlt-Silvermoon")
+    T.assertNil(model.message)
+end)
+
+T.test("locally owned character with no saved selected profession creates no owner row", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        {
+            key = "LocalNoSnapshot-Silvermoon",
+            name = "LocalNoSnapshot",
+            realm = "Silvermoon",
+            guid = "Player-1-LOCAL",
+            active = false,
+            localOwned = true,
+            snapshots = {},
+        },
+        {
+            key = "CurrentGuildie-Silvermoon",
+            name = "CurrentGuildie",
+            realm = "Silvermoon",
+            guid = "Player-1-CURRENT",
+            active = true,
+            snapshots = {
+                [171] = catalogSnapshot(GGM, 171, 1700000000, {
+                    { recipeID = 100, name = "Guild Recipe" },
+                }),
+            },
+        },
+    })
+    GGM.professionRosterMembershipCurrent = true
+
+    local model = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {})
+
+    T.assertEqual(#model.recipes, 1)
+    T.assertEqual(#model.recipes[1].knownBy, 1)
+    T.assertEqual(model.recipes[1].knownBy[1].key, "CurrentGuildie-Silvermoon")
 end)
 
 T.test("catalog rejects canonical profession identity key name realm disagreement without mutation", function()
