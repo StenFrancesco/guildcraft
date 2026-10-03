@@ -41,6 +41,25 @@ T.test("item string parser preserves the exact instance payload and derives the 
     T.assertEqual(extractedID, 153787)
 end)
 
+T.test("item string parser accepts signed suffix and unique ids within existing bounds", function()
+    local GGM = loadModules()
+    local itemString = "item:153787:0:0:0:0:0:-123:-456"
+    local itemID, err = GGM.ParseItemString(itemString)
+    T.assertNil(err)
+    T.assertEqual(itemID, 153787)
+
+    local normalized, normalizeErr = GGM.NormalizeRuntimeGearSlot("HEAD", {
+        inventorySlotID = 1,
+        itemID = 153787,
+        itemLink = "|H" .. itemString .. "|h[Signed suffix item]|h",
+    })
+    T.assertNil(normalizeErr)
+    T.assertEqual(normalized.itemString, itemString)
+
+    T.assertNil(GGM.ParseItemString("item:153787:0:0:0:0:0:-2147483648:0"))
+    T.assertNil(GGM.ParseItemString("item:153787:0:0:0:0:0:0:-2147483648"))
+end)
+
 T.test("item strings over limit or with invalid ids delimiters or control bytes fail closed", function()
     local GGM = loadModules()
     local overlong = "item:1:" .. string.rep("0", GGM.GEAR_MAX_ITEM_STRING_BYTES)

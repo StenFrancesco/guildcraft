@@ -74,10 +74,15 @@ function GGM.ParseItemString(itemString)
     end
     if suffix ~= "" then
         local suffixFields = suffix:sub(2)
+        local fieldIndex = 0
         for field in (suffixFields .. ":"):gmatch("(.-):") do
+            fieldIndex = fieldIndex + 1
             if field ~= "" then
-                if not field:match("^%d+$") or #field > 10
-                    or tonumber(field) > GGM.GEAR_MAX_ITEM_ID then
+                local signedIDField = fieldIndex == 6 or fieldIndex == 7
+                local digits = field:match("^%d+$")
+                    or (signedIDField and field:match("^%-(%d+)$"))
+                if not digits or #digits > 10
+                    or math.abs(tonumber(field)) > GGM.GEAR_MAX_ITEM_ID then
                     return nil, "item-string-suffix-invalid"
                 end
             end
