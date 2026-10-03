@@ -2,7 +2,7 @@
 
 Date: 2026-10-03
 Branch: UI-window
-Status: Design approved; written specification awaiting review.
+Status: Approved design implemented; in-game visual validation pending.
 
 ## Goal
 
@@ -33,6 +33,8 @@ Keep recipe-detail data normalization and window creation in a dedicated addon m
 ## Verification
 
 Add focused tests for row selection, updating an existing window, sorted/eligible crafter choices, saved-date labels, empty or unavailable material states, required quantities and optional/alternative materials, invalid or restricted API results, selection changes, and close/refresh behavior. Confirm opening/selecting details causes no addon communication or database writes. Run the existing Lua suite and syntax checks. Verify in-game rendering when an actual WoW session is available; otherwise state that visual verification remains manual.
+
+Automated result: 351 tests pass; all six changed Lua files parse with Lua 5.1; diff whitespace checks pass. Native dropdown selection/refresh and long material rows have focused regression coverage. Large crafter lists use a scrollable choice popup so every eligible owner remains reachable. See `Docs/Recipe-Details-Validation.md` for the policy sources and in-game checklist.
 
 ## Scope
 

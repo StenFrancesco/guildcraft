@@ -10,6 +10,8 @@ local function loadUI()
     T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/RecipeDetailsUI.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
     return GGM
 end
@@ -332,8 +334,13 @@ local function newControl()
     end
     function control:SetTextColor(...) self.textColor = { ... } end
     function control:GetText() return self.text or "" end
+    function control:GetStringHeight() return #self:GetText() > 80 and 56 or 14 end
     function control:Show() self.visible = true end
-    function control:Hide() self.visible = false end
+    function control:Hide()
+        local wasVisible = self.visible
+        self.visible = false
+        if wasVisible and self.scripts.OnHide then self.scripts.OnHide(self) end
+    end
     function control:SetSize(width, height)
         self.width, self.height = width, height
     end
@@ -347,6 +354,14 @@ local function newControl()
     function control:SetAutoFocus() end
     function control:SetHeight(height) self.height = height end
     function control:SetWidth(width) self.width = width end
+    function control:SetFrameStrata(value) self.strata = value end
+    function control:SetMovable(value) self.movable = value end
+    function control:EnableMouse() end
+    function control:RegisterForDrag() end
+    function control:StartMoving() self.moving = true end
+    function control:StopMovingOrSizing() self.moving = false end
+    function control:IsShown() return self.visible end
+    function control:SetVerticalScroll(value) self.verticalScroll = value end
     function control:SetScript(name, callback) self.scripts[name] = callback end
     function control:RegisterForClicks() end
     function control:SetDesaturated(value) self.desaturated = value end
@@ -428,6 +443,223 @@ local function installProfessionCatalogStub(GGM, catalog, calls)
         return catalog(professionID, professionLabel)
     end
 end
+
+local function recipeDetailsFixture()
+    local GGM, api = loadUI(), makeBrowserAPI()
+    local recipes = {
+        { recipeID = 11, name = "Copper Bracers", outputIcon = 101, knownBy = {
+            { key = "Bob-Realm", name = "Bob", realm = "Realm", savedDate = "2026-09-02" },
+            { key = "Alice-Realm", name = "Alice", realm = "Realm", savedDate = "2026-09-01" },
+        } },
+        { recipeID = 22, name = "Silver Ring", knownBy = {} },
+    }
+    local reads = 0
+    GGM.BuildRecipeMaterialDetails = function(_, id)
+        reads = reads + 1
+        if id == 22 then return { state = "unavailable", materials = {}, message = "Materials unavailable." } end
+        return { state = "ready", materials = {
+            { name = "Metal", quantity = 3, optional = false, choices = {
+                { itemID = 1, name = "Copper", icon = 10 },
+                { itemID = 2, name = "Fine Copper", icon = 20 },
+            } },
+            { name = "Finishing reagent", quantity = 1, optional = true, choices = {
+                { itemID = 3, name = "Polish", icon = 30 },
+            } },
+        } }
+    end
+    local forbidden = function() error("Recipe details must stay local and read-only") end
+    api.C_ChatInfo = { SendAddonMessage = forbidden }
+    api.C_GuildInfo = { GuildRoster = forbidden }
+    api.NotifyInspect, api.CraftRecipe = forbidden, forbidden
+    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {}, marker = "unchanged" }
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
+    local frame = showBrowser(GGM, api, db)
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    return GGM, api, frame, recipes, function() return reads end, db
+end
+
+T.test("recipe clicks open one movable details window and pooled rows use current recipes", function()
+    local GGM, api, browser, recipes, reads, db = recipeDetailsFixture()
+    browser.professionRecipeRows[1].scripts.OnClick(browser.professionRecipeRows[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details:IsShown())
+    T.assertTrue(details.movable)
+    T.assertEqual(details.recipeName.text, "Copper Bracers")
+    T.assertEqual(details.professionName.text, "Alchemy")
+    T.assertEqual(details.recipeIcon.texture, 101)
+    local registered = 0
+    for _, name in ipairs(api.UISpecialFrames) do if name == details.name then registered = registered + 1 end end
+    T.assertEqual(registered, 1)
+    browser.professionSearchBox:SetText("Silver")
+    browser.professionRecipeRows[1].scripts.OnClick(browser.professionRecipeRows[1])
+    T.assertEqual(browser.recipeDetailsFrame, details)
+    T.assertEqual(details.recipeName.text, recipes[2].name)
+    T.assertEqual(details.materialStatus.text, "Materials unavailable.")
+    T.assertEqual(reads(), 2)
+    T.assertEqual(db.marker, "unchanged")
+end)
+
+T.test("recipe details display quantities optional groups and alternative choices", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(string.find(details.materialRows[1].label.text, "3", 1, true) ~= nil)
+    T.assertTrue(string.find(details.materialRows[1].label.text, "choose one", 1, true) ~= nil)
+    T.assertEqual(details.materialRows[2].label.text, "Copper")
+    T.assertEqual(details.materialRows[3].label.text, "Fine Copper")
+    T.assertTrue(string.find(details.materialRows[4].label.text, "Optional", 1, true) ~= nil)
+    T.assertEqual(details.materialRows[5].label.text, "Polish")
+end)
+
+T.test("crafter dropdown sorts saved owners and selection displays saved knowledge date", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertEqual(details.crafters[1].key, "Alice-Realm")
+    T.assertEqual(details.selectedCrafterKey, "Alice-Realm")
+    T.assertTrue(string.find(details.crafterStatus.text, "2026-09-01", 1, true) ~= nil)
+    T.assertTrue(string.find(details.crafterStatus.text, "Last-known", 1, true) ~= nil)
+    details.crafterDropdown.scripts.OnClick(details.crafterDropdown)
+    details.crafterButtons[2].scripts.OnClick(details.crafterButtons[2])
+    T.assertEqual(details.selectedCrafterKey, "Bob-Realm")
+    T.assertTrue(string.find(details.crafterStatus.text, "2026-09-02", 1, true) ~= nil)
+    T.assertFalse(details.crafterMenu:IsShown())
+end)
+
+T.test("details refresh preserves eligible crafter without querying materials and removes obsolete attribution", function()
+    local GGM, _, browser, recipes, reads = recipeDetailsFixture()
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.crafterDropdown.scripts.OnClick(details.crafterDropdown)
+    details.crafterButtons[2].scripts.OnClick(details.crafterButtons[2])
+    GGM.RefreshVisibleProfessionCatalog()
+    T.assertEqual(details.selectedCrafterKey, "Bob-Realm")
+    T.assertEqual(reads(), 1)
+    recipes[1].knownBy = { recipes[1].knownBy[2] }
+    GGM.RefreshVisibleProfessionCatalog()
+    T.assertEqual(details.selectedCrafterKey, "Alice-Realm")
+    table.remove(recipes, 1)
+    GGM.RefreshVisibleProfessionCatalog()
+    T.assertFalse(details:IsShown())
+    T.assertNil(details.selectedCrafterKey)
+end)
+
+T.test("recipe details close with navigation main-window hide and the close button", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.closeButton.scripts.OnClick(details.closeButton)
+    T.assertFalse(details:IsShown())
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    GGM.SelectProfession(browser, "Blacksmithing")
+    T.assertFalse(details:IsShown())
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    GGM.SelectGuildGearBrowserTab(browser, "Character")
+    T.assertFalse(details:IsShown())
+    GGM.SelectGuildGearBrowserTab(browser, "Professions")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.crafterDropdown.scripts.OnClick(details.crafterDropdown)
+    browser:Hide()
+    T.assertFalse(details:IsShown())
+    T.assertFalse(details.crafterMenu:IsShown())
+end)
+
+T.test("recipe with no crafters shows an explicit cached-knowledge empty state", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    local details = browser.recipeDetailsFrame
+    T.assertEqual(#details.crafters, 0)
+    T.assertNil(details.selectedCrafterKey)
+    T.assertEqual(details.crafterStatus.text, "No known crafters in saved records.")
+end)
+
+T.test("native Blizzard crafter dropdown selects saved owners and closes on refresh", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local entries, closes = {}, 0
+    api.UIDropDownMenu_Initialize = function(dropdown, callback)
+        dropdown.buildMenu = function()
+            api.UIDROPDOWNMENU_OPEN_MENU = dropdown
+            callback()
+        end
+    end
+    api.UIDropDownMenu_CreateInfo = function() return {} end
+    api.UIDropDownMenu_AddButton = function(info) entries[#entries + 1] = info end
+    api.UIDropDownMenu_SetWidth = function(dropdown, width) dropdown.width = width end
+    api.UIDropDownMenu_SetText = function(dropdown, value) dropdown.selectedText = value end
+    api.UIDropDownMenu_SetSelectedValue = function(dropdown, value)
+        dropdown.selectedValue = value
+        -- Blizzard refreshes text here, using its default when menu buttons are hidden.
+        dropdown.selectedText = "Low"
+    end
+    api.CloseDropDownMenus = function() closes = closes + 1; api.UIDROPDOWNMENU_OPEN_MENU = nil end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.nativeDropdown)
+    T.assertEqual(closes, 0, "opening details must not close unrelated native menus")
+    local otherMenu = {}
+    api.UIDROPDOWNMENU_OPEN_MENU = otherMenu
+    GGM.RefreshVisibleProfessionCatalog()
+    T.assertEqual(api.UIDROPDOWNMENU_OPEN_MENU, otherMenu)
+    T.assertEqual(closes, 0)
+    details.crafterDropdown.buildMenu()
+    T.assertEqual(entries[1].text, "Alice-Realm")
+    T.assertEqual(entries[2].value, "Bob-Realm")
+    entries[2].func()
+    T.assertEqual(details.selectedCrafterKey, "Bob-Realm")
+    T.assertEqual(details.crafterDropdown.selectedText, "Bob-Realm")
+    entries = {}
+    details.crafterDropdown.buildMenu()
+    local previousCloses = closes
+    recipes[1].knownBy = { recipes[1].knownBy[2] }
+    GGM.RefreshVisibleProfessionCatalog()
+    T.assertEqual(details.selectedCrafterKey, "Alice-Realm")
+    T.assertTrue(closes > previousCloses, "refresh must close menus holding obsolete crafter names")
+    entries[2].func()
+    T.assertEqual(details.selectedCrafterKey, "Alice-Realm", "obsolete menu callback must preserve the valid selection")
+    T.assertTrue(string.find(details.crafterStatus.text, "2026-09-01", 1, true) ~= nil)
+end)
+
+T.test("long material names grow rows so wrapped text cannot overlap subsequent materials", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    GGM.BuildRecipeMaterialDetails = function()
+        return { state = "ready", materials = {
+            { name = string.rep("Long material name ", 8), quantity = 3, optional = false,
+                choices = { { name = string.rep("Long item name ", 8) }, { name = "Next item" } } },
+        } }
+    end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local rows = browser.recipeDetailsFrame.materialRows
+    T.assertTrue(rows[1].height >= 72)
+    T.assertTrue(rows[2].height >= 72)
+    T.assertTrue(-rows[3].point.y >= rows[1].height + rows[2].height)
+end)
+
+T.test("large crafter lists switch native dropdown to a scrollable menu on refresh", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.UIDropDownMenu_Initialize = function() end
+    api.UIDropDownMenu_CreateInfo = function() return {} end
+    api.UIDropDownMenu_AddButton = function() end
+    api.UIDropDownMenu_SetWidth = function() end
+    api.UIDropDownMenu_SetText = function() end
+    api.UIDropDownMenu_SetSelectedValue = function() end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.nativeDropdown)
+    local originalDropdown = details.crafterDropdown
+    for index = 3, 20 do
+        recipes[1].knownBy[index] = { key = "Crafter" .. index .. "-Realm", name = "Crafter" .. index,
+            realm = "Realm", savedDate = "2026-09-01" }
+    end
+    GGM.RefreshVisibleProfessionCatalog()
+    T.assertFalse(details.nativeDropdown)
+    T.assertFalse(originalDropdown:IsShown())
+    T.assertEqual(details.selectedCrafterKey, "Alice-Realm")
+    details.crafterDropdown.scripts.OnClick(details.crafterDropdown)
+    T.assertEqual(#details.crafterButtons, 20)
+    T.assertEqual(details.crafterMenu.height, 220)
+    details.crafterButtons[20].scripts.OnClick(details.crafterButtons[20])
+    T.assertEqual(details.selectedCrafterKey, details.crafters[20].key)
+end)
 
 T.test("profession page defers catalog construction until database assignment and selects each profession ID", function()
     local GGM = loadUI()
