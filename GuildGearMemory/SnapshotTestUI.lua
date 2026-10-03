@@ -654,6 +654,7 @@ function GGM.SelectProfession(frame, selectedKey)
     for _, profession in ipairs(PROFESSIONS) do if profession.key == selectedKey then selectedProfession = profession; break end end
     if not selectedProfession then return false end
     local changed = frame.selectedProfession ~= selectedKey
+    if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.selectedProfession = selectedKey
     frame.professionHeading:SetText(selectedKey)
     if frame.professionHeroIcon then frame.professionHeroIcon:SetTexture(selectedProfession.icon) end
@@ -805,7 +806,10 @@ updateProfessionRecipeBrowser = function(frame)
     for index, recipe in ipairs(filtered) do
         local row = frame.professionRecipeRows[index]
         if not row then
-            row = frame.api.CreateFrame("Frame", nil, frame.professionRecipeContent)
+            row = frame.api.CreateFrame("Button", nil, frame.professionRecipeContent)
+            row:RegisterForClicks("LeftButtonUp")
+            row:SetScript("OnClick", function(self) GGM.ShowRecipeDetailsWindow(frame, self.recipe) end)
+            if row.SetHighlightTexture then row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD") end
             row.outputIcon = row:CreateTexture(nil, "ARTWORK")
             row.outputIcon:SetSize(36, 36)
             row.outputIcon:SetPoint("TOPLEFT", row, "TOPLEFT", 11, -6)
@@ -855,6 +859,7 @@ updateProfessionRecipeBrowser = function(frame)
     end
     for index = #filtered + 1, #frame.professionRecipeRows do frame.professionRecipeRows[index]:Hide() end
     frame.professionRecipeContent:SetHeight(math.max(y, 1))
+    if GGM.RefreshRecipeDetailsWindow then GGM.RefreshRecipeDetailsWindow(frame) end
 end
 
 function GGM.RefreshVisibleProfessionCatalog()
@@ -883,6 +888,7 @@ end
 
 function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then return false end
+    if selectedKey ~= "Professions" and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.activeTab = selectedKey
     if frame.TitleText then frame.TitleText:SetText("Guild Gear Memory") end
 
@@ -1207,6 +1213,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame:SetClampedToScreen(true)
     frame:Hide()
     frame.api = api
+    frame:SetScript("OnHide", function(self)
+        if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
+    end)
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
     frame.browserView = "Guild"
 
