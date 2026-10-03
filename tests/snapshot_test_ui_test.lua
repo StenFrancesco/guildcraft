@@ -816,6 +816,48 @@ T.test("ggm slash command opens the local guild gear browser", function()
     T.assertTrue(calledDB == db)
 end)
 
+T.test("ggm status reports profession lookup cache lifecycle without starting work", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = {
+        SlashCmdList = {},
+        DEFAULT_CHAT_FRAME = {
+            AddMessage = function(_, message)
+                messages[#messages + 1] = message
+            end,
+        },
+    }
+    local warmupCalls, requestCalls = 0, 0
+    GGM.db = nil
+    GGM.StartProfessionCharacterCacheWarmup = function()
+        warmupCalls = warmupCalls + 1
+    end
+    GGM.RequestCompleteSnapshot = function()
+        requestCalls = requestCalls + 1
+    end
+    GGM.RegisterSnapshotTestSlashCommand(api)
+
+    local function assertStatus(cache, lastError, expected)
+        messages = {}
+        GGM.professionCharacterCache = cache
+        GGM.lastProfessionCharacterCacheError = lastError
+        api.SlashCmdList.GUILDGEARMEMORY("status")
+        T.assertEqual(messages[2], "Profession lookup cache: " .. expected)
+        T.assertEqual(messages[3], "Database: unavailable")
+    end
+
+    assertStatus(nil, nil, "not created")
+    assertStatus(nil, "cache-create-failed", "not created (error: cache-create-failed)")
+    assertStatus({ warmup = { running = false, complete = false } }, nil, "created; waiting to start")
+    assertStatus({ warmup = { running = true, complete = false } }, nil, "warming")
+    assertStatus({ warmup = { running = false, complete = true } }, nil, "ready")
+    assertStatus({ warmup = { running = false, complete = false, error = "warmup-failed" } }, nil, "error (warmup-failed)")
+    assertStatus({ warmup = { running = false, complete = false } }, "warmup-start-failed", "error (warmup-start-failed)")
+
+    T.assertEqual(warmupCalls, 0)
+    T.assertEqual(requestCalls, 0)
+end)
+
 T.test("snapshot slash command can explicitly request exactly one named character", function()
     local GGM = loadUI()
     local requestedSync, requestedTarget, requestCount, browserCount

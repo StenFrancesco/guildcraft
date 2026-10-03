@@ -339,6 +339,35 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
 
     local entry = db.professionCharacters[localID]
     if guildMembershipVerified and entry.active ~= true then entry.active = true end
+
+    local cache = GGM.professionCharacterCache
+    if type(cache) == "table"
+        and cache.db == db
+        and type(GGM.UpdateProfessionCharacterCacheFromCapture) == "function" then
+        local callOk, cacheOk, cacheErr = pcall(
+            GGM.UpdateProfessionCharacterCacheFromCapture,
+            cache,
+            localID,
+            snapshot
+        )
+
+        if not callOk then
+            local formatOk, formattedError = pcall(tostring, cacheOk)
+            if formatOk and type(formattedError) == "string" then
+                GGM.lastProfessionCharacterCacheError =
+                    "profession-character-cache-update-threw:" .. formattedError
+            else
+                GGM.lastProfessionCharacterCacheError =
+                    "profession-character-cache-update-threw:unprintable-error"
+            end
+        elseif cacheOk then
+            GGM.lastProfessionCharacterCacheError = nil
+        else
+            GGM.lastProfessionCharacterCacheError = cacheErr
+                or "profession-character-cache-update-failed"
+        end
+    end
+
     return true, nil
 end
 

@@ -60,6 +60,14 @@ local function stubSnapshotUI(GGM, registerFn)
         return "hidden"
     end
     GGM.ClearProfessionSaveContext = GGM.ClearProfessionSaveContext or function() end
+    GGM.CreateProfessionCharacterCache =
+        GGM.CreateProfessionCharacterCache or function(db)
+            return { db = db }, nil
+        end
+    GGM.StartProfessionCharacterCacheWarmup =
+        GGM.StartProfessionCharacterCacheWarmup or function()
+            return true, nil
+        end
 end
 
 T.test("main registers Phase 4 local gear and addon-message events", function()
@@ -523,6 +531,131 @@ T.test("player login defers stable gear tracking until equipment is ready", func
         T.assertEqual(startCount, 1)
         T.assertTrue(GGM.gearTracker == tracker)
         T.assertNil(GGM.lastGearTrackingError)
+    end)
+end)
+
+T.test("profession cache warmup starts only after the deferred player login startup", function()
+    local onEvent
+    local timers = {}
+    local createCount = 0
+    local startCount = 0
+    local providedScheduler
+
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler)
+            onEvent = handler
+        end,
+    }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        GuildGearMemoryDB = NIL,
+        C_Timer = {
+            After = function(delay, callback)
+                timers[#timers + 1] = {
+                    delay = delay,
+                    callback = callback,
+                }
+            end,
+        },
+    }, function()
+        local GGM = {
+            DEFAULT_STABILITY_DELAY_SECONDS = 300,
+        }
+        stubSnapshotUI(GGM)
+
+        GGM.InitializeDatabase = function()
+            return {
+                schemaVersion = 5,
+                characters = {},
+                professions = {},
+                professionRecipeIndex = {},
+                professionCharacters = {},
+            }, nil
+        end
+
+        local expectedCache = {}
+        GGM.CreateProfessionCharacterCache = function(db)
+            createCount = createCount + 1
+            expectedCache.db = db
+            return expectedCache, nil
+        end
+
+        GGM.StartProfessionCharacterCacheWarmup =
+            function(cache, schedule)
+                T.assertTrue(cache == expectedCache)
+                providedScheduler = schedule
+                startCount = startCount + 1
+                return true, nil
+            end
+
+        GGM.StartLocalPlayerGearTracking = function()
+            return {}, nil
+        end
+        GGM.HandlePlayerEquipmentChanged = function()
+            return "ignored", nil
+        end
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+
+        T.assertEqual(createCount, 1)
+        T.assertEqual(startCount, 0)
+        T.assertTrue(GGM.professionCharacterCache == expectedCache)
+
+        onEvent(frame, "PLAYER_LOGIN")
+
+        T.assertEqual(startCount, 0)
+        T.assertEqual(#timers, 1)
+        T.assertEqual(timers[1].delay, 1)
+
+        timers[1].callback()
+
+        T.assertEqual(startCount, 1)
+        T.assertNotNil(providedScheduler)
+
+        providedScheduler(function() end)
+
+        T.assertEqual(#timers, 2)
+        T.assertEqual(timers[2].delay, 0)
+    end)
+end)
+
+T.test("profession cache creation failure does not fail addon startup", function()
+    local onEvent
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler)
+            onEvent = handler
+        end,
+    }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        GuildGearMemoryDB = NIL,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+
+        GGM.InitializeDatabase = function()
+            return { schemaVersion = 5 }, nil
+        end
+
+        GGM.CreateProfessionCharacterCache = function()
+            return nil, "profession-character-cache-invalid"
+        end
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+
+        T.assertNil(GGM.startupError)
+        T.assertNil(GGM.professionCharacterCache)
+        T.assertEqual(
+            GGM.lastProfessionCharacterCacheError,
+            "profession-character-cache-invalid"
+        )
     end)
 end)
 
