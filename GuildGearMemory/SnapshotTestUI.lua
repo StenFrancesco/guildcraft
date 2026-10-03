@@ -265,6 +265,9 @@ local THEME = {
     border = { 0.420, 0.335, 0.190, 0.92 },
     borderSoft = { 0.215, 0.165, 0.095, 0.78 },
     borderDark = { 0.010, 0.009, 0.007, 1.000 },
+    iconBevelOutline = { 0.035, 0.040, 0.045, 1.000 },
+    iconBevelLight = { 0.520, 0.545, 0.565, 1.000 },
+    iconBevelShadow = { 0.110, 0.125, 0.140, 1.000 },
     gold = { 0.925, 0.710, 0.250, 1.000 },
     goldBright = { 1.000, 0.835, 0.390, 1.000 },
     goldDim = { 0.245, 0.160, 0.045, 0.88 },
@@ -803,8 +806,21 @@ updateProfessionRecipeBrowser = function(frame)
         local row = frame.professionRecipeRows[index]
         if not row then
             row = frame.api.CreateFrame("Frame", nil, frame.professionRecipeContent)
+            row.outputIcon = row:CreateTexture(nil, "ARTWORK")
+            row.outputIcon:SetSize(36, 36)
+            row.outputIcon:SetPoint("TOPLEFT", row, "TOPLEFT", 11, -6)
+            row.outputIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            row.outputIconBevel = frame.api.CreateFrame("Frame", nil, row)
+            row.outputIconBevel:SetPoint("TOPLEFT", row.outputIcon, "TOPLEFT", -2, 2)
+            row.outputIconBevel:SetPoint("BOTTOMRIGHT", row.outputIcon, "BOTTOMRIGHT", 2, -2)
+            local outerBevelEdges = createFlatBorder(row.outputIconBevel, THEME.iconBevelOutline)
+            local innerBevelEdges = createFlatBorder(row.outputIconBevel, THEME.iconBevelOutline, 1)
+            setColor(innerBevelEdges[1], THEME.iconBevelLight)
+            setColor(innerBevelEdges[2], THEME.iconBevelShadow)
+            setColor(innerBevelEdges[3], THEME.iconBevelLight)
+            setColor(innerBevelEdges[4], THEME.iconBevelShadow)
             row.name = createText(row, "OVERLAY", "GameFontHighlight")
-            row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -9)
+            row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 54, -9)
             row.name:SetPoint("RIGHT", row, "RIGHT", -12, 0)
             row.name:SetJustifyH("LEFT")
             setTextColor(row.name, THEME.text)
@@ -826,6 +842,7 @@ updateProfessionRecipeBrowser = function(frame)
             owners[#owners + 1] = character .. " — " .. (owner.savedDate or "Date unavailable")
         end
         row.recipe = recipe
+        row.outputIcon:SetTexture(recipe.outputIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
         row.name:SetText(recipe.name or "Unknown recipe")
         row.knownBy:SetText(#owners > 0 and ("Known by: " .. table.concat(owners, "\n")) or "Cached recipe snapshot")
         local rowHeight = 48 + math.max(#owners - 1, 0) * 14

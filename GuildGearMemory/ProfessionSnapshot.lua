@@ -81,6 +81,9 @@ function GGM.ValidateProfessionCapture(snapshot)
         end
         if recipe.recipeID <= previousID then return false, "profession-recipes-unsorted" end
         if not nonEmptyString(recipe.name) then return false, "profession-recipe-name-invalid" end
+        if recipe.outputIcon ~= nil and not positiveInteger(recipe.outputIcon) then
+            return false, "profession-recipe-output-icon-invalid"
+        end
         previousID = recipe.recipeID
     end
 
@@ -129,9 +132,18 @@ function GGM.CaptureLinkedProfessionSnapshot(api, source)
             if #recipes >= GGM.PROFESSION_MAX_RECIPES then
                 return nil, "profession-recipe-limit-exceeded"
             end
+            local outputIcon
+            if type(trade.GetRecipeOutputItemData) == "function" then
+                local outputOk, outputInfo = pcall(trade.GetRecipeOutputItemData, recipeID)
+                if outputOk and type(outputInfo) == "table"
+                    and positiveInteger(outputInfo.icon) then
+                    outputIcon = outputInfo.icon
+                end
+            end
             table.insert(recipes, {
                 recipeID = recipeInfo.recipeID or recipeID,
                 name = recipeInfo.name,
+                outputIcon = outputIcon,
             })
         elseif recipeInfo.learned ~= false then
             return nil, "profession-recipe-learned-state-unavailable"
