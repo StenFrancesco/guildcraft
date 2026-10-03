@@ -1453,18 +1453,41 @@ local function parseRequestedIdentity(message)
     }, nil
 end
 
-local function printAddonStatus(api)
+local function chatEmitter(api)
     local chatFrame = api.DEFAULT_CHAT_FRAME
-    local emit
     if chatFrame and type(chatFrame.AddMessage) == "function" then
-        emit = function(message) chatFrame:AddMessage(message) end
+        return function(message) chatFrame:AddMessage(message) end
     elseif type(api.print) == "function" then
-        emit = function(message) api.print(message) end
+        return function(message) api.print(message) end
     end
+    return function() end
+end
 
-    if not emit then return end
+local REQUEST_ERRORS = {
+    ["request-target-invalid"] = "Usage: /ggm request Name-Realm",
+    ["sync-unavailable"] = "Gear sync is unavailable.",
+    ["sync-snapshot-request-pending"] = "A gear request for this character is already pending.",
+    ["sync-snapshot-request-cooldown"] = "Please wait before requesting this character again.",
+    ["sync-outbound-queue-full"] = "Gear sync is busy. Try again later.",
+    ["sync-pending-request-limit"] = "Too many gear requests are pending. Try again later.",
+    ["send-addon-message-failed:NotInGuild"] = "Gear sync requires guild membership.",
+    ["send-addon-message-failed:AddonMessageThrottle"] = "Gear sync was throttled. Try again later.",
+    ["send-addon-message-failed:AddOnMessageLockdown"] = "Gear sync is currently restricted. Try again later.",
+}
 
+local function printRequestError(api, err)
+    chatEmitter(api)(REQUEST_ERRORS[err] or ("Gear request could not be queued (" .. tostring(err) .. ")."))
+end
+
+local function printAddonStatus(api)
+    local emit = chatEmitter(api)
     emit("Guild Gear Memory status:")
+    local transport = GGM.guildSync and GGM.guildSync.transport
+    emit("Gear sync: " .. (GGM.guildSync and "registered" or "unavailable") .. " (" .. GGM.SYNC_PREFIX .. ")")
+    local sendErr = transport and transport.lastSendError or GGM.lastSyncError
+    local receiveErr = transport and transport.lastReceiveError or GGM.lastSyncReceiveError
+    emit("Gear sync send/request error: " .. tostring(sendErr or "none"))
+    emit("Gear sync receive error: " .. tostring(receiveErr or "none"))
     if GGM.startupError then
         emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
         if type(GGM.startupError) == "string"
@@ -1520,20 +1543,24 @@ function GGM.RegisterSnapshotTestSlashCommand(api)
         if target then
             if not GGM.guildSync then
                 GGM.lastSyncError = "sync-unavailable"
+                printRequestError(api, GGM.lastSyncError)
                 return
             end
 
             local queued, queueErr = GGM.RequestCompleteSnapshot(GGM.guildSync, target)
             if queued then
                 GGM.lastSyncError = nil
+                chatEmitter(api)("Gear request queued for " .. target.key .. ". Waiting for a cached snapshot.")
             else
                 GGM.lastSyncError = queueErr
+                printRequestError(api, queueErr)
             end
             return
         end
 
         if requestErr then
             GGM.lastSyncError = requestErr
+            printRequestError(api, requestErr)
             return
         end
 

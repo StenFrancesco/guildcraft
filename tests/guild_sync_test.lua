@@ -83,6 +83,25 @@ local function deliver(GGM, sync, sends, sender)
     return state, err
 end
 
+T.test("settle timer failure remains visible after claim transmission completes", function()
+    local GGM = loadModules()
+    local alice, bob, carol = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B"), identity("Carol", "Silvermoon", "C")
+    local db = assert(GGM.InitializeDatabase(nil))
+    assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 7200), 3))
+    local api, sends, _, _, timers = clientApi(carol)
+    local newTimer = api.C_Timer.NewTimer
+    api.C_Timer.NewTimer = function(delay, callback)
+        if delay == GGM.SYNC_SNAPSHOT_RESPONSE_OFFER_SETTLE_SECONDS then return nil end
+        return newTimer(delay, callback)
+    end
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    assert(GGM.HandleGuildSyncPayload(sync, bob.key, assert(GGM.EncodeSyncSnapshotRequest(bob, alice, "000001"))))
+    timers[1]:Fire()
+    T.assertEqual(#sends, 1)
+    T.assertEqual(sync.pendingSnapshotResponseCount, 0)
+    T.assertEqual(sync.transport.lastSendError, "sync-response-timer-create-failed")
+end)
+
 T.test("incremental updates require a complete compatible baseline", function()
     local GGM = loadModules()
     local alice = identity("Alice", "Silvermoon", "A" )
@@ -226,6 +245,7 @@ T.test("equal sequence claims elect the lexicographically first responder", func
     T.assertEqual(daveSync.pendingSnapshotResponseCount, 1)
     T.assertEqual(eveSync.pendingSnapshotResponseCount, 0)
     daveTimers[2]:Fire()
+    daveTimers[3]:Fire()
     T.assertEqual(#daveSends, 2)
     T.assertEqual(#eveSends, 1)
 end)
@@ -277,12 +297,12 @@ T.test("a better claim cancels a snapshot still queued behind outbound frames", 
     local alice, bob, carol, dave = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B"), identity("Carol", "Silvermoon", "C"), identity("Dave", "Silvermoon", "D")
     local db = assert(GGM.InitializeDatabase(nil)); assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 7500), 3))
     local api, sends, _, _, timers = clientApi(carol); local sync = assert(GGM.CreateGuildSync(api, db))
-    assert(GGM.SendSyncPayload(sync.transport, string.rep("x", 700)))
     local request = assert(GGM.EncodeSyncSnapshotRequest(bob, alice, "000001"))
     T.assertEqual(GGM.HandleGuildSyncPayload(sync, bob.key, request), "snapshot-response-queued")
 
-    timers[2]:Fire() -- queues the claim behind the existing multi-frame payload
-    timers[3]:Fire() -- queues the complete snapshot behind that claim
+    timers[1]:Fire() -- advertises the claim while this client is idle
+    assert(GGM.SendSyncPayload(sync.transport, string.rep("x", 700)))
+    timers[2]:Fire() -- queues the complete snapshot behind the newer traffic
     local fullPayload = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 7500), 3, "000001"))
     local fullFrameCount = math.ceil(#fullPayload / GGM.SYNC_FRAME_CHUNK_BYTES)
     T.assertEqual(sync.pendingSnapshotResponseCount, 1)
@@ -296,7 +316,7 @@ T.test("a better claim cancels a snapshot still queued behind outbound frames", 
     local timerIndex = 1
     while timerIndex <= #timers do timers[timerIndex]:Fire(); timerIndex = timerIndex + 1 end
     T.assertEqual(#sync.transport.outboundFrames, 0)
-    T.assertEqual(#sends, 5) -- four blocker frames and one claim; no snapshot frames
+    T.assertEqual(#sends, 5) -- one claim and four blocker frames; no snapshot frames
 end)
 
 T.test("pending delayed snapshot responses are capped", function()
@@ -450,8 +470,8 @@ T.test("received local snapshot refreshes the active gear tracker baseline", fun
     T.assertEqual(tracker.confirmedSlots.HEAD.itemID, 9001)
     T.assertNotNil(tracker.pendingBySlot.HEAD)
     T.assertEqual(GGM.HandlePlayerEquipmentChanged(tracker, 1), "pending")
-    T.assertEqual(#timers, 1)
-    T.assertEqual(timers[1].delay, 30)
+    T.assertEqual(#timers, 2) -- transport cooldown and local stability timer
+    T.assertEqual(tracker.pendingBySlot.HEAD.timer.delay, 30)
 end)
 
 T.test("received slot delta leaves saved model identity untouched without requesting a baseline", function()

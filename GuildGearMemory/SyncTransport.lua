@@ -63,20 +63,25 @@ end
 local pumpOutbound
 pumpOutbound = function(transport)
     local activeGroup
+    -- Reserve the pump while completion callbacks run. A callback may enqueue
+    -- another logical message, but it must not send inside this frame's turn.
+    transport.sendTimer = true
     while #transport.outboundFrames > 0 do
         local queued = table.remove(transport.outboundFrames, 1)
         local group = queued.group
         if not group.cancelled then
             local sent, sendErr = sendFrame(transport, queued.frame)
             if not sent then abortOutbound(transport, sendErr, group); return false, sendErr end
+            transport.lastSendError = nil
             group.remaining = group.remaining - 1
             if group.remaining == 0 then finishOutboundGroup(group, true, nil) end
             activeGroup = group
             break
         end
     end
-    if #transport.outboundFrames == 0 then transport.sendTimer = nil; return true, nil end
-    transport.lastSendError = nil
+    if not activeGroup then transport.sendTimer = nil; return true, nil end
+    -- Keep the interval even after the last frame. The timer itself sends
+    -- nothing unless a new event has actually queued another payload.
     local timerOk, timerOrError = pcall(transport.api.C_Timer.NewTimer, GGM.SYNC_SEND_INTERVAL_SECONDS, function()
         transport.sendTimer = nil
         local _, asyncErr = pumpOutbound(transport)
