@@ -1,0 +1,13 @@
+Use case: stylized-concept
+Asset type: reusable square fill texture for World of Warcraft addon profession library buttons
+Primary request: Create a seamless, tile-friendly square 1024×1024 warm parchment fill texture for rectangular profession buttons. The fill should be medium honey tan parchment, only slightly darker than the pale honey parchment in the reference, with subdued even grain and subtle wear.
+Input images: Image 1 is a palette and material reference only: `ui-concepts/03-artisan-journal.png`. Match its honey tan, parchment cream, muted amber, and brown paper colors. Do not copy the interface, lettering, border, icons, or button layout.
+Scene/backdrop: A flat, evenly lit piece of softly aged journal parchment with no perspective or focal point.
+Subject: Only the parchment surface; the texture will sit beneath separately rendered thin brown borders, text, and profession icons.
+Style/medium: Painterly fantasy quest-journal parchment, restrained and clean enough for a small in-game UI button fill.
+Composition/framing: Square 1:1 texture, uniform from edge to edge, tile-friendly and suitable for stretching into a low rectangular button. Keep its value and texture consistent across the full image, with no central highlight or directional marks.
+Lighting/mood: Soft, diffuse, even warm light.
+Color palette: Medium honey tan and muted amber-brown, slightly darker than the reference's pale library parchment; keep the shift subtle. No red or vivid colors.
+Materials/textures: Fine quiet paper grain and faint, even wear; no distinct stains or marks.
+Constraints: Texture only. No frame, border, shadow, inset bevel, lettering, text, numbers, glyphs, runes, logo, watermark, icon, object, illustration, or UI screenshot.
+Avoid: Strong gradients, bright highlights, dark corners, uneven mottling, saturated color, and obvious repeating patterns.

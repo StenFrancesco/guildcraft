@@ -429,12 +429,19 @@ local function newControl()
     function control:SetSize(width, height)
         self.width, self.height = width, height
     end
+    function control:GetWidth() return self.width or 0 end
+    function control:GetHeight() return self.height or 0 end
+    function control:SetScale(value) self.scale = value end
+    function control:SetFont(path, size, flags) self.font = { path = path, size = size, flags = flags } end
+    function control:SetShadowColor(...) self.shadowColor = { ... } end
+    function control:SetShadowOffset(...) self.shadowOffset = { ... } end
+    function control:SetTextInsets(...) self.textInsets = { ... } end
     function control:SetPoint(point, relativeTo, relativePoint, x, y)
         self.point = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
     end
     function control:SetAllPoints(relativeTo) self.allPointsTo = relativeTo end
     function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end
-    function control:SetClampedToScreen() end
+    function control:SetClampedToScreen(value) self.clampedToScreen = value end
     function control:SetJustifyH() end
     function control:SetAutoFocus() end
     function control:SetHeight(height) self.height = height end
@@ -465,9 +472,9 @@ end
 local function makeBrowserAPI()
     local api = {
         UIParent = newControl(),
-        CreateFrame = function(_, name, parent)
+        CreateFrame = function(frameType, name, parent, template)
             local frame = newControl()
-            frame.name, frame.parent = name, parent
+            frame.name, frame.parent, frame.frameType, frame.template = name, parent, frameType, template
             frame.TitleText = newControl()
             function frame:SetScrollChild(child) self.scrollChild = child end
             return frame
@@ -476,6 +483,7 @@ local function makeBrowserAPI()
         GetItemIcon = function(itemID) return "item-icon:" .. tostring(itemID) end,
         GetInventorySlotInfo = function(slotName) return 1, "slot-icon:" .. slotName end,
     }
+    api.UIParent:SetSize(1920, 1080)
     return api
 end
 
@@ -789,6 +797,110 @@ T.test("large crafter lists switch native dropdown to a scrollable menu on refre
     T.assertEqual(details.crafterMenu.height, 220)
     details.crafterButtons[20].scripts.OnClick(details.crafterButtons[20])
     T.assertEqual(details.selectedCrafterKey, details.crafters[20].key)
+end)
+
+T.test("journal window uses the reference canvas size, custom backdrop, and screen-fit scale", function()
+    local GGM = loadUI()
+    local api = makeBrowserAPI()
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    local separator = string.char(92)
+    local mediaPath = table.concat({
+        "Interface", "AddOns", "GuildGearMemory", "Media", "ArtisanJournal", "",
+    }, separator)
+
+    T.assertEqual(frame.width, 1400)
+    T.assertEqual(frame.height, 630)
+    T.assertNil(frame.template)
+    T.assertEqual(frame.background.texture, mediaPath .. "journal-window.tga")
+    T.assertTrue(frame.background.allPointsTo == frame)
+    T.assertTrue(frame.movable)
+    T.assertTrue(frame.clampedToScreen)
+    T.assertEqual(frame.scale, 1)
+    T.assertTrue(frame.proCloseButton ~= nil)
+    T.assertEqual(frame.proCloseButton.point.point, "TOPRIGHT")
+
+    api.UIParent:SetSize(1000, 700)
+    frame = GGM.CreateGuildGearBrowserWindow(api)
+    T.assertTrue(math.abs(frame.scale - (976 / 1400)) < 0.001)
+end)
+
+T.test("journal profession page follows the parchment reference proportions and typography", function()
+    local GGM = loadUI()
+    local frame = GGM.CreateGuildGearBrowserWindow(makeBrowserAPI())
+    local ui = GGM.UIStyleTokens
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+
+    T.assertEqual(ui.windowWidth, 1400)
+    T.assertEqual(ui.windowHeight, 630)
+    T.assertEqual(ui.professionLibraryX, 314)
+    T.assertEqual(ui.professionDetailX, 629)
+    T.assertEqual(ui.professionLibraryTop, 109)
+    T.assertEqual(frame.pageTitle.text, "Professions")
+    T.assertEqual(frame.pageTitle.font.path, GGM.UIJournalTextures.boldFont)
+    T.assertEqual(frame.pageTitle.font.size, 26)
+    T.assertEqual(frame.pageTitle.font.flags, "")
+    T.assertEqual(frame.pageTitle.shadowColor[4], 0)
+    T.assertEqual(frame.pageTitle.shadowOffset[1], 0)
+    T.assertEqual(frame.pageSubtitle.font.path, GGM.UIJournalTextures.font)
+    T.assertEqual(frame.professionButtons[1].width, 244)
+    T.assertEqual(frame.professionButtons[1].height, 48)
+    T.assertEqual(frame.professionButtons[1].point.x, 34)
+    T.assertEqual(frame.professionButtons[1].point.y, -62)
+    T.assertEqual(frame.professionButtons[1].background.texture, GGM.UIJournalTextures.professionButton)
+    T.assertEqual(frame.professionButtons[1].background.texCoord[1], 0.03085)
+    T.assertEqual(frame.professionButtons[1].background.texCoord[2], 0.96961)
+    T.assertEqual(frame.professionButtons[1].background.texCoord[3], 0.23757)
+    T.assertEqual(frame.professionButtons[1].background.texCoord[4], 0.76520)
+    T.assertEqual(frame.professionButtons[1].label.font.path, GGM.UIJournalTextures.boldFont)
+    T.assertEqual(frame.professionSearchBox.width, 400)
+    T.assertEqual(frame.professionSearchBox.height, 27)
+    T.assertEqual(frame.professionHeroArtwork, frame.professionDetailPanel.background)
+    T.assertEqual(frame.professionHeroArtwork.texCoord[1], 0)
+    T.assertEqual(frame.professionHeroArtwork.texCoord[2], 1)
+    T.assertEqual(frame.professionHeroArtwork.texCoord[3], 0)
+    T.assertEqual(frame.professionHeroArtwork.texCoord[4], 1)
+    T.assertEqual(frame.professionHeroArtwork.point.point, "BOTTOMRIGHT")
+    T.assertEqual(frame.professionHeroArtwork.point.x, -9)
+    T.assertEqual(frame.professionHeroArtwork.point.y, 9)
+    T.assertEqual(frame.professionRecipeScroll.point.point, "BOTTOMRIGHT")
+    T.assertEqual(frame.professionRecipeScroll.point.y, 22)
+end)
+
+T.test("profession selection changes the full page artwork for each supported profession", function()
+    local GGM = loadUI()
+    local frame = GGM.CreateGuildGearBrowserWindow(makeBrowserAPI())
+    local separator = string.char(92)
+    local mediaPath = table.concat({
+        "Interface", "AddOns", "GuildGearMemory", "Media", "ArtisanJournal", "",
+    }, separator)
+    local expected = {
+        { key = "Alchemy", texture = mediaPath .. "alchemy-page.tga" },
+        { key = "Blacksmithing", texture = mediaPath .. "blacksmithing-page.tga" },
+        { key = "Enchanting", texture = mediaPath .. "enchanting-page.tga" },
+        { key = "Engineering", texture = mediaPath .. "engineering-page.tga" },
+        { key = "Leatherworking", texture = mediaPath .. "leatherworking-page.tga" },
+        { key = "Tailoring", texture = mediaPath .. "tailoring-page.tga" },
+    }
+
+    for _, profession in ipairs(expected) do
+        T.assertTrue(GGM.SelectProfession(frame, profession.key))
+        T.assertTrue(frame.professionHeroArtwork ~= nil, "profession hero artwork should be visible")
+        T.assertEqual(frame.professionHeroArtwork.texture, profession.texture)
+    end
+end)
+
+T.test("invalid profession selection preserves the current hero artwork", function()
+    local GGM = loadUI()
+    local frame = GGM.CreateGuildGearBrowserWindow(makeBrowserAPI())
+    GGM.SelectProfession(frame, "Engineering")
+    T.assertTrue(frame.professionHeroArtwork ~= nil, "profession hero artwork should be visible")
+    local selectedProfession = frame.selectedProfession
+    local artwork = frame.professionHeroArtwork.texture
+
+    T.assertFalse(GGM.SelectProfession(frame, "UnlistedProfession"))
+
+    T.assertEqual(frame.selectedProfession, selectedProfession)
+    T.assertEqual(frame.professionHeroArtwork.texture, artwork)
 end)
 
 T.test("profession page defers catalog construction until database assignment and selects each profession ID", function()

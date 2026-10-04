@@ -4,11 +4,46 @@ local UNKNOWN_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local MAX_NATIVE_CRAFTERS = 12
 local createCrafterDropdown
 
+local function applyTextTheme(label, tone)
+    local theme = GGM.UITheme
+    local color = theme and theme[tone or "text"]
+    if color and label and type(label.SetTextColor) == "function" then
+        label:SetTextColor(color[1], color[2], color[3], color[4] or 1)
+    end
+end
+
+local function hideTemplateInset(panel)
+    for _, key in ipairs({ "Inset", "Bg" }) do
+        local region = panel and panel[key]
+        if region and type(region.Hide) == "function" then region:Hide() end
+    end
+end
+
+local function applyPaperSurface(panel, topInset)
+    hideTemplateInset(panel)
+    if type(GGM.ApplyJournalSurface) ~= "function" then return end
+    GGM.ApplyJournalSurface(panel, "parchment")
+    local background = panel.background
+    if background and type(background.ClearAllPoints) == "function"
+        and type(background.SetPoint) == "function" then
+        background:ClearAllPoints()
+        background:SetPoint("TOPLEFT", panel, "TOPLEFT", 6, -(topInset or 6))
+        background:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -6, 6)
+    end
+end
+
 local function text(parent, font, point, relative, relativePoint, x, y, width)
     local label = parent:CreateFontString(nil, "OVERLAY", font)
     label:SetPoint(point, relative, relativePoint, x, y)
     label:SetJustifyH("LEFT")
     if width then label:SetWidth(width) end
+    if type(GGM.ApplyJournalFont) == "function" then
+        local sizes = { GameFontNormalLarge = 20, GameFontNormal = 16,
+            GameFontHighlightSmall = 14, GameFontDisableSmall = 13 }
+        GGM.ApplyJournalFont(label, sizes[font] or 14,
+            (font == "GameFontNormalLarge" or font == "GameFontNormal") and "bold" or nil)
+    end
+    applyTextTheme(label, "text")
     return label
 end
 
@@ -106,7 +141,10 @@ createCrafterDropdown = function(details, forceScrollable)
     end
 
     -- A scrollable choice menu keeps clients without the legacy dropdown API usable.
-    local dropdown = api.CreateFrame("Button", nil, details, "UIPanelButtonTemplate")
+    local dropdown = type(GGM.CreateFlatButton) == "function"
+        and GGM.CreateFlatButton(api, details, "Select crafter   v", 396, 26, "secondary")
+        or nil
+    if not dropdown then dropdown = api.CreateFrame("Button", nil, details, "UIPanelButtonTemplate") end
     dropdown:SetSize(396, 26)
     dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 20, 116)
     details.crafterDropdown = dropdown
@@ -114,6 +152,7 @@ createCrafterDropdown = function(details, forceScrollable)
     menu:SetSize(396, 220)
     menu:SetPoint("BOTTOMLEFT", dropdown, "TOPLEFT", 0, 4)
     menu.TitleText:SetText("Known crafters")
+    applyPaperSurface(menu, 28)
     menu:Hide()
     details.crafterMenu, details.crafterButtons = menu, {}
     local scroll = api.CreateFrame("ScrollFrame", nil, menu, "UIPanelScrollFrameTemplate")
@@ -128,7 +167,10 @@ createCrafterDropdown = function(details, forceScrollable)
         for index, owner in ipairs(details.crafters) do
             local button = details.crafterButtons[index]
             if not button then
-                button = api.CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+                button = type(GGM.CreateFlatButton) == "function"
+                    and GGM.CreateFlatButton(api, content, owner.name .. "-" .. owner.realm, 352, 26, "ghost")
+                    or nil
+                if not button then button = api.CreateFrame("Button", nil, content, "UIPanelButtonTemplate") end
                 button:SetSize(352, 26)
                 button:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(index - 1) * 28)
                 button:SetScript("OnClick", function(self) selectCrafter(details, self.crafterKey) end)
@@ -169,7 +211,7 @@ local function renderMaterials(details, model)
         row.label:SetText(label)
         local rowHeight = math.max(32, row.label:GetStringHeight() + 16)
         row:SetHeight(rowHeight)
-        row.label:SetTextColor(heading and 1 or 0.9, heading and 0.82 or 0.9, heading and 0 or 0.9)
+        applyTextTheme(row.label, heading and "text" or "textSoft")
         if heading then row.icon:Hide() else row.icon:SetTexture(icon or UNKNOWN_ICON); row.icon:Show() end
         row:Show()
         y = y + rowHeight
@@ -190,6 +232,7 @@ local function createWindow(browser, recipe)
     local name = "GuildGearMemoryRecipeDetailsFrame"
     local details = api.CreateFrame("Frame", name, api.UIParent, "BasicFrameTemplateWithInset")
     details.api = api
+    applyPaperSurface(details, 32)
     details:SetSize(440, 560)
     details:SetPoint("CENTER", api.UIParent, "CENTER", 100, 0)
     details:SetFrameStrata("DIALOG")
@@ -213,6 +256,7 @@ local function createWindow(browser, recipe)
     text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 20, -108):SetText("Crafting materials")
     details.materialStatus = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 20, -128, 392)
     details.materialStatus:SetHeight(40)
+    applyTextTheme(details.materialStatus, "muted")
     details.materialScroll = api.CreateFrame("ScrollFrame", nil, details, "UIPanelScrollFrameTemplate")
     details.materialScroll:SetPoint("TOPLEFT", details, "TOPLEFT", 20, -174)
     details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -40, 174)
@@ -223,8 +267,10 @@ local function createWindow(browser, recipe)
     text(details, "GameFontNormal", "BOTTOMLEFT", details, "BOTTOMLEFT", 20, 150):SetText("Known crafters")
     details.crafterStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 20, 66, 396)
     details.crafterStatus:SetHeight(40)
-    text(details, "GameFontDisableSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 20, 24, 396)
-        :SetText("Crafter knowledge is cached from saved profession records.")
+    applyTextTheme(details.crafterStatus, "muted")
+    details.cachedStatus = text(details, "GameFontDisableSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 20, 24, 396)
+    details.cachedStatus:SetText("Crafter knowledge is cached from saved profession records.")
+    applyTextTheme(details.cachedStatus, "muted")
     createCrafterDropdown(details)
     api.UISpecialFrames = api.UISpecialFrames or {}
     local registered = false

@@ -2,3 +2,9 @@
 /Docs/
 /AGENTS.MD
 /tools/lua/
+
+# Generated local addon packages and extracted installation copies
+/ui-concepts/*.zip
+/ui-concepts/GuildGearMemory-ArtisanJournal/
+/ui-concepts/GuildGearMemory-ArtisanJournal-v2/
+/ui-concepts/__pycache__/

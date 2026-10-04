@@ -1,0 +1,12 @@
+Use case: texture-art
+Asset type: reusable seamless square texture for a fantasy game addon UI panel, 1024×1024 tile-friendly.
+Primary request: Create a subtle dark brown worn fantasy journal-cover leather grain that matches the warm, hand-painted materials in Image 1. Use Image 1 only as a reference for texture, finish, and palette.
+Scene/backdrop: edge-to-edge close view of aged dark brown leather with gentle natural variation and a soft, low-contrast, evenly distributed surface grain.
+Style/medium: painterly high-fantasy Warcraft journal material study, realistic enough to feel tactile while remaining softly illustrated.
+Composition/framing: flat texture swatch, uniform detail across the entire square, seamless/tile-friendly on all four edges; no focal point.
+Lighting/mood: soft diffuse warm light with minimal shading and no strong highlights.
+Color palette: deep walnut, umber, cocoa brown, muted sepia; restrained warm variation only.
+Materials/textures: timeworn supple leather, fine pores and subtle scuffs, very low contrast.
+Text (verbatim): none.
+Constraints: texture only. No border, trim, stitching, seams, embossing, metal, objects, books, writing, text, letters, glyphs, symbols, logos, watermarks, or UI.
+Avoid: cracks, dramatic scratches, bright highlights, strong color shifts, repeating obvious motifs, directional lighting, perspective.
