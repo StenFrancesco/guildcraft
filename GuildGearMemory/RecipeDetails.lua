@@ -4,6 +4,7 @@ local MAX_MATERIAL_GROUPS = 128
 local MAX_CHOICES_PER_GROUP = 64
 local MAX_TOTAL_CHOICES = 256
 local MAX_NAME_BYTES = 512
+local MAX_GUILD_MEMBERS = 10000
 
 local function unavailable(message)
     return {
@@ -11,6 +12,69 @@ local function unavailable(message)
         message = message or "Recipe materials are unavailable.",
         materials = {},
     }
+end
+
+local function isPublic(api, value)
+    if type(api) ~= "table" or type(api.issecretvalue) ~= "function" then return false end
+    local ok, secret = pcall(api.issecretvalue, value)
+    return ok and secret == false
+end
+
+local function nonEmptyString(value)
+    return type(value) == "string" and value ~= ""
+end
+
+local function rosterKey(api, rawName)
+    if not nonEmptyString(rawName) then return nil end
+    local name, realm = rawName:match("^([^-]+)%-(.+)$")
+    if not name then
+        name = rawName
+        if type(api.GetRealmName) ~= "function" then return nil end
+        local ok, value = pcall(api.GetRealmName)
+        if not ok or not isPublic(api, value) or not nonEmptyString(value) then return nil end
+        realm = value
+    end
+    if not nonEmptyString(name) or not nonEmptyString(realm) then return nil end
+    return string.lower(name .. "-" .. realm):gsub("%s+", "")
+end
+
+function GGM.GetCrafterRosterStatus(api, selectedCrafterKey)
+    if not isPublic(api, selectedCrafterKey)
+        or not nonEmptyString(selectedCrafterKey)
+        or GGM.professionRosterMembershipCurrent ~= true
+        or type(api.IsInGuild) ~= "function"
+        or type(api.GetNumGuildMembers) ~= "function"
+        or type(api.GetGuildRosterInfo) ~= "function" then
+        return "unavailable"
+    end
+
+    local guildOK, inGuild = pcall(api.IsInGuild)
+    if not guildOK or not isPublic(api, inGuild) or inGuild ~= true then return "unavailable" end
+    local countOK, count = pcall(api.GetNumGuildMembers, true)
+    if not countOK or not isPublic(api, count) or type(count) ~= "number"
+        or count < 1 or count > MAX_GUILD_MEMBERS or count ~= math.floor(count) then
+        return "unavailable"
+    end
+
+    local wanted = string.lower(selectedCrafterKey):gsub("%s+", "")
+    local matched
+    for index = 1, count do
+        local rowOK, row = pcall(function() return { api.GetGuildRosterInfo(index) } end)
+        if not rowOK or type(row) ~= "table"
+            or not isPublic(api, row[1]) or not isPublic(api, row[9])
+            or not nonEmptyString(row[1]) or type(row[9]) ~= "boolean" then
+            return "unavailable"
+        end
+        local key = rosterKey(api, row[1])
+        if not key then return "unavailable" end
+        if key == wanted then
+            if matched ~= nil then return "unavailable" end
+            matched = row[9]
+        end
+    end
+
+    if matched == nil then return "unavailable" end
+    return matched and "online" or "offline"
 end
 
 local function isPositiveInteger(value)
