@@ -153,12 +153,23 @@ function GGM.GetConfirmedSequence(record)
     return readConfirmedSequence(record)
 end
 
+local function validLocalCharacterGUIDs(value)
+    if type(value) ~= "table" then return false end
+    for guid, owned in pairs(value) do
+        if not GGM.IsProfessionGUID(guid) or owned ~= true then
+            return false
+        end
+    end
+    return true
+end
+
 function GGM.InitializeDatabase(existing)
     if existing == nil then
         return {
             schemaVersion = GGM.SCHEMA_VERSION,
             characters = {},
             localCharacters = {},
+            localCharacterGUIDs = {},
             professions = {},
             nextLocalCharacterID = 1,
             professionCharacters = {},
@@ -184,6 +195,9 @@ function GGM.InitializeDatabase(existing)
 
     if type(existing.localCharacters) ~= "table" then
         return nil, "database-local-characters-invalid"
+    end
+    if not validLocalCharacterGUIDs(existing.localCharacterGUIDs) then
+        return nil, "database-local-character-guids-invalid"
     end
     if type(existing.professions) ~= "table" then
         return nil, "database-professions-invalid"
@@ -217,6 +231,31 @@ function GGM.IsLocalCharacter(db, characterKey)
         and type(db.localCharacters) == "table"
         and type(characterKey) == "string"
         and db.localCharacters[characterKey] == true
+end
+
+function GGM.MarkLocalCharacterGUID(db, guid)
+    if type(db) ~= "table" then
+        return false, "database-invalid"
+    end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then
+        return false, "unsupported-schema-version:" .. tostring(db.schemaVersion)
+    end
+    if type(db.localCharacterGUIDs) ~= "table" then
+        return false, "database-local-character-guids-invalid"
+    end
+    if not GGM.IsProfessionGUID(guid) then
+        return false, "character-guid-invalid"
+    end
+
+    db.localCharacterGUIDs[guid] = true
+    return true, nil
+end
+
+function GGM.IsLocalCharacterGUID(db, guid)
+    return type(db) == "table"
+        and type(db.localCharacterGUIDs) == "table"
+        and GGM.IsProfessionGUID(guid)
+        and db.localCharacterGUIDs[guid] == true
 end
 
 function GGM.GetProfessionRecord(db, characterKey)

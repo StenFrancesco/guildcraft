@@ -7,9 +7,9 @@ local function loadModules()
     return GGM
 end
 
-T.test("schema six keeps protocol five and assigns canonical inventory slot ids", function()
+T.test("schema seven keeps protocol five and assigns canonical inventory slot ids", function()
     local GGM = loadModules()
-    T.assertEqual(GGM.SCHEMA_VERSION, 6)
+    T.assertEqual(GGM.SCHEMA_VERSION, 7)
     T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
 
     local expected = {

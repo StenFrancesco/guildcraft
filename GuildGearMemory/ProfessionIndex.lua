@@ -1,5 +1,6 @@
 local _, GGM = ...
 local recipeIndexConsistent
+local MAX_SAFE_INTEGER = 9007199254740991
 
 local function nonEmptyString(value)
     return type(value) == "string" and value ~= ""
@@ -14,7 +15,7 @@ end
 
 local function canAdvance(value)
     local advanced = value + 1
-    return positiveInteger(advanced) and advanced > value
+    return value < MAX_SAFE_INTEGER and positiveInteger(advanced) and advanced > value
 end
 
 local function highestReservedID(professionCharacters, localCharacterIDByGUID, repairCandidates)
@@ -447,9 +448,14 @@ local function addRecipeMembership(index, professionID, recipe, localID)
     if type(entry) ~= "table" then
         entry = {
             name = recipe.name,
+            outputIcon = recipe.outputIcon,
             crafters = {},
         }
         profession[recipe.recipeID] = entry
+    elseif recipe.outputIcon ~= nil then
+        -- Recipe output icons are stable metadata keyed by recipe ID. A new
+        -- capture can fill the field for older cached memberships.
+        entry.outputIcon = recipe.outputIcon
     end
 
     insertCrafterID(entry.crafters, localID)
@@ -469,6 +475,77 @@ local function removeMembershipFromProfession(index, professionID, localID)
         end
     end
     if next(profession) == nil then index[professionID] = nil end
+end
+
+local function localOwnershipSetIsTrusted(db)
+    if type(db) ~= "table" or type(db.localCharacterGUIDs) ~= "table" then
+        return false
+    end
+    for guid, owned in pairs(db.localCharacterGUIDs) do
+        if not GGM.IsProfessionGUID(guid) or owned ~= true then
+            return false
+        end
+    end
+    return true
+end
+
+local function isLocallyOwnedGUID(db, guid)
+    return type(db.localCharacterGUIDs) == "table"
+        and db.localCharacterGUIDs[guid] == true
+end
+
+local function hasUnresolvedLegacyLocalMarker(db, characterKey, guid)
+    return type(db.localCharacters) == "table"
+        and db.localCharacters[characterKey] == true
+        and not isLocallyOwnedGUID(db, guid)
+end
+
+local function removeCrafterFromAllProfessions(index, localID)
+    local professionIDs = {}
+    for professionID in pairs(index) do
+        professionIDs[#professionIDs + 1] = professionID
+    end
+    table.sort(professionIDs)
+
+    for _, professionID in ipairs(professionIDs) do
+        removeMembershipFromProfession(index, professionID, localID)
+    end
+end
+
+local function purgeProfessionCharacter(db, localID)
+    local entry = db.professionCharacters[localID]
+    if type(entry) ~= "table" then return end
+    if hasUnresolvedLegacyLocalMarker(db, entry.key, entry.guid) then return end
+
+    removeCrafterFromAllProfessions(db.professionRecipeIndex, localID)
+    db.professions[entry.key] = nil
+    db.localCharacterIDByGUID[entry.guid] = nil
+    db.professionCharacters[localID] = nil
+    db.localCharacters[entry.key] = nil
+    if type(db.professionIndexRepairCandidates) == "table" then
+        db.professionIndexRepairCandidates[entry.guid] = nil
+    end
+end
+
+local function purgeDepartedGearRecords(db, currentByGUID)
+    local keysToRemove = {}
+
+    for characterKey, record in pairs(db.characters) do
+        local identity = type(record) == "table" and record.identity or nil
+        local guid = type(identity) == "table" and identity.guid or nil
+        if GGM.IsProfessionGUID(guid)
+            and currentByGUID[guid] == nil
+            and not isLocallyOwnedGUID(db, guid)
+            and not hasUnresolvedLegacyLocalMarker(db, characterKey, guid) then
+            keysToRemove[#keysToRemove + 1] = characterKey
+        end
+    end
+
+    table.sort(keysToRemove)
+    for _, characterKey in ipairs(keysToRemove) do
+        db.characters[characterKey] = nil
+        db.localCharacters[characterKey] = nil
+    end
 end
 
 function GGM.ReconcileProfessionRecipeMembership(db, localID, capture)
@@ -575,6 +652,7 @@ recipeIndexConsistent = function(db)
                 or type(recipe) ~= "table"
                 or not nonEmptyString(recipe.name)
                 or #recipe.name > GGM.PROFESSION_MAX_NAME_BYTES
+                or (recipe.outputIcon ~= nil and not positiveInteger(recipe.outputIcon))
                 or not crafterListConsistent(db, recipe.crafters) then
                 return false
             end
@@ -825,7 +903,10 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
-        or type(db.professionRecipeIndex) ~= "table" then
+        or type(db.professionRecipeIndex) ~= "table"
+        or type(db.characters) ~= "table"
+        or type(db.localCharacters) ~= "table"
+        or type(db.localCharacterGUIDs) ~= "table" then
         return false, "profession-roster-unavailable"
     end
 
@@ -861,6 +942,10 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
             currentByGUID[identity.guid] = identity
             currentByKey[identity.key] = identity.guid
         end
+    end
+
+    if not localOwnershipSetIsTrusted(db) or not recipeIndexConsistent(db) then
+        return false, "profession-index-invalid"
     end
 
     if not registryConsistent(db) then
@@ -910,19 +995,37 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         end
     end
 
+    local purgeLocalIDs = {}
+    for localID, entry in pairs(db.professionCharacters) do
+        if currentByGUID[entry.guid] == nil
+            and not isLocallyOwnedGUID(db, entry.guid)
+            and not hasUnresolvedLegacyLocalMarker(db, entry.key, entry.guid) then
+            purgeLocalIDs[#purgeLocalIDs + 1] = localID
+        end
+    end
+    table.sort(purgeLocalIDs)
+
     for _, entry in pairs(db.professionCharacters) do
         entry.active = currentByGUID[entry.guid] ~= nil
     end
+
+    for _, localID in ipairs(purgeLocalIDs) do
+        purgeProfessionCharacter(db, localID)
+    end
+
+    purgeDepartedGearRecords(db, currentByGUID)
+    db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
 
     GGM.professionRosterMembershipCurrent = true
     return true, nil
 end
 
-function GGM.EnsureProfessionIndex(db, validateFully)
+function GGM.EnsureProfessionIndex(db, validateFully, expectedSchemaVersion)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-professions-invalid"
     end
-    if db.schemaVersion ~= nil and db.schemaVersion ~= GGM.SCHEMA_VERSION then
+    local requiredSchemaVersion = expectedSchemaVersion or GGM.SCHEMA_VERSION
+    if db.schemaVersion ~= nil and db.schemaVersion ~= requiredSchemaVersion then
         return false, "unsupported-schema-version:" .. tostring(db.schemaVersion)
     end
 
@@ -983,6 +1086,7 @@ local function catalogMemberOwnershipIsTrusted(db)
         or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
+        or not localOwnershipSetIsTrusted(db)
         or db.professionIndexRepairNeeded == true then
         return false
     end
@@ -1059,27 +1163,53 @@ local function catalogOwnerLess(left, right)
     return left.key < right.key
 end
 
+local function catalogCharacterEligible(db, member, membershipCurrent)
+    if type(member) ~= "table" then return false end
+    return isLocallyOwnedGUID(db, member.guid)
+        or (membershipCurrent and member.active == true)
+end
+
+local function joinCatalogMessages(primary, secondary)
+    if primary and secondary then return primary .. " " .. secondary end
+    return primary or secondary
+end
+
+local function unconfirmedRosterMessage()
+    return "Current guild membership could not be confirmed. Showing saved local characters only."
+end
+
 function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api)
-    local emptyModel = { state = "unavailable", hasSnapshot = nil, recipes = {}, message = nil }
-    if GGM.professionRosterMembershipCurrent ~= true then
-        emptyModel.message = "Current guild membership could not be confirmed."
-        return emptyModel
-    end
-    if not positiveInteger(professionID) or not nonEmptyString(professionLabel)
+    local emptyModel = {
+        state = "unavailable",
+        hasSnapshot = nil,
+        recipes = {},
+        message = nil,
+    }
+
+    if not positiveInteger(professionID)
+        or not nonEmptyString(professionLabel)
         or not catalogMemberOwnershipIsTrusted(db) then
-        emptyModel.message = "Current guild member identities could not be confirmed."
+        emptyModel.message = "Saved profession character identities could not be confirmed."
         return emptyModel
     end
+
     local indexValid = GGM.EnsureProfessionIndex(db, true)
     if not indexValid then
         emptyModel.message = "Saved profession data could not be verified."
         return emptyModel
     end
 
+    local membershipCurrent = GGM.professionRosterMembershipCurrent == true
+    local rosterWarning
+    if not membershipCurrent then
+        rosterWarning = unconfirmedRosterMessage()
+    end
     local hasSnapshot, incomplete = false, false
+    local validSelectedSnapshot = false
     local validSnapshotsByLocalID = {}
+
     for localID, member in pairs(db.professionCharacters) do
-        if member.active == true then
+        if catalogCharacterEligible(db, member, membershipCurrent) then
             local canonical = db.professions[member.key]
             local snapshots = canonical.snapshots
             if type(snapshots) ~= "table" then
@@ -1101,6 +1231,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                     if not valid then
                         incomplete = true
                     else
+                        validSelectedSnapshot = true
                         validSnapshotsByLocalID[localID] = snapshot
                     end
                 end
@@ -1114,15 +1245,21 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         incomplete = true
         indexedRecipes = nil
     end
+
     for recipeID, indexedRecipe in pairs(indexedRecipes or {}) do
         if not positiveInteger(recipeID) or type(indexedRecipe) ~= "table"
             or not nonEmptyString(indexedRecipe.name) or type(indexedRecipe.crafters) ~= "table" then
             incomplete = true
         else
-            local row = { recipeID = recipeID, name = indexedRecipe.name, knownBy = {} }
+            local row = {
+                recipeID = recipeID,
+                name = indexedRecipe.name,
+                outputIcon = indexedRecipe.outputIcon,
+                knownBy = {},
+            }
             for _, localID in ipairs(indexedRecipe.crafters) do
                 local member = db.professionCharacters[localID]
-                if member and member.active == true then
+                if catalogCharacterEligible(db, member, membershipCurrent) then
                     local snapshot = validSnapshotsByLocalID[localID]
                     if not snapshot then
                         incomplete = true
@@ -1155,17 +1292,54 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         return left.recipeID < right.recipeID
     end)
 
+    if not membershipCurrent and not validSelectedSnapshot then
+        return {
+            state = "unavailable",
+            hasSnapshot = nil,
+            recipes = {},
+            message = rosterWarning,
+        }
+    end
+
     if incomplete or hasSnapshot == nil then
-        return { state = "incomplete", hasSnapshot = hasSnapshot, recipes = recipes,
-            message = "Some saved profession data is incomplete." }
+        return {
+            state = "incomplete",
+            hasSnapshot = hasSnapshot,
+            recipes = recipes,
+            message = joinCatalogMessages(
+                "Some saved profession data is incomplete.",
+                rosterWarning
+            ),
+        }
     end
+
     if not hasSnapshot then
-        return { state = "empty", hasSnapshot = false, recipes = recipes,
-            message = "No saved " .. professionLabel .. " snapshots for current guild members." }
+        return {
+            state = "empty",
+            hasSnapshot = false,
+            recipes = recipes,
+            message = "No saved " .. professionLabel
+                .. " snapshots for local characters or current guild members.",
+        }
     end
+
     if #recipes == 0 then
-        return { state = "empty", hasSnapshot = true, recipes = recipes,
-            message = "Saved " .. professionLabel .. " snapshots contain no learned recipes." }
+        return {
+            state = "empty",
+            hasSnapshot = true,
+            recipes = recipes,
+            message = joinCatalogMessages(
+                "Saved " .. professionLabel
+                    .. " snapshots contain no learned recipes.",
+                rosterWarning
+            ),
+        }
     end
-    return { state = "ready", hasSnapshot = true, recipes = recipes, message = nil }
+
+    return {
+        state = "ready",
+        hasSnapshot = true,
+        recipes = recipes,
+        message = rosterWarning,
+    }
 end

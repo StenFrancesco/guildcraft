@@ -43,10 +43,10 @@ T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", fun
     end
 end)
 
-T.test("schema version is six and protocol version stays five", function()
+T.test("schema version is seven and protocol version stays five", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.assertEqual(GGM.SCHEMA_VERSION, 6)
+    T.assertEqual(GGM.SCHEMA_VERSION, 7)
     T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
 end)
 

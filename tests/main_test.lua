@@ -479,6 +479,7 @@ T.test("player login defers stable gear tracking until equipment is ready", func
     }
 
     local startCount = 0
+    local ownershipCount = 0
     local deferredStartup
     local tracker = { pendingBySlot = {} }
 
@@ -501,6 +502,12 @@ T.test("player login defers stable gear tracking until equipment is ready", func
         GGM.InitializeDatabase = function()
             return { schemaVersion = 1, characters = {} }, nil
         end
+        GGM.RecordLocalPlayerOwnership = function(api, db)
+            T.assertTrue(api == _G)
+            T.assertTrue(db == GGM.db)
+            ownershipCount = ownershipCount + 1
+            return true, nil
+        end
         GGM.StartLocalPlayerGearTracking = function(api, db, delay)
             T.assertTrue(api == _G)
             T.assertTrue(db == GGM.db)
@@ -516,13 +523,57 @@ T.test("player login defers stable gear tracking until equipment is ready", func
         onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
         onEvent(frame, "PLAYER_LOGIN")
 
+        T.assertEqual(ownershipCount, 1)
         T.assertEqual(startCount, 0)
         T.assertNotNil(deferredStartup)
+        T.assertNil(GGM.lastLocalOwnershipError)
         deferredStartup()
 
         T.assertEqual(startCount, 1)
         T.assertTrue(GGM.gearTracker == tracker)
         T.assertNil(GGM.lastGearTrackingError)
+    end)
+end)
+
+T.test("player login ownership failure does not block existing gear tracking", function()
+    local onEvent
+    local deferredStartup
+    local startCount = 0
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        C_Timer = {
+            After = function(_, callback) deferredStartup = callback end,
+        },
+        GuildGearMemoryDB = NIL,
+    }, function()
+        local GGM = { DEFAULT_STABILITY_DELAY_SECONDS = 300 }
+        stubSnapshotUI(GGM)
+        GGM.InitializeDatabase = function()
+            return { schemaVersion = 7, characters = {}, localCharacterGUIDs = {} }, nil
+        end
+        GGM.RecordLocalPlayerOwnership = function()
+            return false, "player-guid-unavailable"
+        end
+        GGM.StartLocalPlayerGearTracking = function()
+            startCount = startCount + 1
+            return {}, nil
+        end
+
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        onEvent(frame, "PLAYER_LOGIN")
+
+        T.assertEqual(GGM.lastLocalOwnershipError, "player-guid-unavailable")
+        T.assertEqual(startCount, 0)
+
+        deferredStartup()
+
+        T.assertEqual(startCount, 1)
     end)
 end)
 
@@ -552,6 +603,9 @@ T.test("equipment change routes the changed inventory slot to the active tracker
         stubSnapshotUI(GGM)
         GGM.InitializeDatabase = function()
             return { schemaVersion = 1, characters = {} }, nil
+        end
+        GGM.RecordLocalPlayerOwnership = function()
+            return true, nil
         end
         GGM.StartLocalPlayerGearTracking = function()
             return tracker, nil
@@ -763,6 +817,9 @@ T.test("player login passes a post-persistence publisher into local tracking but
         GGM.InitializeDatabase = function()
             return { schemaVersion = 1, characters = {} }, nil
         end
+        GGM.RecordLocalPlayerOwnership = function()
+            return true, nil
+        end
         GGM.CreateGuildSync = function()
             return sync, nil
         end
@@ -898,6 +955,9 @@ T.test("sync registration failure does not disable local stable tracking", funct
         stubSnapshotUI(GGM)
         GGM.InitializeDatabase = function()
             return { schemaVersion = 1, characters = {} }, nil
+        end
+        GGM.RecordLocalPlayerOwnership = function()
+            return true, nil
         end
         GGM.CreateGuildSync = function()
             return {}, nil
