@@ -9,6 +9,7 @@ local function text(parent, font, point, relative, relativePoint, x, y, width)
     label:SetPoint(point, relative, relativePoint, x, y)
     label:SetJustifyH("LEFT")
     if width then label:SetWidth(width) end
+    if GGM.SetLedgerTextColor then GGM.SetLedgerTextColor(label, GGM.LedgerTheme.textSoft) end
     return label
 end
 
@@ -91,6 +92,12 @@ createCrafterDropdown = function(details, forceScrollable)
         local dropdown = api.CreateFrame("Frame", "GuildGearMemoryRecipeCrafterDropdown", details, "UIDropDownMenuTemplate")
         dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 2, 110)
         api.UIDropDownMenu_SetWidth(dropdown, 370)
+        -- Native dropdowns retain their dark control chrome: use leather ink's
+        -- contrasting ivory rather than the parchment's dark text color.
+        if dropdown.Text then GGM.SetLedgerTextColor(dropdown.Text, GGM.LedgerTheme.leatherText) end
+        if type(api.UIDropDownMenu_JustifyText) == "function" then
+            api.UIDropDownMenu_JustifyText(dropdown, "LEFT")
+        end
         details.crafterDropdown = dropdown
         api.UIDropDownMenu_Initialize(dropdown, function()
             for _, owner in ipairs(details.crafters) do
@@ -106,7 +113,7 @@ createCrafterDropdown = function(details, forceScrollable)
     end
 
     -- A scrollable choice menu keeps clients without the legacy dropdown API usable.
-    local dropdown = api.CreateFrame("Button", nil, details, "UIPanelButtonTemplate")
+    local dropdown = GGM.CreateFlatButton(api, details, "Select crafter", 396, 26, "secondary")
     dropdown:SetSize(396, 26)
     dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 20, 116)
     details.crafterDropdown = dropdown
@@ -114,6 +121,7 @@ createCrafterDropdown = function(details, forceScrollable)
     menu:SetSize(396, 220)
     menu:SetPoint("BOTTOMLEFT", dropdown, "TOPLEFT", 0, 4)
     menu.TitleText:SetText("Known crafters")
+    GGM.SkinLedgerWindow(menu)
     menu:Hide()
     details.crafterMenu, details.crafterButtons = menu, {}
     local scroll = api.CreateFrame("ScrollFrame", nil, menu, "UIPanelScrollFrameTemplate")
@@ -128,7 +136,7 @@ createCrafterDropdown = function(details, forceScrollable)
         for index, owner in ipairs(details.crafters) do
             local button = details.crafterButtons[index]
             if not button then
-                button = api.CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+                button = GGM.CreateFlatButton(api, content, "", 352, 26, "ghost")
                 button:SetSize(352, 26)
                 button:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(index - 1) * 28)
                 button:SetScript("OnClick", function(self) selectCrafter(details, self.crafterKey) end)
@@ -148,6 +156,11 @@ end
 local function renderMaterials(details, model)
     details.materialModel = model
     details.materialStatus:SetText(model.message or (#model.materials == 0 and "No crafting materials required." or ""))
+    local hasStatus = details.materialStatus:GetText() ~= ""
+    if hasStatus then details.materialStatus:Show() else details.materialStatus:Hide() end
+    details.materialScroll:ClearAllPoints()
+    details.materialScroll:SetPoint("TOPLEFT", details, "TOPLEFT", 20, hasStatus and -174 or -136)
+    details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -40, 174)
     local rowIndex, y = 0, 0
     local function addRow(label, icon, heading)
         rowIndex = rowIndex + 1
@@ -169,20 +182,70 @@ local function renderMaterials(details, model)
         row.label:SetText(label)
         local rowHeight = math.max(32, row.label:GetStringHeight() + 16)
         row:SetHeight(rowHeight)
-        row.label:SetTextColor(heading and 1 or 0.9, heading and 0.82 or 0.9, heading and 0 or 0.9)
+        GGM.SetLedgerTextColor(row.label, heading and GGM.LedgerTheme.goldBright or GGM.LedgerTheme.text)
         if heading then row.icon:Hide() else row.icon:SetTexture(icon or UNKNOWN_ICON); row.icon:Show() end
         row:Show()
         y = y + rowHeight
     end
     for _, group in ipairs(model.materials) do
-        local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " x" .. group.quantity
-        if #group.choices > 1 then label = label .. " (choose one)" end
-        addRow(label, nil, true)
-        for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+        local prefix = group.optional and "Optional: " or "Required: "
+        if #group.choices == 1 then
+            local choice = group.choices[1]
+            addRow(prefix .. choice.name .. " x" .. group.quantity, choice.icon, false)
+        else
+            addRow(prefix .. group.name .. " x" .. group.quantity .. " (choose one)", nil, true)
+            for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+        end
     end
     for index = rowIndex + 1, #details.materialRows do details.materialRows[index]:Hide() end
     details.materialContent:SetHeight(math.max(1, y))
     details.materialScroll:SetVerticalScroll(0)
+end
+
+local function isPublic(api, value)
+    if type(api.issecretvalue) ~= "function" then return false end
+    local ok, secret = pcall(api.issecretvalue, value)
+    return ok and secret == false
+end
+
+local function metadataReadable(details)
+    local api = details.api
+    if type(api.InCombatLockdown) ~= "function" then return false end
+    local ok, combat = pcall(api.InCombatLockdown)
+    return ok and isPublic(api, combat) and combat == false
+end
+
+local function requestMaterialMetadata(details)
+    local api = details.api
+    local item = api.C_Item
+    if details.materialModel.state ~= "ready" or not metadataReadable(details)
+        or type(item) ~= "table" or type(item.RequestLoadItemDataByID) ~= "function" then return end
+    details.requestedItems = details.requestedItems or {}
+    details.pendingItems = details.pendingItems or {}
+    local requests = {}
+    for _, group in ipairs(details.materialModel.materials) do
+        for _, choice in ipairs(group.choices) do
+            local id = choice.itemID
+            if choice.metadataPending and isPublic(api, id) and type(id) == "number"
+                and id > 0 and id < math.huge and id == math.floor(id) then
+                if details.requestedItems[id] == "pending" then
+                    details.pendingItems[id] = true
+                elseif not details.requestedItems[id] and #requests < 256 then
+                    details.requestedItems[id], details.pendingItems[id] = "pending", true
+                    requests[#requests + 1] = id
+                end
+            end
+        end
+    end
+    if not next(details.pendingItems) then return end
+    details:RegisterEvent("ITEM_DATA_LOAD_RESULT")
+    for _, id in ipairs(requests) do
+        local ok = pcall(item.RequestLoadItemDataByID, id)
+        if not ok then
+            details.pendingItems[id], details.requestedItems[id] = nil, "failed"
+        end
+    end
+    if not next(details.pendingItems) then details:UnregisterEvent("ITEM_DATA_LOAD_RESULT") end
 end
 
 local function createWindow(browser, recipe)
@@ -190,7 +253,20 @@ local function createWindow(browser, recipe)
     local name = "GuildGearMemoryRecipeDetailsFrame"
     local details = api.CreateFrame("Frame", name, api.UIParent, "BasicFrameTemplateWithInset")
     details.api = api
+    details:SetScript("OnEvent", function(self, event, itemID, success)
+        if event ~= "ITEM_DATA_LOAD_RESULT" or not shown(self)
+            or not isPublic(api, itemID) or not isPublic(api, success)
+            or type(itemID) ~= "number" or type(success) ~= "boolean"
+            or not self.pendingItems or not self.pendingItems[itemID] then return end
+        self.pendingItems[itemID] = nil
+        self.requestedItems[itemID] = success and "finished" or "failed"
+        if not next(self.pendingItems) then self:UnregisterEvent("ITEM_DATA_LOAD_RESULT") end
+        if success and metadataReadable(self) then
+            renderMaterials(self, GGM.BuildRecipeMaterialDetails(api, self.recipeID))
+        end
+    end)
     details:SetSize(440, 560)
+    GGM.SkinLedgerWindow(details)
     details:SetPoint("CENTER", api.UIParent, "CENTER", 100, 0)
     details:SetFrameStrata("DIALOG")
     details:SetClampedToScreen(true)
@@ -207,6 +283,7 @@ local function createWindow(browser, recipe)
     details.recipeIcon:SetSize(48, 48)
     details.recipeIcon:SetPoint("TOPLEFT", details, "TOPLEFT", 20, -42)
     details.recipeName = text(details, "GameFontNormalLarge", "TOPLEFT", details, "TOPLEFT", 82, -44, 326)
+    GGM.SetLedgerTextColor(details.recipeName, GGM.LedgerTheme.text)
     details.recipeName:SetHeight(36)
     if details.recipeName.SetMaxLines then details.recipeName:SetMaxLines(2) end
     details.professionName = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 82, -84, 326)
@@ -234,6 +311,8 @@ local function createWindow(browser, recipe)
         self:StopMovingOrSizing()
         self.selectedCrafterKey, self.recipeID = nil, nil
         self.crafters = {}
+        self.requestedItems, self.pendingItems = {}, {}
+        self:UnregisterEvent("ITEM_DATA_LOAD_RESULT")
         closeCrafterMenu(self)
     end)
     details:Hide()
@@ -254,13 +333,18 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     if not canonical then return nil end
     local details = browser.recipeDetailsFrame or createWindow(browser, canonical)
     local preserveSelection = details.recipeID == canonical.recipeID
+    if not preserveSelection then
+        details.pendingItems = {}
+        details:UnregisterEvent("ITEM_DATA_LOAD_RESULT")
+    end
     details.recipeID = canonical.recipeID
     details.recipeName:SetText(canonical.name or "Unknown recipe")
-    details.recipeIcon:SetTexture(canonical.outputIcon or UNKNOWN_ICON)
+    details.recipeIcon:SetTexture(GGM.ResolveRecipeOutputIcon(browser.api, canonical.recipeID, canonical.outputIcon) or UNKNOWN_ICON)
     details.professionName:SetText(browser.selectedProfession or "Profession")
     updateCrafters(details, canonical, preserveSelection)
     renderMaterials(details, GGM.BuildRecipeMaterialDetails(browser.api, canonical.recipeID))
     details:Show()
+    requestMaterialMetadata(details)
     return details
 end
 
@@ -271,7 +355,7 @@ function GGM.RefreshRecipeDetailsWindow(browser)
         for _, recipe in ipairs((browser.professionCatalog or {}).recipes or {}) do
             if recipe.recipeID == details.recipeID then
                 details.recipeName:SetText(recipe.name or "Unknown recipe")
-                details.recipeIcon:SetTexture(recipe.outputIcon or UNKNOWN_ICON)
+                details.recipeIcon:SetTexture(GGM.ResolveRecipeOutputIcon(browser.api, recipe.recipeID, recipe.outputIcon) or UNKNOWN_ICON)
                 updateCrafters(details, recipe, true)
                 return
             end

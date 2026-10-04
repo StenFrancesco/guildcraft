@@ -114,7 +114,8 @@ local function normalizeChoice(api, reagent, isPublic)
         if not isPositiveInteger(itemID) then return nil end
         local name, icon, valid = readItemMetadata(api, itemID, isPublic)
         if not valid then return nil end
-        choice = { itemID = itemID, name = name, icon = icon }
+        choice = { itemID = itemID, name = name, icon = icon,
+            metadataPending = name == "Item #" .. itemID or icon == nil }
     else
         if not isPositiveInteger(currencyID) then return nil end
         local name, icon, valid = readCurrencyMetadata(api, currencyID, isPublic)

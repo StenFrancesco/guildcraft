@@ -11,6 +11,7 @@ local function loadUI()
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/RecipeOutputIcon.lua", GGM)
     T.loadAddonFile("GuildGearMemory/RecipeDetailsUI.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
     return GGM
@@ -334,7 +335,13 @@ local function newControl()
     end
     function control:SetTextColor(...) self.textColor = { ... } end
     function control:GetText() return self.text or "" end
-    function control:GetStringHeight() return #self:GetText() > 80 and 56 or 14 end
+    function control:GetStringHeight()
+        local lines = 0
+        for line in (self:GetText() .. "\n"):gmatch("(.-)\n") do
+            lines = lines + math.max(1, math.ceil(#line / 80))
+        end
+        return lines * 14
+    end
     function control:Show() self.visible = true end
     function control:Hide()
         local wasVisible = self.visible
@@ -346,9 +353,11 @@ local function newControl()
     end
     function control:SetPoint(point, relativeTo, relativePoint, x, y)
         self.point = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
+        self.points = self.points or {}
+        table.insert(self.points, self.point)
     end
     function control:SetAllPoints(relativeTo) self.allPointsTo = relativeTo end
-    function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end
+    function control:ClearAllPoints() self.point = nil; self.points = {}; self.allPointsTo = nil end
     function control:SetClampedToScreen() end
     function control:SetJustifyH() end
     function control:SetAutoFocus() end
@@ -363,6 +372,8 @@ local function newControl()
     function control:IsShown() return self.visible end
     function control:SetVerticalScroll(value) self.verticalScroll = value end
     function control:SetScript(name, callback) self.scripts[name] = callback end
+    function control:RegisterEvent(event) self.events = self.events or {}; self.events[event] = true end
+    function control:UnregisterEvent(event) if self.events then self.events[event] = nil end end
     function control:RegisterForClicks() end
     function control:SetDesaturated(value) self.desaturated = value end
     function control:SetAlpha(value) self.alpha = value end
@@ -436,6 +447,15 @@ local function professionCatalog(state, recipes, message, hasSnapshot)
     return { state = state, recipes = recipes or {}, message = message, hasSnapshot = hasSnapshot }
 end
 
+T.test("ledger distinguishes last-known equipment from live inspection and unfinished storage", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    T.assertEqual(frame.snapshotCaption.text, "LAST-KNOWN GEAR")
+    GGM.SelectGuildGearBrowserTab(frame, "Bank")
+    T.assertEqual(frame.pageSubtitle.text, "Bank records are not yet available")
+    T.assertEqual(frame.placeholderPages.Bank.emptyCard.title.text, "Bank records unavailable")
+end)
+
 local function installProfessionCatalogStub(GGM, catalog, calls)
     GGM.professionRosterMembershipCurrent = true
     GGM.BuildProfessionRecipeCatalog = function(db, professionID, professionLabel, api)
@@ -508,7 +528,10 @@ T.test("recipe details display quantities optional groups and alternative choice
     T.assertEqual(details.materialRows[2].label.text, "Copper")
     T.assertEqual(details.materialRows[3].label.text, "Fine Copper")
     T.assertTrue(string.find(details.materialRows[4].label.text, "Optional", 1, true) ~= nil)
-    T.assertEqual(details.materialRows[5].label.text, "Polish")
+    T.assertEqual(details.materialRows[4].label.text, "Optional: Polish x1")
+    T.assertEqual(details.materialRows[4].icon.texture, 30)
+    T.assertNil(details.materialRows[5])
+    T.assertEqual(details.materialScroll.points[1].y, -136)
 end)
 
 T.test("crafter dropdown sorts saved owners and selection displays saved knowledge date", function()
@@ -524,6 +547,99 @@ T.test("crafter dropdown sorts saved owners and selection displays saved knowled
     T.assertEqual(details.selectedCrafterKey, "Bob-Realm")
     T.assertTrue(string.find(details.crafterStatus.text, "2026-09-02", 1, true) ~= nil)
     T.assertFalse(details.crafterMenu:IsShown())
+end)
+
+T.test("visible recipe materials load once and refresh only for matching safe completion", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
+    local loaded, requests = {}, {}
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    api.C_TradeSkillUI = { GetRecipeSchematic = function(id)
+        return { reagentSlotSchematics = { { required = true, quantityRequired = 1,
+            reagents = { { itemID = id == 11 and 4357 or 2589 } } } } }
+    end }
+    api.C_Item = {
+        GetItemNameByID = function(id) return loaded[id] and "Loaded material" or nil end,
+        GetItemIconByID = function() return 123 end,
+        RequestLoadItemDataByID = function(id) requests[#requests + 1] = id end,
+    }
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(#requests, 1)
+    T.assertEqual(requests[1], 4357)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(#requests, 1, "reopening same selection must not retry pending data")
+    loaded[4357] = true
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", 999, true)
+    T.assertEqual(details.materialRows[1].label.text, "Required: Item #4357 x1")
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", 4357, true)
+    T.assertEqual(details.materialRows[1].label.text, "Required: Loaded material x1")
+    T.assertEqual(#requests, 1)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(#requests, 2)
+    api.InCombatLockdown = function() return true end
+    loaded[2589] = true
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", 2589, true)
+    T.assertEqual(details.materialRows[1].label.text, "Required: Item #2589 x1")
+    details:Hide()
+    T.assertFalse(details.events.ITEM_DATA_LOAD_RESULT == true)
+end)
+
+T.test("failed secret and obsolete material load results never retry or replace selection", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local requests = 0
+    local secret = {}
+    api.issecretvalue = function(value) return value == secret end
+    api.InCombatLockdown = function() return false end
+    api.C_Item = { RequestLoadItemDataByID = function() requests = requests + 1 end }
+    GGM.BuildRecipeMaterialDetails = function(_, id)
+        return { state = "ready", materials = { { name = "Pending", quantity = 1, choices = {
+            { itemID = id, name = "Pending", metadataPending = true } } } } }
+    end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", 11, true)
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", secret, true)
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", 22, secret)
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", 22, false)
+    T.assertEqual(details.recipeID, 22)
+    T.assertEqual(requests, 2)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(requests, 2, "failure must not cause automatic retries")
+end)
+
+T.test("recipes missing saved icons use public output metadata in list and details", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    api.C_TradeSkillUI = { GetRecipeOutputItemData = function(id)
+        T.assertEqual(id, 22)
+        return { icon = 9999 }
+    end }
+    GGM.RefreshVisibleProfessionCatalog()
+    T.assertEqual(browser.professionRecipeRows[2].outputIcon.texture, 9999)
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(details.recipeIcon.texture, 9999)
+    T.assertNil(recipes[2].outputIcon, "display lookup must not enrich saved catalog")
+end)
+
+T.test("switching back to an item still loading reattaches without another request", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local requests, loaded = 0, false
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    api.C_Item = { RequestLoadItemDataByID = function() requests = requests + 1 end }
+    GGM.BuildRecipeMaterialDetails = function(_, id)
+        return { state = "ready", materials = { { name = "Material", quantity = 1, choices = {
+            { itemID = id, name = loaded and "Loaded" or "Pending", metadataPending = not loaded } } } } }
+    end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    loaded = true
+    details.scripts.OnEvent(details, "ITEM_DATA_LOAD_RESULT", 11, true)
+    T.assertEqual(details.materialRows[1].label.text, "Required: Loaded x1")
+    T.assertEqual(requests, 2)
 end)
 
 T.test("details refresh preserves eligible crafter without querying materials and removes obsolete attribution", function()
@@ -629,8 +745,8 @@ T.test("long material names grow rows so wrapped text cannot overlap subsequent 
     end
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
     local rows = browser.recipeDetailsFrame.materialRows
-    T.assertTrue(rows[1].height >= 72)
-    T.assertTrue(rows[2].height >= 72)
+    T.assertTrue(rows[1].height >= rows[1].label:GetStringHeight() + 16)
+    T.assertTrue(rows[2].height >= rows[2].label:GetStringHeight() + 16)
     T.assertTrue(-rows[3].point.y >= rows[1].height + rows[2].height)
 end)
 
@@ -861,6 +977,39 @@ T.test("profession owner rows show name realm and date without ownership badges"
     local text = frame.professionRecipeRows[1].knownBy.text
     T.assertEqual(text,
         "Known by: Alice-Silvermoon — 2026-10-01\nBob-ArgentDawn — 2026-09-30")
+end)
+
+T.test("profession recipe rows grow to contain wrapped crafter text before the next row", function()
+    local GGM = loadUI()
+    local calls = {}
+    local longOwner = {
+        key = "long-owner",
+        name = string.rep("Crafter", 16),
+        realm = string.rep("LongRealm", 14),
+        savedDate = "2026-10-03",
+    }
+
+    installProfessionCatalogStub(GGM, function()
+        return professionCatalog("ready", {
+            { recipeID = 100, name = "Long owner recipe", knownBy = { longOwner } },
+            { recipeID = 101, name = "Next recipe", knownBy = {} },
+        })
+    end, calls)
+
+    local frame = showBrowser(
+        GGM,
+        makeBrowserAPI(),
+        { schemaVersion = GGM.SCHEMA_VERSION, characters = {} }
+    )
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+
+    local first, second = frame.professionRecipeRows[1], frame.professionRecipeRows[2]
+    T.assertEqual(first.name.width, 554, "title should have a width without vertically stretching anchors")
+    T.assertEqual(first.knownBy.width, 554)
+    local requiredHeight = first.name:GetStringHeight() + first.knownBy:GetStringHeight() + 20
+    T.assertTrue(first.knownBy:GetStringHeight() > 14, "fixture should model wrapped owner text")
+    T.assertTrue(first.height >= requiredHeight, "recipe row should contain both rendered text blocks")
+    T.assertEqual(second.points[1].y, -(first.height + 1), "next recipe should start after the expanded row")
 end)
 
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()

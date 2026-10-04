@@ -251,36 +251,40 @@ end
 -- Presentation-only design system. Data models, storage, sync, tracking and
 -- snapshot semantics deliberately remain outside this section.
 local THEME = {
-    -- Blizzard-inspired neutral/gold palette. Kept deliberately close to the
-    -- game UI so the addon reads like another native character/guild panel.
-    canvas = { 0.040, 0.032, 0.024, 0.975 },
-    rail = { 0.055, 0.043, 0.030, 0.985 },
-    header = { 0.070, 0.052, 0.034, 0.990 },
-    panel = { 0.035, 0.030, 0.024, 0.970 },
-    panelAlt = { 0.072, 0.058, 0.041, 0.965 },
-    panelRaised = { 0.105, 0.082, 0.054, 0.980 },
-    panelHover = { 1.000, 0.820, 0.300, 0.10 },
-    input = { 0.018, 0.016, 0.013, 0.985 },
+    -- Sepia ink on aged parchment; chapter tabs use ivory on leather.
+    canvas = { 0.16, 0.08, 0.035, 1 },
+    rail = { 0.20, 0.105, 0.055, 1 },
+    header = { 0.91, 0.82, 0.64, 1 },
+    panel = { 1, 1, 1, 1 },
+    panelAlt = { 0.88, 0.77, 0.57, 0.42 },
+    panelRaised = { 0.77, 0.60, 0.36, 0.35 },
+    panelHover = { 0.34, 0.18, 0.06, 0.09 },
+    input = { 0.94, 0.85, 0.68, 1 },
     slot = { 0.020, 0.018, 0.015, 1.000 },
-    border = { 0.420, 0.335, 0.190, 0.92 },
-    borderSoft = { 0.215, 0.165, 0.095, 0.78 },
+    border = { 0.43, 0.28, 0.12, 0.85 },
+    borderSoft = { 0.40, 0.26, 0.12, 0.30 },
     borderDark = { 0.010, 0.009, 0.007, 1.000 },
     iconBevelOutline = { 0.035, 0.040, 0.045, 1.000 },
     iconBevelLight = { 0.520, 0.545, 0.565, 1.000 },
     iconBevelShadow = { 0.110, 0.125, 0.140, 1.000 },
-    gold = { 0.925, 0.710, 0.250, 1.000 },
-    goldBright = { 1.000, 0.835, 0.390, 1.000 },
-    goldDim = { 0.245, 0.160, 0.045, 0.88 },
-    goldHover = { 1.000, 0.820, 0.300, 0.13 },
+    gold = { 0.48, 0.29, 0.09, 1 },
+    goldBright = { 0.31, 0.16, 0.045, 1 },
+    goldDim = { 0.58, 0.38, 0.16, 0.24 },
+    goldHover = { 0.42, 0.25, 0.08, 0.12 },
     cyan = { 0.370, 0.760, 1.000, 1.000 },
-    success = { 0.350, 0.900, 0.450, 1.000 },
-    warning = { 1.000, 0.620, 0.180, 1.000 },
+    success = { 0.17, 0.34, 0.19, 1 },
+    warning = { 0.53, 0.23, 0.06, 1 },
     danger = { 0.950, 0.300, 0.220, 1.000 },
-    text = { 1.000, 0.965, 0.830, 1.000 },
-    textSoft = { 0.900, 0.835, 0.690, 1.000 },
-    muted = { 0.620, 0.560, 0.455, 1.000 },
-    disabled = { 0.390, 0.350, 0.290, 1.000 },
+    text = { 0.20, 0.12, 0.065, 1 },
+    textSoft = { 0.29, 0.19, 0.105, 1 },
+    muted = { 0.39, 0.29, 0.18, 1 },
+    disabled = { 0.48, 0.40, 0.29, 1 },
+    leatherText = { 0.96, 0.86, 0.65, 1 },
+    leatherMuted = { 0.74, 0.61, 0.43, 1 },
+    brass = { 0.77, 0.57, 0.26, 1 },
 }
+local MEDIA = "Interface\\AddOns\\GuildGearMemory\\Media\\"
+GGM.LedgerTheme = THEME
 
 local UI = {
     space1 = 4,
@@ -295,7 +299,7 @@ local UI = {
     railWidth = 184,
     headerHeight = 64,
     pageMargin = 18,
-    contentTop = 100,
+    contentTop = 110,
     contentBottom = 18,
     navigationRowHeight = 46,
     navigationIconSize = 22,
@@ -306,7 +310,7 @@ local UI = {
     controlHeightCompact = 30,
     characterRowHeight = 50,
     listScrollWidth = 258,
-    listScrollHeight = 420,
+    listScrollHeight = 400,
     professionSidebarWidth = 244,
     professionRowHeight = 46,
 }
@@ -380,12 +384,32 @@ local function createSurface(api, parent, backgroundColor, borderColor, doubleBo
     local panel = api.CreateFrame("Frame", nil, parent)
     panel.background = panel:CreateTexture(nil, "BACKGROUND")
     panel.background:SetAllPoints(panel)
-    panel.background:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background-Dark")
-    panel.background:SetVertexColor((backgroundColor or THEME.panel)[1], (backgroundColor or THEME.panel)[2], (backgroundColor or THEME.panel)[3], 1)
-    panel.background:SetAlpha((backgroundColor or THEME.panel)[4] or 1)
+    local color = backgroundColor or THEME.panel
+    if color == THEME.panel then
+        panel.background:SetTexture(MEDIA .. "Parchment")
+        panel.background:SetVertexColor(1, 1, 1, 1)
+    elseif color == THEME.rail or color == THEME.canvas then
+        panel.background:SetTexture(MEDIA .. "Leather")
+        panel.background:SetVertexColor(1, 1, 1, 1)
+    else
+        setColor(panel.background, color)
+    end
     panel.border = createFlatBorder(panel, borderColor or THEME.borderSoft)
     if doubleBorder then panel.innerBorder = createFlatBorder(panel, THEME.borderDark, 2) end
     return panel
+end
+GGM.CreateLedgerSurface = createSurface
+GGM.SetLedgerTextColor = setTextColor
+
+function GGM.SkinLedgerWindow(frame)
+    if frame.Inset and frame.Inset.Hide then frame.Inset:Hide() end
+    frame.ledgerCover = frame:CreateTexture(nil, "BACKGROUND")
+    frame.ledgerCover:SetAllPoints(frame)
+    frame.ledgerCover:SetTexture(MEDIA .. "Leather")
+    frame.ledgerPage = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
+    frame.ledgerPage:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -28)
+    frame.ledgerPage:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -8, 8)
+    frame.ledgerPage:SetTexture(MEDIA .. "Parchment")
 end
 
 local function createDivider(parent, leftInset, rightInset, y)
@@ -400,7 +424,7 @@ end
 local BUTTON_VARIANTS = {
     primary = { background = THEME.goldDim, border = THEME.gold, text = THEME.text, hover = THEME.goldHover },
     secondary = { background = THEME.panelRaised, border = THEME.border, text = THEME.textSoft, hover = THEME.panelHover },
-    ghost = { background = THEME.panel, border = THEME.borderSoft, text = THEME.muted, hover = THEME.panelHover },
+    ghost = { background = { 0, 0, 0, 0 }, border = THEME.borderSoft, text = THEME.textSoft, hover = THEME.panelHover },
 }
 
 function GGM.SetFlatButtonState(button, state)
@@ -419,29 +443,56 @@ function GGM.SetFlatButtonState(button, state)
         if button.label then setTextColor(button.label, button.selected and THEME.goldBright or THEME.textSoft) end
     end
     button.visualState = state == "pressed" and "pressed" or (state or "idle")
+    if button.background then
+        local variant = BUTTON_VARIANTS[button.variant] or BUTTON_VARIANTS.secondary
+        local pressed = state == "pressed"
+        setColor(button.background, pressed and { 0.43, 0.26, 0.09, 0.36 }
+            or (button.selected and THEME.goldDim or variant.background))
+        recolorBorder(button.borderEdges, (pressed or button.selected) and THEME.gold or variant.border)
+    end
     return true
 end
 
 function GGM.CreateFlatButton(api, parent, label, width, height, variant)
     if type(api) ~= "table" or type(api.CreateFrame) ~= "function" then return nil end
-    -- Keep the legacy helper name because other UI modules call it, but render
-    -- with Blizzard's own panel button template instead of bespoke flat chrome.
-    local button = api.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    local button = api.CreateFrame("Button", nil, parent)
     button:SetSize(width, height)
     button.variant = variant or "secondary"
+    button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
+    button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+    button.label:SetWidth(math.max(1, width - 12))
+    button.label:SetHeight(math.max(1, height - 6))
+    if button.label.SetMaxLines then button.label:SetMaxLines(1) end
+    button.label:SetText(label or "")
+    if button.SetFontString then button:SetFontString(button.label) end
     button:SetText(label or "")
-    button.label = type(button.GetFontString) == "function" and button:GetFontString() or nil
-    if not button.label then
-        button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
-        button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
-        button.label:SetText(label or "")
-    end
     setTextColor(button.label, THEME.textSoft)
+    button.background = button:CreateTexture(nil, "BACKGROUND")
+    button.background:SetAllPoints(button)
+    button.borderEdges = createFlatBorder(button, THEME.borderSoft)
+    button.hover = button:CreateTexture(nil, "HIGHLIGHT")
+    button.hover:SetAllPoints(button)
+    setColor(button.hover, THEME.panelHover)
+    if button.SetHighlightTexture then button:SetHighlightTexture(button.hover) end
+    button:SetScript("OnMouseDown", function(self) GGM.SetFlatButtonState(self, "pressed") end)
+    button:SetScript("OnMouseUp", function(self) GGM.SetFlatButtonState(self, self.selected and "selected" or "idle") end)
     button:RegisterForClicks("LeftButtonUp")
     button:SetScript("OnDisable", function(self) GGM.SetFlatButtonState(self, "disabled") end)
     button:SetScript("OnEnable", function(self) GGM.SetFlatButtonState(self, self.selected and "selected" or "idle") end)
     GGM.SetFlatButtonState(button, "idle")
     return button
+end
+
+function GGM.StyleLedgerSearch(box)
+    if box.SetFontObject then box:SetFontObject("GameFontHighlight") end
+    if box.SetTextInsets then box:SetTextInsets(10, 8, 0, 0) end
+    setTextColor(box, THEME.text)
+    box.ledgerFill = box:CreateTexture(nil, "BACKGROUND")
+    box.ledgerFill:SetAllPoints(box)
+    setColor(box.ledgerFill, THEME.input)
+    box.ledgerBorder = createFlatBorder(box, THEME.borderSoft)
+    box:SetScript("OnEscapePressed", function(self) if self.ClearFocus then self:ClearFocus() end end)
+    box:SetScript("OnEnterPressed", function(self) if self.ClearFocus then self:ClearFocus() end end)
 end
 
 local function createEyebrow(parent, text)
@@ -574,9 +625,7 @@ local function renderBrowserDetail(frame, entry, api)
         button.icon:SetAlpha(slot.unavailable and 0.14 or (slot.empty and 0.32 or 1))
         setColor(button.slotBackground, slot.unavailable and THEME.input or THEME.slot)
         recolorBorder(button.borderEdges, slot.unavailable and THEME.borderSoft or (slot.empty and THEME.border or THEME.gold))
-        if button.glow then
-            if not slot.empty and not slot.unavailable then button.glow:Show() else button.glow:Hide() end
-        end
+        if button.glow then button.glow:Hide() end
         button.label:SetText(slot.displayName)
         setText(button.status, slot.statusText)
         button.empty = slot.empty
@@ -743,7 +792,8 @@ local function createProfessionsPage(api, frame)
 
     frame.professionHeading = createText(hero, "OVERLAY", "GameFontNormalHuge")
     frame.professionHeading:SetPoint("TOPLEFT", iconFrame, "TOPRIGHT", 16, -4)
-    frame.professionHeading:SetPoint("RIGHT", hero, "RIGHT", -16, 0)
+    frame.professionHeading:SetPoint("TOPRIGHT", hero, "TOPRIGHT", -16, -24)
+    frame.professionHeading:SetHeight(26)
     frame.professionHeading:SetJustifyH("LEFT")
     setTextColor(frame.professionHeading, THEME.text)
 
@@ -754,10 +804,11 @@ local function createProfessionsPage(api, frame)
 
     local searchLabel = createSectionLabel(panel, "SEARCH RECIPES")
     searchLabel:SetPoint("TOPLEFT", hero, "BOTTOMLEFT", 8, -16)
-    frame.professionSearchBox = api.CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    frame.professionSearchBox = api.CreateFrame("EditBox", nil, panel)
     frame.professionSearchBox:SetSize(300, UI.controlHeightCompact)
     frame.professionSearchBox:SetPoint("TOPLEFT", searchLabel, "BOTTOMLEFT", 0, -7)
     frame.professionSearchBox:SetAutoFocus(false)
+    GGM.StyleLedgerSearch(frame.professionSearchBox)
     frame.professionSearchBox:SetText("")
 
     frame.professionCount = createText(panel, "OVERLAY", "GameFontDisableSmall")
@@ -809,7 +860,10 @@ updateProfessionRecipeBrowser = function(frame)
             row = frame.api.CreateFrame("Button", nil, frame.professionRecipeContent)
             row:RegisterForClicks("LeftButtonUp")
             row:SetScript("OnClick", function(self) GGM.ShowRecipeDetailsWindow(frame, self.recipe) end)
-            if row.SetHighlightTexture then row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD") end
+            row.hover = row:CreateTexture(nil, "HIGHLIGHT")
+            row.hover:SetAllPoints(row)
+            setColor(row.hover, THEME.panelHover)
+            if row.SetHighlightTexture then row:SetHighlightTexture(row.hover) end
             row.outputIcon = row:CreateTexture(nil, "ARTWORK")
             row.outputIcon:SetSize(36, 36)
             row.outputIcon:SetPoint("TOPLEFT", row, "TOPLEFT", 11, -6)
@@ -825,13 +879,13 @@ updateProfessionRecipeBrowser = function(frame)
             setColor(innerBevelEdges[4], THEME.iconBevelShadow)
             row.name = createText(row, "OVERLAY", "GameFontHighlight")
             row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 54, -9)
-            row.name:SetPoint("RIGHT", row, "RIGHT", -12, 0)
             row.name:SetJustifyH("LEFT")
             setTextColor(row.name, THEME.text)
             row.knownBy = createText(row, "OVERLAY", "GameFontDisableSmall")
             row.knownBy:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -5)
-            row.knownBy:SetPoint("RIGHT", row, "RIGHT", -12, 0)
             row.knownBy:SetJustifyH("LEFT")
+            setTextColor(row.knownBy, THEME.muted)
+            if row.knownBy.SetSpacing then row.knownBy:SetSpacing(2) end
             row.separator = row:CreateTexture(nil, "BORDER")
             row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 10, 0)
             row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -10, 0)
@@ -846,14 +900,19 @@ updateProfessionRecipeBrowser = function(frame)
             owners[#owners + 1] = character .. " — " .. (owner.savedDate or "Date unavailable")
         end
         row.recipe = recipe
-        row.outputIcon:SetTexture(recipe.outputIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
+        row.outputIcon:SetTexture(GGM.ResolveRecipeOutputIcon(frame.api, recipe.recipeID, recipe.outputIcon)
+            or "Interface\\Icons\\INV_Misc_QuestionMark")
         row.name:SetText(recipe.name or "Unknown recipe")
         row.knownBy:SetText(#owners > 0 and ("Known by: " .. table.concat(owners, "\n")) or "Cached recipe snapshot")
-        local rowHeight = 48 + math.max(#owners - 1, 0) * 14
-        row:SetHeight(rowHeight)
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", frame.professionRecipeContent, "TOPLEFT", 0, -y)
         row:SetPoint("RIGHT", frame.professionRecipeContent, "RIGHT", 0, 0)
+        local contentWidth = frame.professionRecipeContent.GetWidth
+            and frame.professionRecipeContent:GetWidth() or 620
+        row.name:SetWidth(math.max(1, contentWidth - 66))
+        row.knownBy:SetWidth(math.max(1, contentWidth - 66))
+        local rowHeight = math.max(48, row.name:GetStringHeight() + row.knownBy:GetStringHeight() + 24)
+        row:SetHeight(rowHeight)
         row:Show()
         y = y + rowHeight + 1
     end
@@ -894,13 +953,13 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
 
     if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known equipment snapshots across your guild")
     elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "Review captured profession snapshots and recipes")
-    else setPageHeader(frame, "Bank", "Saved bank snapshots and shared storage") end
+    else setPageHeader(frame, "Bank", "Bank records are not yet available") end
 
     for _, tab in ipairs(frame.navigationTabs) do
         local selected = tab.key == selectedKey
-        setColor(tab.background, selected and THEME.panelRaised or THEME.rail)
-        if tab.label then setTextColor(tab.label, selected and THEME.text or THEME.textSoft) end
-        if tab.caption then setTextColor(tab.caption, selected and THEME.gold or THEME.muted) end
+        setColor(tab.background, selected and { 0.45, 0.28, 0.12, 0.55 } or { 0.10, 0.05, 0.025, 0.18 })
+        if tab.label then setTextColor(tab.label, THEME.leatherText) end
+        if tab.caption then setTextColor(tab.caption, selected and THEME.leatherText or THEME.leatherMuted) end
         if tab.accent then if selected then tab.accent:Show() else tab.accent:Hide() end end
         if tab.icon then tab.icon:SetAlpha(selected and 1 or 0.58) end
     end
@@ -970,10 +1029,8 @@ updateBrowserList = function(frame, api)
             setColor(row.selectedBar, THEME.gold)
             row.selectedBar:Hide()
             row.hover = row:CreateTexture(nil, "HIGHLIGHT")
-            row.hover:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+            setColor(row.hover, THEME.panelHover)
             row.hover:SetAllPoints(row)
-            row.hover:SetBlendMode("ADD")
-            row.hover:SetAlpha(0.34)
             if row.SetHighlightTexture then row:SetHighlightTexture(row.hover) end
 
             row.avatar = createSurface(api, row, THEME.panelRaised, THEME.borderSoft)
@@ -989,12 +1046,16 @@ updateBrowserList = function(frame, api)
             setTextColor(row.avatarText, THEME.goldBright)
 
             row.label = createText(row, "OVERLAY", "GameFontHighlight")
-            row.label:SetPoint("TOPLEFT", row.avatar, "TOPRIGHT", 11, -2)
-            row.label:SetPoint("RIGHT", row, "RIGHT", -12, 0)
+            row.label:SetPoint("TOPLEFT", row, "TOPLEFT", 53, -9)
+            row.label:SetPoint("TOPRIGHT", row, "TOPRIGHT", -12, -9)
+            row.label:SetHeight(17)
+            if row.label.SetMaxLines then row.label:SetMaxLines(1) end
             row.label:SetJustifyH("LEFT")
             row.realm = createText(row, "OVERLAY", "GameFontDisableSmall")
-            row.realm:SetPoint("TOPLEFT", row.label, "BOTTOMLEFT", 0, -3)
-            row.realm:SetPoint("RIGHT", row, "RIGHT", -12, 0)
+            row.realm:SetPoint("TOPLEFT", row, "TOPLEFT", 53, -29)
+            row.realm:SetPoint("TOPRIGHT", row, "TOPRIGHT", -12, -29)
+            row.realm:SetHeight(14)
+            if row.realm.SetMaxLines then row.realm:SetMaxLines(1) end
             row.realm:SetJustifyH("LEFT")
             row.separator = row:CreateTexture(nil, "BORDER")
             row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 10, 0)
@@ -1097,11 +1158,15 @@ local function createNavigationTab(api, frame, key, label, caption, iconPath, y)
     tab.label = createText(tab, "OVERLAY", "GameFontHighlight")
     tab.label:SetPoint("TOPLEFT", tab.icon, "TOPRIGHT", 11, -1)
     tab.label:SetText(label)
-    setTextColor(tab.label, THEME.textSoft)
+    setTextColor(tab.label, THEME.leatherText)
+    tab.label:SetWidth(103)
+    tab.label:SetJustifyH("LEFT")
     tab.caption = createText(tab, "OVERLAY", "GameFontDisableSmall")
     tab.caption:SetPoint("TOPLEFT", tab.label, "BOTTOMLEFT", 0, -2)
     tab.caption:SetText(caption)
-    setTextColor(tab.caption, THEME.muted)
+    setTextColor(tab.caption, THEME.leatherMuted)
+    tab.caption:SetWidth(103)
+    tab.caption:SetJustifyH("LEFT")
 
     tab.key = key
     tab:RegisterForClicks("LeftButtonUp")
@@ -1112,9 +1177,6 @@ end
 local function createGearPanel(api, frame)
     local panel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
     panel:SetSize(UI.detailColumnWidth, UI.windowHeight - UI.contentTop - UI.contentBottom)
-    panel.background:SetTexture("Interface\\FrameGeneral\\UI-Background-Marble")
-    panel.background:SetVertexColor(0.16, 0.105, 0.055, 1)
-    panel.background:SetAlpha(0.32)
     panel:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth + UI.pageMargin + UI.browserColumnWidth + UI.contentGap, -UI.contentTop)
 
     panel.header = panel:CreateTexture(nil, "BACKGROUND")
@@ -1225,24 +1287,16 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame:SetScript("OnDragStart", function(self) if self.StartMoving then self:StartMoving() end end)
     frame:SetScript("OnDragStop", function(self) if self.StopMovingOrSizing then self:StopMovingOrSizing() end end)
 
-    -- Keep Blizzard's BasicFrameTemplate chrome visible. The only custom shell
-    -- is the content fill inside it, which prevents the UI from feeling like a
-    -- freestanding addon dashboard.
-    if frame.Inset and frame.Inset.Hide then frame.Inset:Hide() end
+    GGM.SkinLedgerWindow(frame)
     frame.shell = frame:CreateTexture(nil, "BACKGROUND", nil, 1)
     frame.shell:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -25)
     frame.shell:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -4, 4)
-    frame.shell:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background-Dark")
-    frame.shell:SetVertexColor(THEME.canvas[1], THEME.canvas[2], THEME.canvas[3], 1)
-    frame.shell:SetAlpha(THEME.canvas[4])
+    frame.shell:SetTexture(MEDIA .. "Parchment")
 
     frame.navigationRail = createSurface(api, frame, THEME.rail, THEME.borderSoft)
     frame.navigationRail:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -28)
     frame.navigationRail:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 4, 5)
     frame.navigationRail:SetWidth(UI.railWidth - 3)
-    frame.navigationRail.background:SetTexture("Interface\\FrameGeneral\\UI-Background-Marble")
-    frame.navigationRail.background:SetVertexColor(0.18, 0.12, 0.07, 1)
-    frame.navigationRail.background:SetAlpha(0.82)
 
     frame.brandIconFrame = createSurface(api, frame.navigationRail, THEME.slot, THEME.gold)
     frame.brandIconFrame:SetSize(44, 44)
@@ -1255,25 +1309,42 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.brandTitle = createText(frame.navigationRail, "OVERLAY", "GameFontNormalLarge")
     frame.brandTitle:SetPoint("TOPLEFT", frame.brandIconFrame, "TOPRIGHT", 11, -2)
     frame.brandTitle:SetText("Guild Ledger")
-    setTextColor(frame.brandTitle, THEME.text)
+    setTextColor(frame.brandTitle, THEME.leatherText)
+    frame.brandTitle:SetWidth(102)
+    frame.brandTitle:SetJustifyH("LEFT")
     frame.brandSubtitle = createText(frame.navigationRail, "OVERLAY", "GameFontDisableSmall")
     frame.brandSubtitle:SetPoint("TOPLEFT", frame.brandTitle, "BOTTOMLEFT", 0, -3)
     frame.brandSubtitle:SetText("GEAR MEMORY")
-    setTextColor(frame.brandSubtitle, THEME.gold)
+    setTextColor(frame.brandSubtitle, THEME.leatherMuted)
     createDivider(frame.navigationRail, 12, 12, -80)
 
     local navLabel = createSectionLabel(frame.navigationRail, "LIBRARY")
     navLabel:SetPoint("TOPLEFT", frame.navigationRail, "TOPLEFT", 16, -100)
+    setTextColor(navLabel, THEME.leatherMuted)
     frame.navigationTabs = {
         createNavigationTab(api, frame, "Character", "Characters", "Gear snapshots", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", -122),
         createNavigationTab(api, frame, "Professions", "Professions", "Recipe memory", "Interface\\Icons\\Trade_BlackSmithing", -174),
-        createNavigationTab(api, frame, "Bank", "Bank", "Shared storage", "Interface\\Icons\\INV_Misc_Bag_10", -226),
+        createNavigationTab(api, frame, "Bank", "Bank", "Not yet available", "Interface\\Icons\\INV_Misc_Bag_10", -226),
     }
 
     frame.railFooter = createText(frame.navigationRail, "OVERLAY", "GameFontDisableSmall")
     frame.railFooter:SetPoint("BOTTOMLEFT", frame.navigationRail, "BOTTOMLEFT", 16, 18)
     frame.railFooter:SetText("LAST-KNOWN GUILD DATA")
-    setTextColor(frame.railFooter, THEME.muted)
+    setTextColor(frame.railFooter, THEME.leatherMuted)
+    frame.railFooter:SetWidth(UI.railWidth - 32)
+    frame.railFooter:SetJustifyH("LEFT")
+
+    -- Book fold occupies the existing column gap, leaving hit regions intact.
+    frame.pageSeam = frame:CreateTexture(nil, "ARTWORK")
+    frame.pageSeam:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth + UI.pageMargin + UI.browserColumnWidth + 5, -UI.contentTop)
+    frame.pageSeam:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", UI.railWidth + UI.pageMargin + UI.browserColumnWidth + 5, UI.contentBottom)
+    frame.pageSeam:SetWidth(6)
+    setColor(frame.pageSeam, { 0.30, 0.17, 0.07, 0.22 })
+    frame.pageEdge = frame:CreateTexture(nil, "ARTWORK")
+    frame.pageEdge:SetPoint("TOPLEFT", frame.pageSeam, "TOPRIGHT", 0, 0)
+    frame.pageEdge:SetPoint("BOTTOMLEFT", frame.pageSeam, "BOTTOMRIGHT", 0, 0)
+    frame.pageEdge:SetWidth(2)
+    setColor(frame.pageEdge, { 1, 0.92, 0.75, 0.55 })
 
     frame.headerBackground = frame:CreateTexture(nil, "BACKGROUND")
     frame.headerBackground:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth, -28)
@@ -1308,16 +1379,17 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     frame.searchLabel = createSectionLabel(frame.searchPanel, "SEARCH")
     frame.searchLabel:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 14, -92)
-    frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel, "InputBoxTemplate")
+    frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel)
     frame.searchBox:SetSize(196, UI.controlHeightCompact)
     frame.searchBox:SetPoint("TOPRIGHT", frame.searchPanel, "TOPRIGHT", -14, -88)
     frame.searchBox:SetAutoFocus(false)
+    GGM.StyleLedgerSearch(frame.searchBox)
     if frame.searchBox.SetTextInsets then frame.searchBox:SetTextInsets(10, 8, 0, 0) end
     frame.searchBoxBackground = frame.searchBox:CreateTexture(nil, "BACKGROUND")
     frame.searchBoxBackground:SetPoint("TOPLEFT", frame.searchBox, "TOPLEFT", -2, 2)
     frame.searchBoxBackground:SetPoint("BOTTOMRIGHT", frame.searchBox, "BOTTOMRIGHT", 2, -2)
     setColor(frame.searchBoxBackground, THEME.input)
-    frame.searchBoxBorder = {}
+    frame.searchBoxBorder = frame.searchBox.ledgerBorder
     frame.searchHint = createText(frame.searchBox, "OVERLAY", "GameFontDisableSmall")
     frame.searchHint:SetPoint("LEFT", frame.searchBox, "LEFT", 10, 0)
     frame.searchHint:SetText("Name or realm")
@@ -1331,13 +1403,13 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.searchBox:SetScript("OnTextChanged", function() updateBrowserList(frame, api) end)
 
     frame.listPanel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
-    frame.listPanel:SetSize(UI.browserColumnWidth, 446)
+    frame.listPanel:SetSize(UI.browserColumnWidth, 436)
     frame.listPanel:SetPoint("TOPLEFT", frame.searchPanel, "BOTTOMLEFT", 0, -UI.contentGap)
     frame.characterCount = createSectionLabel(frame.listPanel, "0 characters")
     frame.characterCount:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 14, -13)
     local listHint = createText(frame.listPanel, "OVERLAY", "GameFontDisableSmall")
     listHint:SetPoint("TOPRIGHT", frame.listPanel, "TOPRIGHT", -14, -13)
-    listHint:SetText("SELECT TO INSPECT")
+    listHint:SetText("SAVED RECORDS")
     setTextColor(listHint, THEME.muted)
     createDivider(frame.listPanel, 12, 12, -34)
 
@@ -1357,11 +1429,16 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.gearPanel = createGearPanel(api, frame)
     frame.characterLine = createText(frame.gearPanel, "OVERLAY", "GameFontNormalHuge")
     frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 18, -36)
+    frame.characterLine:SetWidth(345)
+    frame.characterLine:SetHeight(28)
+    frame.characterLine:SetJustifyH("LEFT")
     setTextColor(frame.characterLine, THEME.text)
     frame.realmLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
     frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 1, -4)
+    frame.realmLine:SetWidth(345)
+    frame.realmLine:SetJustifyH("LEFT")
     setTextColor(frame.realmLine, THEME.muted)
-    frame.snapshotCaption = createSectionLabel(frame.gearPanel, "CAPTURED")
+    frame.snapshotCaption = createSectionLabel(frame.gearPanel, "LAST-KNOWN GEAR")
     frame.snapshotCaption:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -18, -18)
     frame.capturedLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
     frame.capturedLine:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -18, -36)
@@ -1384,6 +1461,10 @@ function GGM.CreateGuildGearBrowserWindow(api)
         frame.characterModelView.model:SetSize(222, 292)
         frame.characterModelView.model:SetPoint("BOTTOM", frame.modelStage, "BOTTOM", 0, 8)
         if frame.characterModelView.model.background then setColor(frame.characterModelView.model.background, THEME.input, 0.35) end
+        setTextColor(frame.characterModelView.raceLabel, THEME.text)
+        setTextColor(frame.characterModelView.sexLabel, THEME.muted)
+        setTextColor(frame.characterModelView.caption, THEME.muted)
+        if frame.characterModelView.model.portraitBorder then setColor(frame.characterModelView.model.portraitBorder, THEME.border) end
         frame.characterModelView.model:Hide()
     end
     frame.modelUnavailableLabel = createText(frame.modelStage, "OVERLAY", "GameFontDisableSmall")
@@ -1427,7 +1508,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
         page:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth + UI.pageMargin, -UI.contentTop)
         page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -UI.pageMargin, UI.contentBottom)
         page.emptyCard = createEmptyStateCard(api, page, "Interface\\Icons\\INV_Misc_Bag_10",
-            "Bank snapshots", "This section is prepared for the existing bank feature when its data layer is available. No storage or synchronization behavior has been changed.")
+            "Bank records unavailable", "Bank records are not yet supported. Your saved characters and profession recipes are available in the other chapters.")
         page.emptyCard:SetPoint("CENTER", page, "CENTER", 0, -8)
         page:Hide()
         frame.placeholderPages.Bank = page

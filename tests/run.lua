@@ -17,6 +17,7 @@ local suites = {
     "tests.main_test",
     "tests.saved_character_model_test",
     "tests.recipe_details_test",
+    "tests.recipe_output_icon_test",
 }
 
 for _, moduleName in ipairs(suites) do
