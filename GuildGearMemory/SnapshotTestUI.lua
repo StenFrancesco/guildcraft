@@ -11,10 +11,9 @@ local function hasValidDisplayShape(record)
     if type(record.identity.name) ~= "string" or record.identity.name == "" then return false end
     if type(record.identity.realm) ~= "string" or record.identity.realm == "" then return false end
     if record.identity.key ~= record.identity.name .. "-" .. record.identity.realm then return false end
-    if type(record.gear) ~= "table" or record.gear.complete ~= true then return false end
-    if type(record.gear.capturedAt) ~= "number" then return false end
-    if type(record.gear.slots) ~= "table" then return false end
-    return true
+    return type(record.gear) == "table"
+        and type(GGM.ValidateStoredGear) == "function"
+        and GGM.ValidateStoredGear(record.gear, true) == true
 end
 
 local slotColumns = {
@@ -141,11 +140,11 @@ local function hasValidBrowserDetailRecord(record)
         and record.identity.realm ~= ""
         and record.identity.key == record.identity.name .. "-" .. record.identity.realm
         and type(record.gear) == "table"
-        and type(record.gear.slots) == "table"
-        and type(record.gear.capturedAt) == "number"
     if not baseValid then return false end
     if record.complete == true then
-        return record.gear.complete == true and GGM.ValidateCompleteSnapshot(record.gear) == true
+        return record.gear.complete == true
+            and type(GGM.ValidateStoredGear) == "function"
+            and GGM.ValidateStoredGear(record.gear, true) == true
     end
     if record.complete ~= false or record.completeness ~= "incomplete" or record.gear.complete ~= false
         or type(GGM.GetCharacterRecord) ~= "function" then return false end
@@ -162,21 +161,24 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
 
     local slots = {}
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local savedSlot = record.gear.slots[trackedSlot.key]
+        local state, stateErr = GGM.GetStoredGearSlot(record.gear, trackedSlot.key)
+        if not state then return { hasRecord = false, error = stateErr } end
         local slotTexture = getSlotTexture(api, trackedSlot)
-        local unavailable = savedSlot == nil or savedSlot.unavailable == true
-        local empty = not unavailable and savedSlot.itemID == false
+        local unavailable = state.state == "unavailable"
+        local empty = state.state == "empty"
+        local itemID, itemLink
+        if state.state == "equipped" then
+            itemID = state.itemID
+            itemLink = GGM.BuildItemHyperlink(api, state.itemString)
+            if not itemLink then return { hasRecord = false } end
+        end
         local icon = slotTexture
-        if not unavailable and not empty then icon = getItemIcon(api, savedSlot.itemID) or slotTexture end
+        if itemID then icon = getItemIcon(api, itemID) or slotTexture end
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
         local displayName = slotDisplayNames[trackedSlot.key]
-        local itemID, itemLink, inventorySlotID
-        if savedSlot and not unavailable then
-            itemID, itemLink, inventorySlotID = savedSlot.itemID, savedSlot.itemLink, savedSlot.inventorySlotID
-        end
         table.insert(slots, {
             key = trackedSlot.key,
-            inventorySlotID = inventorySlotID,
+            inventorySlotID = state.inventorySlotID,
             itemID = itemID,
             itemLink = itemLink,
             empty = empty,
@@ -212,25 +214,19 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
     }
 end
 
-function GGM.BuildSnapshotViewModel(record, formatTime)
+function GGM.BuildSnapshotViewModel(record, formatTime, api)
+    api = type(api) == "table" and api or {}
     if not hasValidDisplayShape(record) then return missingModel() end
     local slotRows = {}
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local savedSlot = record.gear.slots[trackedSlot.key]
-        local valueText
-        if savedSlot == nil and GGM.OPTIONAL_TRACKED_SLOTS[trackedSlot.key] == true then
-            valueText = "No data"
-        elseif type(savedSlot) ~= "table" then
-            return missingModel()
-        elseif savedSlot.unavailable == true then
-            valueText = "No data"
-        elseif type(savedSlot.inventorySlotID) ~= "number" then
-            return missingModel()
-        elseif type(savedSlot.itemID) == "number" and type(savedSlot.itemLink) == "string" and savedSlot.itemLink ~= "" then
-            valueText = savedSlot.itemLink
-        elseif savedSlot.itemID == false and savedSlot.itemLink == false then
-            valueText = "Empty"
-        else return missingModel() end
+        local state = GGM.GetStoredGearSlot(record.gear, trackedSlot.key)
+        if not state then return missingModel() end
+        local valueText = state.state == "empty" and "Empty"
+            or (state.state == "unavailable" and "No data" or nil)
+        if state.state == "equipped" then
+            valueText = GGM.BuildItemHyperlink(api, state.itemString)
+            if not valueText then return missingModel() end
+        end
         table.insert(slotRows, { key = trackedSlot.key, valueText = valueText })
     end
     local capturedAtText = tostring(record.gear.capturedAt)
@@ -1488,6 +1484,11 @@ local function printAddonStatus(api)
     emit("Guild Gear Memory status:")
     if GGM.startupError then
         emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
+        if type(GGM.startupError) == "string"
+            and GGM.startupError:match("^unsupported%-schema%-version:%d+$") then
+            emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/GuildGearMemory.lua (or remove only its GuildGearMemoryDB global), then relaunch.")
+            emit("This clears cached gear, profession snapshots/index data, and local-character metadata.")
+        end
         return
     end
     if type(GGM.db) ~= "table" then

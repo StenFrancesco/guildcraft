@@ -144,7 +144,16 @@ local function handleSnapshotRequest(sync, sender, message)
     if sync.snapshotResponseCooldownEntryCount >= GGM.SYNC_MAX_SNAPSHOT_RESPONSE_COOLDOWN_ENTRIES then return "ignored", nil end
     local responder, responderErr = GGM.BuildPlayerIdentity(sync.api)
     if not responder then return nil, responderErr end
-    local payload, encodeErr = GGM.EncodeSyncSnapshotResponse(record.identity, message.requester, responder, record.gear, sequence, message.requestID)
+    local runtimeSnapshot, snapshotErr = GGM.BuildRuntimeGearSnapshot(sync.api, record.gear)
+    if not runtimeSnapshot then return nil, snapshotErr end
+    local payload, encodeErr = GGM.EncodeSyncSnapshotResponse(
+        record.identity,
+        message.requester,
+        responder,
+        runtimeSnapshot,
+        sequence,
+        message.requestID
+    )
     if not payload then return nil, encodeErr end
     local responseKey = snapshotResponseKey(message.requester.key, message.target.key, message.requestID)
     if sync.pendingSnapshotResponses[responseKey] then return "ignored", nil end
@@ -282,9 +291,10 @@ function GGM.PublishConfirmedSlot(sync, characterKey, slotKey, slotValue, confir
     local persistedSequence, sequenceErr = GGM.GetConfirmedSequence(record)
     if persistedSequence == nil then return false, sequenceErr end
     if persistedSequence ~= confirmedSequence then return false, "confirmed-sequence-mismatch" end
-    local persistedSlot = record.gear.slots[slotKey]
-    if not persistedSlot or not GGM.AreGearSlotValuesEqual(persistedSlot, slotValue) then return false, "confirmed-slot-mismatch" end
-    local payload, encodeErr = GGM.EncodeSyncSlotUpdate(record.identity, confirmedSequence, slotKey, slotValue, confirmedAt)
+    local persistedSlot, persistedSlotErr = GGM.BuildRuntimeGearSlot(sync.api, record.gear, slotKey)
+    if not persistedSlot then return false, persistedSlotErr end
+    if not GGM.AreGearSlotValuesEqual(persistedSlot, slotValue) then return false, "confirmed-slot-mismatch" end
+    local payload, encodeErr = GGM.EncodeSyncSlotUpdate(record.identity, confirmedSequence, slotKey, persistedSlot, confirmedAt)
     if not payload then return false, encodeErr end
     return GGM.SendSyncPayload(sync.transport, payload)
 end

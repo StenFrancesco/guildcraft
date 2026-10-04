@@ -8,6 +8,7 @@
 
 Constants.lua
 CharacterIdentity.lua
+GearData.lua
 GearSnapshot.lua
 ProfessionSnapshot.lua
 ProfessionIndex.lua

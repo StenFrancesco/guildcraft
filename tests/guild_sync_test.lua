@@ -3,6 +3,7 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
     T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
@@ -22,7 +23,7 @@ local function snapshot(GGM, base, capturedAt)
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
         local itemID = base + index
         result.slots[slot.key] = {
-            inventorySlotID = index,
+            inventorySlotID = slot.inventorySlotID,
             itemID = itemID,
             itemLink = "|Hitem:" .. itemID .. "|h[" .. slot.key .. "]|h",
         }
@@ -96,14 +97,16 @@ T.test("incremental updates require a complete compatible baseline", function()
     assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 6000), 4))
     state, err = GGM.HandleGuildSyncPayload(sync, alice.key, payload)
     T.assertEqual(state, "slot-applied"); T.assertNil(err)
-    T.assertEqual(db.characters[alice.key].gear.slots.HEAD.itemID, 9901)
+    T.assertEqual(GGM.ParseItemString(db.characters[alice.key].gear.slots[1]), 9901)
     T.assertEqual(db.characters[alice.key].confirmedSequence, 5)
 
     assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 9900), 4))
     local preservedSlots = {}
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local slotValue = db.characters[alice.key].gear.slots[trackedSlot.key]
-        preservedSlots[trackedSlot.key] = { inventorySlotID = slotValue.inventorySlotID, itemID = slotValue.itemID, itemLink = slotValue.itemLink }
+        preservedSlots[trackedSlot.key] = {
+            itemString = db.characters[alice.key].gear.slots[trackedSlot.inventorySlotID],
+            unavailable = db.characters[alice.key].gear.unavailableSlots[trackedSlot.inventorySlotID],
+        }
     end
     local gapPayload = assert(GGM.EncodeSyncSlotUpdate(alice, 6, "HEAD",
         { inventorySlotID = 1, itemID = 9903, itemLink = "|Hitem:9903|h[Gap]|h" }, 1700002302))
@@ -113,7 +116,7 @@ T.test("incremental updates require a complete compatible baseline", function()
     local stale = assert(GGM.GetCharacterRecord(db, alice.key))
     T.assertFalse(stale.complete)
     T.assertTrue(stale.refreshNeeded)
-    T.assertEqual(stale.gear.slots.HEAD.itemID, 9901)
+    T.assertEqual(GGM.ParseItemString(stale.gear.slots[1]), 9901)
 
     local laterPayload = assert(GGM.EncodeSyncSlotUpdate(alice, 8, "HEAD",
         { inventorySlotID = 1, itemID = 9908, itemLink = "|Hitem:9908|h[Later]|h" }, 1700002304))
@@ -124,7 +127,8 @@ T.test("incremental updates require a complete compatible baseline", function()
     T.assertEqual(stale.requiredBaselineSequence, 8)
     T.assertEqual(stale.confirmedSequence, 4)
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        T.assertTrue(GGM.AreGearSlotValuesEqual(stale.gear.slots[trackedSlot.key], preservedSlots[trackedSlot.key]))
+        T.assertEqual(stale.gear.slots[trackedSlot.inventorySlotID], preservedSlots[trackedSlot.key].itemString)
+        T.assertEqual(stale.gear.unavailableSlots[trackedSlot.inventorySlotID], preservedSlots[trackedSlot.key].unavailable)
     end
     T.assertEqual(#sends, 0)
 
@@ -151,7 +155,7 @@ T.test("incremental sender identity mismatch fails closed", function()
     local payload = assert(GGM.EncodeSyncSlotUpdate(alice, 2, "HEAD", { inventorySlotID = 1, itemID = 9902, itemLink = "|Hitem:9902|h[Spoof]|h" }, 1700002400))
     local state, err = GGM.HandleGuildSyncPayload(sync, "Mallory-Silvermoon", payload)
     T.assertNil(state); T.assertEqual(err, "sync-sender-identity-mismatch")
-    T.assertEqual(db.characters[alice.key].gear.slots.HEAD.itemID, 6001)
+    T.assertEqual(GGM.ParseItemString(db.characters[alice.key].gear.slots[1]), 6001)
 end)
 
 T.test("explicit request receives a complete offline cached record", function()
@@ -371,7 +375,7 @@ T.test("unavailable or malformed request produces no response", function()
     T.assertEqual(state, "ignored"); T.assertNil(err); T.assertEqual(#sends, 0)
     db.characters[alice.key] = { complete = true, identity = alice, gear = { complete = true, capturedAt = 1, slots = {} }, confirmedSequence = 0 }
     state, err = GGM.HandleGuildSyncPayload(sync, bob.key, request)
-    T.assertNil(state); T.assertEqual(err, "snapshot-slot-missing:HEAD"); T.assertEqual(#sends, 0)
+    T.assertNil(state); T.assertEqual(err, "snapshot-unavailable-slots-invalid"); T.assertEqual(#sends, 0)
 end)
 
 T.test("lower sequence response cannot replace newer record", function()
@@ -380,7 +384,7 @@ T.test("lower sequence response cannot replace newer record", function()
     local db = assert(GGM.InitializeDatabase(nil)); assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 8000), 9))
     local sync = assert(GGM.CreateGuildSync(clientApi(bob), db)); local payload = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, identity("Carol", "Silvermoon", "Carol"), snapshot(GGM, 9000, 1700003000), 8, "000001"))
     local state, err = GGM.HandleGuildSyncPayload(sync, "Carol-Silvermoon", payload)
-    T.assertEqual(state, "ignored"); T.assertNil(err); T.assertEqual(db.characters[alice.key].gear.slots.HEAD.itemID, 8001)
+    T.assertEqual(state, "ignored"); T.assertNil(err); T.assertEqual(GGM.ParseItemString(db.characters[alice.key].gear.slots[1]), 8001)
 end)
 
 T.test("unsolicited snapshot response is rejected", function()
@@ -392,7 +396,7 @@ T.test("unsolicited snapshot response is rejected", function()
     local state, err = GGM.HandleGuildSyncPayload(sync, "Carol-Silvermoon", payload)
     T.assertEqual(state, "ignored"); T.assertNil(err)
     T.assertEqual(db.characters[alice.key].confirmedSequence, 9)
-    T.assertEqual(db.characters[alice.key].gear.slots.HEAD.itemID, 8001)
+    T.assertEqual(GGM.ParseItemString(db.characters[alice.key].gear.slots[1]), 8001)
 end)
 
 T.test("snapshot response matching an explicit request is accepted", function()
@@ -423,15 +427,16 @@ T.test("received local snapshot refreshes the active gear tracker baseline", fun
     local api, sends, _, _, timers = clientApi(alice)
     local slotIDs, itemIDs, itemLinks = {}, {}, {}
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
-        slotIDs[slot.inventoryName] = index
-        itemIDs[index] = index == 1 and 8001 or 9000 + index
-        itemLinks[index] = "|Hitem:" .. tostring(itemIDs[index]) .. "|h[" .. slot.key .. "]|h"
+        slotIDs[slot.inventoryName] = slot.inventorySlotID
+        itemIDs[slot.inventorySlotID] = index == 1 and 8001 or 9000 + index
+        itemLinks[slot.inventorySlotID] = "|Hitem:" .. tostring(itemIDs[slot.inventorySlotID]) .. "|h[" .. slot.key .. "]|h"
     end
     api.GetInventorySlotInfo = function(name) return slotIDs[name] end
     api.GetInventoryItemID = function(_, slotID) return itemIDs[slotID] end
     api.GetInventoryItemLink = function(_, slotID) return itemLinks[slotID] end
     api.GetServerTime = function() return 1700003000 end
-    local tracker = assert(GGM.CreateStableGearTracker(api, alice.key, db.characters[alice.key].gear, 30))
+    local initialRuntimeSnapshot = assert(GGM.BuildRuntimeGearSnapshot(api, db.characters[alice.key].gear))
+    local tracker = assert(GGM.CreateStableGearTracker(api, alice.key, initialRuntimeSnapshot, 30))
     local sync = assert(GGM.CreateGuildSync(api, db))
     sync.localGearTracker = tracker
     assert(GGM.RequestCompleteSnapshot(sync, alice))
@@ -465,7 +470,7 @@ T.test("received slot delta leaves saved model identity untouched without reques
     T.assertEqual(saved.identity.raceID, 3)
     T.assertEqual(saved.identity.sex, 3)
     T.assertEqual(saved.identity.displayID, 54321)
-    T.assertEqual(saved.gear.slots.HEAD.itemID, 9999)
+    T.assertEqual(GGM.ParseItemString(saved.gear.slots[1]), 9999)
     T.assertEqual(#sends, 0)
 end)
 
@@ -555,6 +560,87 @@ T.test("confirmed publication uses the persisted sequence and slot", function()
     T.assertTrue(ok); T.assertNil(err); drain(); T.assertTrue(#sends > 0)
 end)
 
+T.test("confirmed publication reconstructs protocol five slot data from compact storage", function()
+    local GGM = loadModules()
+    local alice = identity("Alice", "Silvermoon", "A")
+    local db = assert(GGM.InitializeDatabase(nil))
+    assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 2000), 4))
+    local api = clientApi(alice)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local captured
+    local encode = GGM.EncodeSyncSlotUpdate
+    GGM.EncodeSyncSlotUpdate = function(identityValue, sequence, slotKey, slotValue, confirmedAt)
+        captured = GGM.CopyGearSlotValue(slotValue)
+        return encode(identityValue, sequence, slotKey, slotValue, confirmedAt)
+    end
+
+    local record = assert(GGM.GetCompleteCharacterRecord(db, alice.key))
+    local runtimeSlot = assert(GGM.BuildRuntimeGearSlot(api, record.gear, "HEAD"))
+    local sent, err = GGM.PublishConfirmedSlot(sync, alice.key, "HEAD", runtimeSlot, record.gear.capturedAt, 4)
+    T.assertTrue(sent)
+    T.assertNil(err)
+    T.assertEqual(captured.inventorySlotID, 1)
+    T.assertEqual(captured.itemID, runtimeSlot.itemID)
+    T.assertTrue(type(captured.itemLink) == "string" and captured.itemLink:match("^|Hitem:") ~= nil)
+end)
+
+local function oversizedStoredSnapshot(GGM)
+    local result = snapshot(GGM, 3000)
+    local itemString = "item:123" .. string.rep(":0", 156)
+    T.assertTrue(#itemString <= GGM.GEAR_MAX_ITEM_STRING_BYTES)
+    local itemID = assert(GGM.ParseItemString(itemString))
+    result.slots.HEAD = {
+        inventorySlotID = 1,
+        itemID = itemID,
+        itemLink = "|H" .. itemString .. "|h[Long]|h",
+    }
+    return result
+end
+
+T.test("oversized reconstructed incremental hyperlink fails before queueing", function()
+    local GGM = loadModules()
+    local alice = identity("Alice", "Silvermoon", "A")
+    local db = assert(GGM.InitializeDatabase(nil))
+    assert(GGM.SaveCompleteCharacterRecord(db, alice, oversizedStoredSnapshot(GGM), 4))
+    local api, sends = clientApi(alice)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local before = assert(GGM.GetCompleteCharacterRecord(db, alice.key))
+    local runtimeSlot = assert(GGM.BuildRuntimeGearSlot(api, before.gear, "HEAD"))
+
+    local sent, err = GGM.PublishConfirmedSlot(sync, alice.key, "HEAD", runtimeSlot, before.gear.capturedAt, 4)
+
+    T.assertFalse(sent)
+    T.assertEqual(err, "sync-item-link-too-long")
+    T.assertEqual(#sends, 0)
+    T.assertEqual(#sync.transport.outboundFrames, 0)
+    local after = assert(GGM.GetCompleteCharacterRecord(db, alice.key))
+    T.assertEqual(after.confirmedSequence, 4)
+    T.assertEqual(after.gear.slots[1], before.gear.slots[1])
+end)
+
+T.test("oversized reconstructed snapshot fails before a claim or snapshot is queued", function()
+    local GGM = loadModules()
+    local alice, bob = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local db = assert(GGM.InitializeDatabase(nil))
+    assert(GGM.SaveCompleteCharacterRecord(db, alice, oversizedStoredSnapshot(GGM), 4))
+    local api, sends, _, _, timers = clientApi(alice)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local request = assert(GGM.EncodeSyncSnapshotRequest(bob, alice, "000001"))
+
+    local state, err = GGM.HandleGuildSyncPayload(sync, bob.key, request)
+
+    T.assertNil(state)
+    T.assertEqual(err, "sync-item-link-too-long")
+    T.assertEqual(#sends, 0)
+    T.assertEqual(#timers, 0)
+    T.assertEqual(sync.pendingSnapshotResponseCount, 0)
+    T.assertEqual(#sync.transport.outboundFrames, 0)
+    local record = assert(GGM.GetCompleteCharacterRecord(db, alice.key))
+    T.assertEqual(record.confirmedSequence, 4)
+    T.assertTrue(record.gear.complete)
+    T.assertNotNil(record.gear.slots[1])
+end)
+
 T.test("migrated incomplete records do not answer full snapshot requests", function()
     local GGM = loadModules()
     local alice, bob = identity("Alice", "Silvermoon", "Player-1234-AAAA"), identity("Bob", "Silvermoon", "Player-1234-BBBB")
@@ -562,7 +648,7 @@ T.test("migrated incomplete records do not answer full snapshot requests", funct
     local migratedSlots = {}
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
         if slot.key ~= "SHIRT" and slot.key ~= "TABARD" and slot.key ~= "RANGED" then
-            migratedSlots[slot.key] = { inventorySlotID = index, itemID = 7000 + index, itemLink = "|Hitem:" .. tostring(7000 + index) .. "|h[Legacy]|h" }
+            migratedSlots[slot.key] = { inventorySlotID = slot.inventorySlotID, itemID = 7000 + index, itemLink = "|Hitem:" .. tostring(7000 + index) .. "|h[Legacy]|h" }
         end
     end
     db.characters[alice.key] = {

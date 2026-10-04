@@ -36,7 +36,7 @@ local function indexedMetadata(GGM, professionID)
     }
 end
 
-T.test("profession browser reads saved recipes from the schema six recipe index", function()
+T.test("profession browser reads saved recipes from the schema seven recipe index", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
@@ -69,7 +69,7 @@ T.test("first-run database creates profession index state", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
 
-    T.assertEqual(db.schemaVersion, 6)
+    T.assertEqual(db.schemaVersion, 7)
     T.assertEqual(db.nextLocalCharacterID, 1)
     T.assertEqual(type(db.professionCharacters), "table")
     T.assertEqual(type(db.localCharacterIDByGUID), "table")
@@ -1330,7 +1330,7 @@ T.test("complete roster purges an absent non-local gear-only record", function()
     T.assertNil(db.characters[identity.key])
 end)
 
-T.test("complete roster retains unresolved schema five local records", function()
+T.test("complete roster retains unresolved legacy local records without migration", function()
     local GGM = loadModules()
     local db = assert(GGM.InitializeDatabase(nil))
     local key = "UnresolvedLocal-Silvermoon"
@@ -1346,13 +1346,7 @@ T.test("complete roster retains unresolved schema five local records", function(
         confirmedSequence = 0,
     }
     db.localCharacters[key] = true
-    db.schemaVersion = 5
-    db.localCharacterGUIDs = nil
 
-    local migrated, migrationErr = GGM.InitializeDatabase(db)
-
-    T.assertNil(migrationErr)
-    T.assertTrue(migrated == db)
     T.assertFalse(GGM.IsLocalCharacterGUID(db, gearIdentity.guid))
     T.assertFalse(GGM.IsLocalCharacterGUID(db, professionIdentity.guid))
     local localID = db.localCharacterIDByGUID[professionIdentity.guid]

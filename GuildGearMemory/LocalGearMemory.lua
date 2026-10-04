@@ -105,10 +105,15 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
         end
     end
 
+    local baseline, baselineErr = GGM.BuildRuntimeGearSnapshot(api, record.gear)
+    if not baseline then
+        return nil, baselineErr
+    end
+
     local tracker, trackerErr = GGM.CreateStableGearTracker(
         api,
         identity.key,
-        record.gear,
+        baseline,
         stabilityDelaySeconds,
         makeConfirmedSlotHandler(db, onConfirmed)
     )
@@ -126,7 +131,14 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
         if not currentRecord then
             return nil, currentRecordErr
         end
-        currentRecord.gear.slots[slotKey] = { unavailable = true }
+        local unavailableStored, unavailableErr = GGM.SetStoredGearSlot(
+            currentRecord.gear,
+            slotKey,
+            { unavailable = true }
+        )
+        if not unavailableStored then
+            return nil, unavailableErr
+        end
         tracker.confirmedSlots[slotKey] = { unavailable = true }
     end
 

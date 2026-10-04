@@ -47,17 +47,6 @@ local function copyProfessionSnapshot(snapshot)
     }
 end
 
-local function copySlotValue(source)
-    if source == nil or source.unavailable == true then
-        return { unavailable = true }
-    end
-    return {
-        inventorySlotID = source.inventorySlotID,
-        itemID = source.itemID,
-        itemLink = source.itemLink,
-    }
-end
-
 local function isTrackedSlotKey(slotKey)
     for _, slot in ipairs(GGM.TRACKED_SLOTS) do
         if slot.key == slotKey then
@@ -66,20 +55,6 @@ local function isTrackedSlotKey(slotKey)
     end
 
     return false
-end
-
-local function copySnapshot(snapshot)
-    local copied = {
-        complete = snapshot.complete,
-        capturedAt = snapshot.capturedAt,
-        slots = {},
-    }
-
-    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
-        copied.slots[slot.key] = copySlotValue(snapshot.slots[slot.key])
-    end
-
-    return copied
 end
 
 local function validateIdentity(identity)
@@ -178,8 +153,6 @@ function GGM.GetConfirmedSequence(record)
     return readConfirmedSequence(record)
 end
 
-local PREVIOUS_SCHEMA_VERSION = 5
-
 local function validLocalCharacterGUIDs(value)
     if type(value) ~= "table" then return false end
     for guid, owned in pairs(value) do
@@ -188,57 +161,6 @@ local function validLocalCharacterGUIDs(value)
         end
     end
     return true
-end
-
-local function storedIdentityGUID(record, expectedKey)
-    local identity = type(record) == "table" and record.identity or nil
-    if type(identity) ~= "table"
-        or identity.key ~= expectedKey
-        or not GGM.IsProfessionGUID(identity.guid) then
-        return nil
-    end
-    return identity.guid
-end
-
-local function resolveLegacyLocalGUID(db, characterKey)
-    local gearGUID = storedIdentityGUID(db.characters[characterKey], characterKey)
-    local professionGUID = storedIdentityGUID(db.professions[characterKey], characterKey)
-
-    if gearGUID and professionGUID and gearGUID ~= professionGUID then
-        return nil
-    end
-    return gearGUID or professionGUID
-end
-
-local function migrateSchemaFive(db)
-    if type(db.characters) ~= "table" then
-        return nil, "database-characters-invalid"
-    end
-    if type(db.localCharacters) ~= "table" then
-        return nil, "database-local-characters-invalid"
-    end
-    if type(db.professions) ~= "table" then
-        return nil, "database-professions-invalid"
-    end
-
-    local indexOk, indexErr = GGM.EnsureProfessionIndex(
-        db,
-        true,
-        PREVIOUS_SCHEMA_VERSION
-    )
-    if not indexOk then return nil, indexErr end
-
-    local migratedLocalGUIDs = {}
-    for characterKey, owned in pairs(db.localCharacters) do
-        if owned == true and type(characterKey) == "string" and characterKey ~= "" then
-            local guid = resolveLegacyLocalGUID(db, characterKey)
-            if guid then migratedLocalGUIDs[guid] = true end
-        end
-    end
-
-    db.localCharacterGUIDs = migratedLocalGUIDs
-    db.schemaVersion = GGM.SCHEMA_VERSION
-    return db, nil
 end
 
 function GGM.InitializeDatabase(existing)
@@ -263,10 +185,7 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-invalid"
     end
 
-    if existing.schemaVersion == PREVIOUS_SCHEMA_VERSION then
-        local migrated, migrationErr = migrateSchemaFive(existing)
-        if not migrated then return nil, migrationErr end
-    elseif existing.schemaVersion ~= GGM.SCHEMA_VERSION then
+    if existing.schemaVersion ~= GGM.SCHEMA_VERSION then
         return nil, "unsupported-schema-version:" .. tostring(existing.schemaVersion)
     end
 
@@ -368,11 +287,6 @@ function GGM.GetProfessionRecord(db, characterKey)
     return record, nil
 end
 
-local schemaOneSlotKeys = {
-    "HEAD", "NECK", "SHOULDER", "BACK", "CHEST", "WRIST", "HANDS", "WAIST",
-    "LEGS", "FEET", "FINGER_1", "FINGER_2", "TRINKET_1", "TRINKET_2", "MAIN_HAND", "OFF_HAND",
-}
-
 function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-invalid"
@@ -451,10 +365,8 @@ function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequen
         return false, identityErr
     end
 
-    local snapshotValid, snapshotErr = GGM.ValidateCompleteSnapshot(snapshot)
-    if not snapshotValid then
-        return false, snapshotErr
-    end
+    local compactGear, compactErr = GGM.CreateStoredGear(snapshot)
+    if not compactGear then return false, compactErr end
 
     local sequence = confirmedSequence
     if sequence == nil then
@@ -477,7 +389,7 @@ function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequen
     db.characters[identity.key] = {
         complete = true,
         identity = copyIdentity(identity),
-        gear = copySnapshot(snapshot),
+        gear = compactGear,
         confirmedSequence = sequence,
     }
 
@@ -507,10 +419,8 @@ function GGM.GetCompleteCharacterRecord(db, characterKey)
         return nil, "record-key-mismatch"
     end
 
-    local snapshotValid, snapshotErr = GGM.ValidateCompleteSnapshot(record.gear)
-    if not snapshotValid then
-        return nil, snapshotErr
-    end
+    local gearValid, gearErr = GGM.ValidateStoredGear(record.gear, true)
+    if not gearValid then return nil, gearErr end
 
     local _, sequenceErr = readConfirmedSequence(record)
     if sequenceErr then
@@ -534,10 +444,11 @@ function GGM.GetCharacterRecord(db, characterKey)
     if record.identity.key ~= characterKey then return nil, "record-key-mismatch" end
     if record.complete == true then return GGM.GetCompleteCharacterRecord(db, characterKey) end
     if record.complete ~= false or record.completeness ~= "incomplete" then return nil, "record-incomplete-invalid" end
-    if type(record.gear) ~= "table" or record.gear.complete ~= false
-        or type(record.gear.capturedAt) ~= "number" or type(record.gear.slots) ~= "table" then
+    if type(record.gear) ~= "table" or record.gear.complete ~= false then
         return nil, "record-incomplete-invalid"
     end
+    local staleGearValid, staleGearErr = GGM.ValidateStoredGear(record.gear, false)
+    if not staleGearValid then return nil, staleGearErr end
     local _, sequenceErr = readConfirmedSequence(record)
     if sequenceErr then return nil, sequenceErr end
 
@@ -548,35 +459,10 @@ function GGM.GetCharacterRecord(db, characterKey)
             or record.requiredBaselineSequence <= confirmedSequence then
             return nil, "record-incomplete-invalid"
         end
-        local staleSnapshot = {
-            complete = true,
-            capturedAt = record.gear.capturedAt,
-            slots = record.gear.slots,
-        }
-        local staleValid, staleErr = GGM.ValidateCompleteSnapshot(staleSnapshot)
-        if not staleValid then return nil, staleErr end
         return record, nil
     end
-    if record.refreshNeeded ~= nil or record.incompleteReason ~= nil then
-        return nil, "record-incomplete-invalid"
-    end
-
-    local legacyKeys = {}
-    for _, key in ipairs(schemaOneSlotKeys) do legacyKeys[key] = true end
-    for key, value in pairs(record.gear.slots) do
-        if not legacyKeys[key] then
-            if isTrackedSlotKey(key) then return nil, "incomplete-record-new-slot-present:" .. tostring(key) end
-            return nil, "tracked-slot-unknown:" .. tostring(key)
-        end
-        local slotValid, slotErr = GGM.ValidateGearSlotValue(key, value)
-        if not slotValid then return nil, slotErr end
-    end
-    for _, key in ipairs(schemaOneSlotKeys) do
-        if type(record.gear.slots[key]) ~= "table" then
-            return nil, "snapshot-slot-missing:" .. key
-        end
-    end
-    return record, nil
+    if record.refreshNeeded ~= nil or record.incompleteReason ~= nil then return nil, "record-incomplete-invalid" end
+    return nil, "record-incomplete-invalid"
 end
 
 function GGM.UpdateConfirmedCharacterSlot(db, characterKey, slotKey, slotValue, confirmedAt)
@@ -598,13 +484,6 @@ function GGM.UpdateConfirmedCharacterSlot(db, characterKey, slotKey, slotValue, 
         return false, slotErr
     end
 
-    local sharedSlot = record.gear.slots[slotKey]
-    if not (GGM.OPTIONAL_TRACKED_SLOTS[slotKey] == true
-        and (sharedSlot == nil or sharedSlot.unavailable == true))
-        and slotValue.inventorySlotID ~= sharedSlot.inventorySlotID then
-        return false, "snapshot-slot-id-mismatch:" .. slotKey
-    end
-
     local sequence, sequenceErr = readConfirmedSequence(record)
     if sequence == nil then
         return false, sequenceErr
@@ -614,7 +493,8 @@ function GGM.UpdateConfirmedCharacterSlot(db, characterKey, slotKey, slotValue, 
         return false, "confirmed-sequence-exhausted"
     end
 
-    record.gear.slots[slotKey] = copySlotValue(slotValue)
+    local stored, storeErr = GGM.SetStoredGearSlot(record.gear, slotKey, slotValue)
+    if not stored then return false, storeErr end
     record.gear.capturedAt = confirmedAt
     local nextSequence = sequence + 1
     record.confirmedSequence = nextSequence
@@ -643,13 +523,6 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
     local slotValid, slotErr = GGM.ValidateGearSlotValue(slotKey, slotValue)
     if not slotValid then
         return false, slotErr
-    end
-
-    local sharedSlot = record.gear.slots[slotKey]
-    if not (GGM.OPTIONAL_TRACKED_SLOTS[slotKey] == true
-        and (sharedSlot == nil or sharedSlot.unavailable == true))
-        and slotValue.inventorySlotID ~= sharedSlot.inventorySlotID then
-        return false, "snapshot-slot-id-mismatch:" .. slotKey
     end
 
     local existingSequence, sequenceErr = readConfirmedSequence(record)
@@ -681,7 +554,8 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
         return false, "confirmed-sequence-gap"
     end
 
-    record.gear.slots[slotKey] = copySlotValue(slotValue)
+    local stored, storeErr = GGM.SetStoredGearSlot(record.gear, slotKey, slotValue)
+    if not stored then return false, storeErr end
     record.gear.capturedAt = confirmedAt
     record.confirmedSequence = confirmedSequence
 

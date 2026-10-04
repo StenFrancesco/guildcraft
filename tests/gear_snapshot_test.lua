@@ -3,6 +3,7 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
     T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
     return GGM
 end
@@ -13,9 +14,9 @@ local function makeCompleteApi(GGM)
     local itemLinks = {}
 
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
-        slotIDs[slot.inventoryName] = index
-        itemIDs[index] = 1000 + index
-        itemLinks[index] = "|Hitem:" .. tostring(1000 + index) .. "|h[Test Item " .. tostring(index) .. "]|h"
+        slotIDs[slot.inventoryName] = slot.inventorySlotID
+        itemIDs[slot.inventorySlotID] = 1000 + index
+        itemLinks[slot.inventorySlotID] = "|Hitem:" .. tostring(1000 + index) .. "|h[Test Item " .. tostring(index) .. "]|h"
     end
 
     return {
@@ -49,9 +50,9 @@ T.test("capture creates a complete snapshot for every tracked slot", function()
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
         local stored = snapshot.slots[slot.key]
         T.assertNotNil(stored, "missing slot " .. slot.key)
-        T.assertEqual(stored.inventorySlotID, index)
-        T.assertEqual(stored.itemID, itemIDs[index])
-        T.assertEqual(stored.itemLink, itemLinks[index])
+        T.assertEqual(stored.inventorySlotID, slot.inventorySlotID)
+        T.assertEqual(stored.itemID, itemIDs[slot.inventorySlotID])
+        T.assertEqual(stored.itemLink, itemLinks[slot.inventorySlotID])
     end
 end)
 
@@ -83,6 +84,25 @@ T.test("capture explicitly represents an empty slot", function()
     T.assertFalse(snapshot.slots.OFF_HAND.itemLink)
 end)
 
+T.test("capture treats only paired nil item results as empty", function()
+    local GGM = loadModules()
+    local api = makeCompleteApi(GGM)
+    local headID = api.GetInventorySlotInfo("HeadSlot")
+    api.GetInventoryItemID = function(_, slotID)
+        if slotID == headID then return false end
+        return 1000 + slotID
+    end
+    api.GetInventoryItemLink = function(_, slotID)
+        if slotID == headID then return false end
+        return "|Hitem:" .. tostring(1000 + slotID) .. "|h[Item]|h"
+    end
+
+    local snapshot, err = GGM.CapturePlayerGearSnapshot(api)
+
+    T.assertNil(snapshot)
+    T.assertEqual(err, "snapshot-slot-value-invalid:HEAD")
+end)
+
 T.test("capture fails when a tracked inventory slot cannot be resolved", function()
     local GGM = loadModules()
     local api = makeCompleteApi(GGM)
@@ -98,6 +118,49 @@ T.test("capture fails when a tracked inventory slot cannot be resolved", functio
 
     T.assertNil(snapshot)
     T.assertEqual(err, "inventory-slot-unavailable:HEAD")
+end)
+
+T.test("capture rejects a runtime inventory id that disagrees with the code-owned slot id", function()
+    local GGM = loadModules()
+    local api = makeCompleteApi(GGM)
+    local original = api.GetInventorySlotInfo
+    api.GetInventorySlotInfo = function(name)
+        if name == "HeadSlot" then return 99 end
+        return original(name)
+    end
+    local snapshot, err = GGM.CapturePlayerGearSnapshot(api)
+    T.assertNil(snapshot)
+    T.assertEqual(err, "snapshot-slot-id-mismatch:HEAD")
+end)
+
+T.test("capture rejects an item id that disagrees with the exact item link payload", function()
+    local GGM = loadModules()
+    local api = makeCompleteApi(GGM)
+    local headID = api.GetInventorySlotInfo("HeadSlot")
+    local original = api.GetInventoryItemID
+    api.GetInventoryItemID = function(unit, slotID)
+        if slotID == headID then return 999999 end
+        return original(unit, slotID)
+    end
+    local snapshot, err = GGM.CapturePlayerGearSnapshot(api)
+    T.assertNil(snapshot)
+    T.assertEqual(err, "snapshot-item-id-mismatch:HEAD")
+end)
+
+T.test("gear comparison ignores hyperlink display wrappers but detects item-string variants", function()
+    local GGM = loadModules()
+    local base = { inventorySlotID = 1, itemID = 1234, itemLink = "|Hitem:1234:1:2|h[One Name]|h" }
+    local displayOnly = { inventorySlotID = 1, itemID = 1234, itemLink = "|cff00ff00|Hitem:1234:1:2|h[Another Name]|h|r" }
+    local variant = { inventorySlotID = 1, itemID = 1234, itemLink = "|Hitem:1234:1:3|h[One Name]|h" }
+    T.assertTrue(GGM.AreGearSlotValuesEqual(base, displayOnly))
+    T.assertFalse(GGM.AreGearSlotValuesEqual(base, variant))
+end)
+
+T.test("gear comparison rejects equal-looking values with an unknown inventory slot id", function()
+    local GGM = loadModules()
+    local left = { inventorySlotID = 99, itemID = 1234, itemLink = "|Hitem:1234:1:2|h[One Name]|h" }
+    local right = { inventorySlotID = 99, itemID = 1234, itemLink = "|Hitem:1234:1:2|h[One Name]|h" }
+    T.assertFalse(GGM.AreGearSlotValuesEqual(left, right))
 end)
 
 T.test("capture fails when an equipped item id exists but its link is unavailable", function()
@@ -174,8 +237,8 @@ T.test("capture preserves the snapshot when the optional ranged slot is unavaila
     local api = makeCompleteApi(GGM)
     api.GetInventorySlotInfo = function(inventoryName)
         if inventoryName == "RangedSlot" then return nil end
-        for index, slot in ipairs(GGM.TRACKED_SLOTS) do
-            if slot.inventoryName == inventoryName then return index end
+        for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+            if slot.inventoryName == inventoryName then return slot.inventorySlotID end
         end
     end
     local snapshot, err = GGM.CapturePlayerGearSnapshot(api)
@@ -195,20 +258,23 @@ T.test("runtime gear slot resolution centralizes event slot lookup and optional 
         return originalGetInventorySlotInfo(inventoryName)
     end
 
-    local resolved, err = GGM.ResolvePlayerGearSlots(api, snapshot.slots)
+    local resolved, err = GGM.ResolvePlayerGearSlots(api)
 
     T.assertNil(err)
-    T.assertEqual(resolved.slotKeyByInventorySlotID[1], "HEAD")
+    T.assertEqual(resolved.slotKeyByInventorySlotID[GGM.FindTrackedSlot("HEAD").inventorySlotID], "HEAD")
     T.assertTrue(resolved.unavailableOptionalSlots.RANGED)
 end)
 
-T.test("runtime gear slot resolution rejects saved and current slot id mismatches", function()
+T.test("runtime gear slot resolution rejects runtime ids that disagree with the catalog", function()
     local GGM = loadModules()
     local api = makeCompleteApi(GGM)
-    local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
-    snapshot.slots.HEAD.inventorySlotID = 999
+    local original = api.GetInventorySlotInfo
+    api.GetInventorySlotInfo = function(name)
+        if name == "HeadSlot" then return 99 end
+        return original(name)
+    end
 
-    local resolved, err = GGM.ResolvePlayerGearSlots(api, snapshot.slots)
+    local resolved, err = GGM.ResolvePlayerGearSlots(api)
 
     T.assertNil(resolved)
     T.assertEqual(err, "snapshot-slot-id-mismatch:HEAD")

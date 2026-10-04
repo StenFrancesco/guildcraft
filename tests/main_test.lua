@@ -554,7 +554,7 @@ T.test("player login ownership failure does not block existing gear tracking", f
         local GGM = { DEFAULT_STABILITY_DELAY_SECONDS = 300 }
         stubSnapshotUI(GGM)
         GGM.InitializeDatabase = function()
-            return { schemaVersion = 6, characters = {}, localCharacterGUIDs = {} }, nil
+            return { schemaVersion = 7, characters = {}, localCharacterGUIDs = {} }, nil
         end
         GGM.RecordLocalPlayerOwnership = function()
             return false, "player-guid-unavailable"
@@ -703,13 +703,13 @@ T.test("unsupported saved schema blocks tracking instead of overwriting data", f
     end)
 end)
 
-T.test("unsupported schema four SavedVariables remain untouched for manual reset", function()
+T.test("unsupported schema five SavedVariables remain untouched for manual reset", function()
     local onEvent
     local frame = {
         RegisterEvent = function() end,
         SetScript = function(_, _, handler) onEvent = handler end,
     }
-    local oldDB = { schemaVersion = 4, characters = { sentinel = true } }
+    local oldDB = { schemaVersion = 5, characters = { sentinel = true } }
 
     withGlobals({
         CreateFrame = function() return frame end,
@@ -719,7 +719,7 @@ T.test("unsupported schema four SavedVariables remain untouched for manual reset
         stubSnapshotUI(GGM)
         GGM.InitializeDatabase = function(existing)
             T.assertTrue(existing == oldDB)
-            return nil, "unsupported-schema-version:4"
+            return nil, "unsupported-schema-version:5"
         end
 
         T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
@@ -727,7 +727,7 @@ T.test("unsupported schema four SavedVariables remain untouched for manual reset
 
         T.assertTrue(_G.GuildGearMemoryDB == oldDB)
         T.assertTrue(_G.GuildGearMemoryDB.characters.sentinel)
-        T.assertEqual(GGM.startupError, "unsupported-schema-version:4")
+        T.assertEqual(GGM.startupError, "unsupported-schema-version:5")
         T.assertNil(GGM.db)
     end)
 end)
