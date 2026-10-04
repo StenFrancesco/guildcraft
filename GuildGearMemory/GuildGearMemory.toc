@@ -19,6 +19,8 @@ SyncProtocol.lua
 SyncTransport.lua
 GuildSync.lua
 SavedCharacterModel.lua
+RecipeDetails.lua
+RecipeDetailsUI.lua
 SnapshotTestUI.lua
 ProfessionLinkSave.lua
 Main.lua
