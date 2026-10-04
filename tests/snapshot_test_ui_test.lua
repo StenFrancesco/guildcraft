@@ -1464,6 +1464,58 @@ T.test("snapshot slash command rejects malformed requests without sending", func
     T.assertEqual(GGM.lastSyncError, "request-target-invalid")
 end)
 
+T.test("gear requests print queued feedback without claiming transfer success", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = { SlashCmdList = {}, print = function(message) messages[#messages + 1] = message end }
+    GGM.guildSync = {}
+    GGM.RequestCompleteSnapshot = function() return true end
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("request Alice-Silvermoon")
+    T.assertEqual(#messages, 1)
+    T.assertEqual(messages[1], "Gear request queued for Alice-Silvermoon. Waiting for a cached snapshot.")
+end)
+
+T.test("gear requests print readable failures and usage without opening the browser", function()
+    local cases = {
+        { command = "request Alice", expected = "Usage: /ggm request Name-Realm", err = "request-target-invalid" },
+        { command = "request Alice-Silvermoon", expected = "Gear sync is unavailable.", unavailable = true, err = "sync-unavailable" },
+        { command = "request Alice-Silvermoon", expected = "A gear request for this character is already pending.", err = "sync-snapshot-request-pending" },
+        { command = "request Alice-Silvermoon", expected = "Please wait before requesting this character again.", err = "sync-snapshot-request-cooldown" },
+        { command = "request Alice-Silvermoon", expected = "Gear sync requires guild membership.", err = "send-addon-message-failed:NotInGuild" },
+        { command = "request Alice-Silvermoon", expected = "Gear sync was throttled. Try again later.", err = "send-addon-message-failed:AddonMessageThrottle" },
+    }
+    for _, case in ipairs(cases) do
+        local GGM = loadUI()
+        local messages = {}
+        local api = { SlashCmdList = {}, DEFAULT_CHAT_FRAME = { AddMessage = function(_, message) messages[#messages + 1] = message end } }
+        GGM.guildSync = not case.unavailable and {} or nil
+        GGM.RequestCompleteSnapshot = function() return false, case.err end
+        GGM.ShowGuildGearBrowserWindow = function() error("request must not open browser") end
+        GGM.RegisterSnapshotTestSlashCommand(api)
+        api.SlashCmdList.GUILDGEARMEMORY(case.command)
+        T.assertEqual(messages[1], case.expected)
+        T.assertEqual(GGM.lastSyncError, case.err)
+    end
+end)
+
+T.test("gear sync status reports prefix availability and async errors even without database", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = { SlashCmdList = {}, print = function(message) messages[#messages + 1] = message end }
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    T.assertTrue(table.concat(messages, "\n"):find("Gear sync: unavailable (GC_GEAR)", 1, true) ~= nil)
+    messages = {}
+    GGM.guildSync = { transport = { lastSendError = "send-addon-message-failed:NotInGuild" } }
+    GGM.lastSyncReceiveError = "sync-frame-invalid"
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Gear sync: registered (GC_GEAR)", 1, true) ~= nil)
+    T.assertTrue(output:find("Gear sync send/request error: send-addon-message-failed:NotInGuild", 1, true) ~= nil)
+    T.assertTrue(output:find("Gear sync receive error: sync-frame-invalid", 1, true) ~= nil)
+end)
+
 T.test("paper doll layout uses the requested left right and bottom slot order", function()
     local GGM = loadUI()
     local expected = {
