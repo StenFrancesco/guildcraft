@@ -25,4 +25,3 @@ The selected direction is **3. Artisan Journal**. Its assets are now connected t
 ## Reference-matched revision
 
 The v2 runtime UI replaces the native title-bar frame with illustrated journal chrome, restores the reference proportions and serif typography, and uses full-page artwork for all six professions. The complete local installation package is `GuildGearMemory-ArtisanJournal-v2.zip`; the earlier ZIP contains the first integration. `artisan-journal-layout-preview.png` is rendered from actual Lua UI geometry with placeholder native icons. In-game appearance remains to be verified after reload.
-
