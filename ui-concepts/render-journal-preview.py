@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render GuildGearMemory's live Lua professions page into an off-game preview."""
+"""Render GuildGearMemory's live Lua journal pages into an off-game preview."""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ PROJECT = Path(__file__).resolve().parents[1]
 ADDON = PROJECT / "GuildGearMemory"
 MEDIA = ADDON / "Media" / "ArtisanJournal"
 TESTS = PROJECT / "tests"
-OUTPUT = Path(__file__).resolve().parent / "artisan-journal-layout-preview.png"
+CHARACTER_MODE = "--characters" in sys.argv
+STATE = next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--state=")), "complete")
+CHARACTER_SUFFIX = "" if STATE == "complete" else "-" + STATE
+OUTPUT = Path(__file__).resolve().parent / ("character-armory" + CHARACTER_SUFFIX + "-layout-preview.png" if CHARACTER_MODE else "artisan-journal-character-pass-preview.png")
 LUA_RUNTIME = PROJECT / "tools" / "lua" / "python-runtime"
 sys.path.insert(0, str(LUA_RUNTIME))
 
@@ -88,7 +91,7 @@ def patch_fixture(source: str) -> str:
         if old not in source:
             raise RuntimeError(f"UI test fixture changed; could not instrument: {old[:60]!r}")
         source = source.replace(old, new, 1)
-    return source + "\nreturn { loadUI = loadUI, makeBrowserAPI = makeBrowserAPI, controls = __previewControls }\n"
+    return source + "\nreturn { loadUI = loadUI, makeBrowserAPI = makeBrowserAPI, makeRecord = makeRecord, makeDB = makeDB, controls = __previewControls }\n"
 
 
 def lv(table, key, default=None):
@@ -155,8 +158,38 @@ def build_tree():
     api["UIParent"]["objectType"] = "Frame"
     frame = ggm["CreateGuildGearBrowserWindow"](api)
     frame["db"] = lua.table_from({"schemaVersion": ggm["SCHEMA_VERSION"], "characters": {}})
-    ggm["SelectGuildGearBrowserTab"](frame, "Professions")
-    ggm["SelectProfession"](frame, "Engineering")
+    if CHARACTER_MODE:
+        record = module["makeRecord"](ggm)
+        record["identity"]["name"] = "Dysheal"
+        record["identity"]["realm"] = "Stormscale"
+        record["identity"]["key"] = "Dysheal-Stormscale"
+        record["identity"]["raceID"] = 4
+        record["identity"]["sex"] = 3
+        if STATE == "long-name":
+            record["identity"]["name"] = "Alexandrianna"
+            record["identity"]["realm"] = "ScarletBrotherhood"
+            record["identity"]["key"] = "Alexandrianna-ScarletBrotherhood"
+        api["date"] = lua.eval('function() return "2026-10-05 08:03" end')
+        api["C_CreatureInfo"] = lua.eval('{ GetRaceInfo = function() return { raceName = "Night Elf", clientFileString = "NightElf" } end }')
+        api["GetItemIcon"] = lua.eval('function(id) return "Interface\\\\Icons\\\\INV_Chest_Plate01" end')
+        db = module["makeDB"](ggm, lua.table_from([record]))
+        if STATE == "incomplete":
+            saved = db["characters"][record["identity"]["key"]]
+            saved["complete"], saved["completeness"] = False, "incomplete"
+            saved["refreshNeeded"], saved["incompleteReason"] = True, "sequence-gap"
+            saved["requiredBaselineSequence"], saved["confirmedSequence"] = 2, 1
+            saved["gear"]["complete"] = False
+            for slot_id in (4, 19, 17, 18):
+                saved["gear"]["slots"][slot_id] = None
+            saved["gear"]["unavailableSlots"][18] = True
+        ggm["guildGearBrowserFrame"] = frame
+        ggm["ShowGuildGearBrowserWindow"](api, db)
+        ggm["SelectGuildGearBrowserTab"](frame, "Character")
+        if STATE == "empty":
+            frame["searchBox"]["SetText"](frame["searchBox"], "No matching character")
+    else:
+        ggm["SelectGuildGearBrowserTab"](frame, "Professions")
+        ggm["SelectProfession"](frame, "Engineering")
     frame["Show"](frame)
 
     controls = []

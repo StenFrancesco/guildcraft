@@ -499,7 +499,7 @@ local function makeModelBrowserAPI(failModelCreation)
     local createFrame = api.CreateFrame
     api.CreateFrame = function(frameType, name, parent)
         if failModelCreation and frameType == "Frame" and parent
-            and parent.width == 238 and parent.height == 336 then return nil end
+            and parent.width == 208 and parent.height == 226 then return nil end
         return createFrame(frameType, name, parent)
     end
     return api
@@ -554,6 +554,44 @@ local function showBrowser(GGM, api, db)
     GGM.ShowGuildGearBrowserWindow(api, db)
     return GGM.guildGearBrowserFrame
 end
+
+T.test("character header artwork is above parchment and captured date has a bounded region", function()
+    local GGM = loadUI()
+    local api = makeBrowserAPI()
+    local createFrame = api.CreateFrame
+    api.CreateFrame = function(...)
+        local control = createFrame(...)
+        local createTexture = control.CreateTexture
+        control.CreateTexture = function(self, name, layer, ...)
+            local texture = createTexture(self, name, layer, ...)
+            texture.drawLayer = layer
+            return texture
+        end
+        return control
+    end
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
+    T.assertEqual(frame.gearPanel.armoryArt.drawLayer, "ARTWORK",
+        "armory illustration must draw above the opaque parchment background")
+    T.assertTrue((frame.capturedLine.width or 0) >= 140,
+        "capture date needs explicit space independent of caption autosizing")
+    T.assertTrue((frame.capturedLine.height or 0) >= 14)
+    T.assertTrue(frame.capturedLine.visible)
+end)
+
+T.test("character portrait and weapon labels have separate space above the footer", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local portraitBottom = -frame.modelStage.point.y + frame.modelStage.height
+    local footerTop = frame.gearPanel.height - 14 - frame.detailFooter.height
+    for _, button in ipairs(frame.slotButtons) do
+        if button.paperDollGroup == "bottom" then
+            local top = -button.point.y - button.height / 2
+            local labelsBottom = -button.point.y + button.height / 2 + 5 + 16 + 1 + 14
+            T.assertTrue(top >= portraitBottom + 8, "weapons overlap the saved portrait")
+            T.assertTrue(labelsBottom <= footerTop - 6, "weapon labels overlap the footer")
+        end
+    end
+end)
 
 T.test("compact browser tooltip receives a hyperlink rebuilt from the exact item string", function()
     local GGM = loadUI()

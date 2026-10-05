@@ -25,3 +25,13 @@ The Lua 5.1 regression suite passes 389 tests; syntax checks cover 37 Lua files.
 Artwork was coordinated by `gpt-6-luna` subagents at `max` effort using the built-in ImageGen tool. Original images are in `Source/`; exact prompts are in `ui-concepts/artisan-journal-prompts/`.
 
 Font sources: https://github.com/google/fonts/tree/main/ofl/crimsontext
+
+## Character armory journal
+
+Characters shares the journal chrome, parchment search, serif fonts, and framed library buttons with Professions. Its header uses `character-armory.tga`, a 1024 × 1024 uncompressed 32-bit RGBA texture cropped by the UI. The original PNG is retained at `Source/character-armory.png`. Regenerate and verify the runtime export with `ui-concepts/export-character-armory.py`.
+
+The portrait remains the existing saved race/2D portrait. Equipment acquisition, storage, tooltips, synchronization, and cached-state semantics are unchanged.
+
+Render Characters with `ui-concepts/render-journal-preview.py --characters`; `--state=incomplete`, `--state=long-name`, and `--state=empty` cover alternative layouts. The default mode renders Professions to a separate comparison preview. Native portraits and icons are placeholders; in-game appearance remains unverified.
+
+The redesign adds regression checks for portrait/weapon/footer separation and header artwork/date visibility. The complete suite passes 391 tests. The armory vignette has an explicit foreground layer, and the capture date has a fixed header region to avoid relying on background draw order or caption autosizing.

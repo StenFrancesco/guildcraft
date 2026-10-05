@@ -302,6 +302,7 @@ local JOURNAL_TEXTURES = {
     button = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button.tga",
     professionButton = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button-framed.tga",
     window = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-window.tga",
+    armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory.tga",
     font = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif.ttf",
     boldFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
     professions = {
@@ -370,8 +371,8 @@ local UI = {
     contentGap = 18,
     ownershipButtonWidth = 105,
     controlHeightCompact = 28,
-    characterRowHeight = 54,
-    listScrollWidth = 269,
+    characterRowHeight = 58,
+    listScrollWidth = 244,
     listScrollHeight = 326,
     professionLibraryX = 314,
     professionLibraryTop = 109,
@@ -1151,10 +1152,12 @@ updateBrowserList = function(frame, api)
 
             row.base = row:CreateTexture(nil, "BACKGROUND")
             row.base:SetAllPoints(row)
-            setColor(row.base, THEME.panel)
+            row.base:SetTexture(JOURNAL_TEXTURES.professionButton)
+            row.base:SetTexCoord(0.03085, 0.96961, 0.23757, 0.76520)
+            row.base:SetVertexColor(1, 1, 1, 1)
             row.selection = row:CreateTexture(nil, "BACKGROUND")
             row.selection:SetAllPoints(row)
-            setColor(row.selection, THEME.goldDim, 0.48)
+            setColor(row.selection, THEME.goldDim, 0.15)
             row.selection:Hide()
             row.selectedBar = row:CreateTexture(nil, "ARTWORK")
             row.selectedBar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
@@ -1185,15 +1188,17 @@ updateBrowserList = function(frame, api)
             row.label:SetPoint("TOPLEFT", row.avatar, "TOPRIGHT", 11, -2)
             row.label:SetPoint("RIGHT", row, "RIGHT", -12, 0)
             row.label:SetJustifyH("LEFT")
+            GGM.ApplyJournalFont(row.label, 16, "bold")
             row.realm = createText(row, "OVERLAY", "GameFontDisableSmall")
             row.realm:SetPoint("TOPLEFT", row.label, "BOTTOMLEFT", 0, -3)
             row.realm:SetPoint("RIGHT", row, "RIGHT", -12, 0)
             row.realm:SetJustifyH("LEFT")
+            GGM.ApplyJournalFont(row.realm, 13)
             row.separator = row:CreateTexture(nil, "BORDER")
             row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 10, 0)
             row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -10, 0)
             row.separator:SetHeight(1)
-            setColor(row.separator, THEME.borderSoft)
+            row.separator:Hide()
             rows[index] = row
         end
 
@@ -1242,7 +1247,7 @@ end
 
 local function createBrowserViewButton(api, frame, key, label, x)
     local button = GGM.CreateFlatButton(api, frame.searchPanel, label, UI.ownershipButtonWidth, UI.controlHeightCompact, "ghost")
-    button:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", x, -48)
+    button:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", x, -62)
     button.key = key
     button:SetScript("OnClick", function()
         frame.browserView = key
@@ -1313,21 +1318,28 @@ local function createGearPanel(api, frame)
     panel.header = panel:CreateTexture(nil, "BACKGROUND")
     panel.header:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -2)
     panel.header:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -2, -2)
-    panel.header:SetHeight(88)
-    setColor(panel.header, THEME.panelAlt)
+    panel.header:SetHeight(122)
+    panel.header:Hide()
+    -- Keep the vignette above the opaque parchment; same-layer texture
+    -- creation order is not a reliable stacking contract in the game client.
+    panel.armoryArt = panel:CreateTexture(nil, "ARTWORK")
+    panel.armoryArt:SetSize(264, 122)
+    panel.armoryArt:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -3, -3)
+    panel.armoryArt:SetTexture(JOURNAL_TEXTURES.armory)
+    panel.armoryArt:SetTexCoord(0.44, 1, 0, 0.53)
     panel.goldRule = panel:CreateTexture(nil, "ARTWORK")
-    panel.goldRule:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -88)
-    panel.goldRule:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -2, -88)
+    panel.goldRule:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, -124)
+    panel.goldRule:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -124)
     panel.goldRule:SetHeight(1)
     setColor(panel.goldRule, THEME.gold, 0.48)
     panel.sectionLabel = createEyebrow(panel, "EQUIPMENT SNAPSHOT")
-    panel.sectionLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, -15)
+    panel.sectionLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 28, -17)
     return panel
 end
 
 local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     local button = api.CreateFrame("Button", nil, frame.gearPanel)
-    button:SetSize(48, 48)
+    button:SetSize(40, 40)
     button:SetPoint("CENTER", frame.gearPanel, "TOPLEFT", x, y)
     button.paperDollGroup, button.paperDollOrder = layout.group, layout.order
 
@@ -1473,53 +1485,71 @@ function GGM.CreateGuildGearBrowserWindow(api)
     createCloseButton(api, frame)
 
     frame.searchPanel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
-    frame.searchPanel:SetSize(UI.browserColumnWidth, 138)
+    frame.searchPanel:SetSize(UI.browserColumnWidth, 148)
     frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth + UI.pageMargin, -UI.contentTop)
-    frame.charactersHeading = createEyebrow(frame.searchPanel, "CHARACTER SOURCE")
-    frame.charactersHeading:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 14, -14)
+    frame.searchPanel.background:Hide()
+    for _, edge in ipairs(frame.searchPanel.border) do edge:Hide() end
+    for _, edge in ipairs(frame.searchPanel.innerBorder or {}) do edge:Hide() end
+    frame.charactersHeading = createEyebrow(frame.searchPanel, "CHARACTER LIBRARY")
+    GGM.ApplyJournalFont(frame.charactersHeading, 16, "bold")
+    frame.charactersHeading:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 14, -17)
+    local libraryHelper = createText(frame.searchPanel, "OVERLAY", "GameFontHighlightSmall")
+    libraryHelper:SetPoint("TOPLEFT", frame.charactersHeading, "BOTTOMLEFT", 0, -5)
+    libraryHelper:SetText("Browse last-known equipment")
+    setTextColor(libraryHelper, THEME.textSoft)
     frame.mineButton = createBrowserViewButton(api, frame, "Mine", "My Characters", 14)
-    frame.guildButton = createBrowserViewButton(api, frame, "Guild", "Guild", 112)
+    frame.guildButton = createBrowserViewButton(api, frame, "Guild", "Guild", 123)
     updateBrowserViewButtonStyles(frame)
 
-    frame.searchLabel = createSectionLabel(frame.searchPanel, "SEARCH")
+    frame.searchLabel = createSectionLabel(frame.searchPanel, "")
     frame.searchLabel:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 14, -92)
-    frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel, "InputBoxTemplate")
-    frame.searchBox:SetSize(196, UI.controlHeightCompact)
-    frame.searchBox:SetPoint("TOPRIGHT", frame.searchPanel, "TOPRIGHT", -14, -88)
+    frame.searchBox = api.CreateFrame("EditBox", nil, frame.searchPanel)
+    frame.searchBox:SetSize(244, 27)
+    frame.searchBox:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", 14, -102)
     frame.searchBox:SetAutoFocus(false)
-    if frame.searchBox.SetTextInsets then frame.searchBox:SetTextInsets(10, 8, 0, 0) end
+    if frame.searchBox.SetTextInsets then frame.searchBox:SetTextInsets(31, 8, 0, 0) end
+    GGM.ApplyJournalFont(frame.searchBox, 14)
+    setTextColor(frame.searchBox, THEME.text)
     frame.searchBoxBackground = frame.searchBox:CreateTexture(nil, "BACKGROUND")
     frame.searchBoxBackground:SetPoint("TOPLEFT", frame.searchBox, "TOPLEFT", -2, 2)
     frame.searchBoxBackground:SetPoint("BOTTOMRIGHT", frame.searchBox, "BOTTOMRIGHT", 2, -2)
-    setColor(frame.searchBoxBackground, THEME.input)
-    frame.searchBoxBorder = {}
+    frame.searchBoxBackground:SetTexture(JOURNAL_TEXTURES.parchment)
+    frame.searchBoxBackground:SetVertexColor(0.96, 0.83, 0.62, 1)
+    frame.searchBoxBorder = createFlatBorder(frame.searchBox, THEME.border)
+    local searchIcon = frame.searchBox:CreateTexture(nil, "ARTWORK")
+    searchIcon:SetSize(16, 16)
+    searchIcon:SetPoint("LEFT", frame.searchBox, "LEFT", 9, 0)
+    searchIcon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
     frame.searchHint = createText(frame.searchBox, "OVERLAY", "GameFontDisableSmall")
-    frame.searchHint:SetPoint("LEFT", frame.searchBox, "LEFT", 10, 0)
+    frame.searchHint:SetPoint("LEFT", frame.searchBox, "LEFT", 31, 0)
     frame.searchHint:SetText("Name or realm")
-    setTextColor(frame.searchHint, THEME.railMuted)
+    setTextColor(frame.searchHint, THEME.muted)
     frame.searchBox:SetScript("OnEditFocusGained", function(self)
-        self.hasFocus = true; setColor(frame.searchBoxBackground, THEME.input); recolorBorder(frame.searchBoxBorder, THEME.gold); updateSearchHint(frame)
+        self.hasFocus = true; recolorBorder(frame.searchBoxBorder, THEME.gold); updateSearchHint(frame)
     end)
     frame.searchBox:SetScript("OnEditFocusLost", function(self)
-        self.hasFocus = false; setColor(frame.searchBoxBackground, THEME.input); recolorBorder(frame.searchBoxBorder, THEME.border); updateSearchHint(frame)
+        self.hasFocus = false; recolorBorder(frame.searchBoxBorder, THEME.border); updateSearchHint(frame)
     end)
     frame.searchBox:SetScript("OnTextChanged", function() updateBrowserList(frame, api) end)
 
     frame.listPanel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
     frame.listPanel:SetSize(UI.browserColumnWidth,
-        UI.windowHeight - UI.contentTop - UI.contentBottom - 138 - UI.contentGap)
-    frame.listPanel:SetPoint("TOPLEFT", frame.searchPanel, "BOTTOMLEFT", 0, -UI.contentGap)
+        UI.windowHeight - UI.contentTop - UI.contentBottom - 148)
+    frame.listPanel:SetPoint("TOPLEFT", frame.searchPanel, "BOTTOMLEFT", 0, 0)
+    frame.listPanel.background:Hide()
+    for _, edge in ipairs(frame.listPanel.border) do edge:Hide() end
+    for _, edge in ipairs(frame.listPanel.innerBorder or {}) do edge:Hide() end
     frame.characterCount = createSectionLabel(frame.listPanel, "0 characters")
     frame.characterCount:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 14, -13)
     local listHint = createText(frame.listPanel, "OVERLAY", "GameFontDisableSmall")
     listHint:SetPoint("TOPRIGHT", frame.listPanel, "TOPRIGHT", -14, -13)
-    listHint:SetText("SELECT TO INSPECT")
+    listHint:SetText("")
     setTextColor(listHint, THEME.muted)
     createDivider(frame.listPanel, 12, 12, -34)
 
     frame.listScroll = api.CreateFrame("ScrollFrame", nil, frame.listPanel, "UIPanelScrollFrameTemplate")
     frame.listScroll:SetPoint("TOPLEFT", frame.listPanel, "TOPLEFT", 12, -42)
-    frame.listScroll:SetSize(UI.listScrollWidth, UI.listScrollHeight - 22)
+    frame.listScroll:SetSize(UI.listScrollWidth, frame.listPanel:GetHeight() - 64)
     frame.listContent = api.CreateFrame("Frame", nil, frame.listScroll)
     frame.listContent:SetSize(UI.listScrollWidth, 1)
     frame.listScroll:SetScrollChild(frame.listContent)
@@ -1532,35 +1562,62 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     frame.gearPanel = createGearPanel(api, frame)
     frame.characterLine = createText(frame.gearPanel, "OVERLAY", "GameFontNormalHuge")
-    frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 18, -36)
+    GGM.ApplyJournalFont(frame.characterLine, 30, "bold")
+    frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 28, -37)
+    frame.characterLine:SetWidth(385)
+    frame.characterLine:SetJustifyH("LEFT")
     setTextColor(frame.characterLine, THEME.text)
     frame.realmLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
     frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 1, -4)
     setTextColor(frame.realmLine, THEME.muted)
-    frame.snapshotCaption = createSectionLabel(frame.gearPanel, "CAPTURED")
-    frame.snapshotCaption:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -18, -18)
+    frame.snapshotCaption = createSectionLabel(frame.gearPanel, "LAST CAPTURED")
+    GGM.ApplyJournalFont(frame.snapshotCaption, 11, "bold")
+    frame.snapshotCaption:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 28, -95)
     frame.capturedLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
-    frame.capturedLine:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -18, -36)
-    frame.capturedLine:SetJustifyH("RIGHT")
+    -- A bounded region avoids relying on a hidden caption's auto-sized bounds
+    -- while selection changes hide and repopulate the header.
+    frame.capturedLine:SetSize(152, 16)
+    frame.capturedLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 138, -95)
+    GGM.ApplyJournalFont(frame.capturedLine, 12)
+    frame.capturedLine:SetJustifyH("LEFT")
     setTextColor(frame.capturedLine, THEME.textSoft)
     frame.completenessBadge = createStatusBadge(api, frame.gearPanel)
-    frame.completenessBadge:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -18, -58)
+    frame.completenessBadge:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 302, -89)
     frame.completenessBadge:Hide()
     frame.completenessLine = frame.completenessBadge.text
 
-    frame.modelStage = createSurface(api, frame.gearPanel, THEME.input, THEME.borderSoft, true)
-    frame.modelStage:SetSize(238, 336)
-    frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -116)
-    frame.stageLabel = createSectionLabel(frame.modelStage, "SAVED APPEARANCE")
-    frame.stageLabel:SetPoint("TOPLEFT", frame.modelStage, "TOPLEFT", 12, -11)
-    frame.stageRule = createDivider(frame.modelStage, 10, 10, -30)
+    frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
+    frame.modelStage:SetSize(208, 226)
+    frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -146)
+    frame.modelStage.background:Hide()
+    for _, edge in ipairs(frame.modelStage.border) do edge:Hide() end
+    frame.stageLabel = createSectionLabel(frame.modelStage, "SAVED PORTRAIT")
+    frame.stageLabel:SetPoint("TOP", frame.modelStage, "TOP", 0, -3)
+    frame.stageRule = createDivider(frame.modelStage, 30, 30, -24)
 
     frame.characterModelView = GGM.CreateSavedCharacterModel(api, frame.modelStage)
     if frame.characterModelView.model then
-        frame.characterModelView.model:SetSize(222, 292)
-        frame.characterModelView.model:SetPoint("BOTTOM", frame.modelStage, "BOTTOM", 0, 8)
-        if frame.characterModelView.model.background then setColor(frame.characterModelView.model.background, THEME.input, 0.35) end
-        frame.characterModelView.model:Hide()
+        local view = frame.characterModelView
+        view.model:SetSize(208, 192)
+        view.model:SetPoint("BOTTOM", frame.modelStage, "BOTTOM", 0, 0)
+        view.model.background:Hide()
+        view.model.portraitBorder:SetSize(126, 126)
+        view.model.portraitBorder:ClearAllPoints()
+        view.model.portraitBorder:SetPoint("TOP", view.model, "TOP", 0, 0)
+        setColor(view.model.portraitBorder, THEME.gold)
+        view.portrait:SetSize(118, 118)
+        GGM.ApplyJournalFont(view.raceLabel, 16, "bold")
+        GGM.ApplyJournalFont(view.sexLabel, 13)
+        GGM.ApplyJournalFont(view.caption, 11)
+        setTextColor(view.raceLabel, THEME.text)
+        setTextColor(view.sexLabel, THEME.textSoft)
+        setTextColor(view.caption, THEME.muted)
+        view.raceLabel:ClearAllPoints()
+        view.raceLabel:SetPoint("TOP", view.model.portraitBorder, "BOTTOM", 0, -9)
+        view.caption:SetWidth(208)
+        view.caption:ClearAllPoints()
+        view.caption:SetPoint("BOTTOM", view.model, "BOTTOM", 0, 0)
+        view.model:Hide()
     end
     frame.modelUnavailableLabel = createText(frame.modelStage, "OVERLAY", "GameFontDisableSmall")
     frame.modelUnavailableLabel:SetSize(190, 50)
@@ -1577,9 +1634,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.detailEmpty:Hide()
 
     local sideX = { left = 42, right = UI.detailColumnWidth - 42 }
-    local sideStartY, sidePitch = -126, 42
-    local bottomX = { 250, 328, 406 }
-    local bottomY = -420
+    local sideStartY, sidePitch = -144, 41
+    local bottomX = { 250, 346, 442 }
+    local bottomY = -400
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
         local x, y
@@ -1592,9 +1649,12 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.detailFooter:SetPoint("BOTTOMLEFT", frame.gearPanel, "BOTTOMLEFT", 14, 14)
     frame.detailFooter:SetPoint("BOTTOMRIGHT", frame.gearPanel, "BOTTOMRIGHT", -14, 14)
     frame.detailFooter:SetHeight(32)
+    frame.detailFooter.background:Hide()
+    for _, edge in ipairs(frame.detailFooter.border) do edge:Hide() end
     local footerText = createText(frame.detailFooter, "OVERLAY", "GameFontDisableSmall")
     footerText:SetPoint("CENTER", frame.detailFooter, "CENTER", 0, 0)
-    footerText:SetText("Mouse over an equipment slot to view the saved item")
+    GGM.ApplyJournalFont(footerText, 12)
+    footerText:SetText("Last-known equipment · Hover a slot to view the saved item")
     setTextColor(footerText, THEME.muted)
 
     frame.placeholderPages = {}
