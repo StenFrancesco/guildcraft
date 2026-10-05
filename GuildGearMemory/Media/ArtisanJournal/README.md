@@ -28,7 +28,7 @@ Font sources: https://github.com/google/fonts/tree/main/ofl/crimsontext
 
 ## Character armory journal
 
-Characters shares the journal chrome, parchment search, serif fonts, and framed library buttons with Professions. Its header uses `character-armory.tga`, a 1024 × 1024 uncompressed 32-bit RGBA texture cropped by the UI. The original PNG is retained at `Source/character-armory.png`. Regenerate and verify the runtime export with `ui-concepts/export-character-armory.py`.
+Characters shares the journal chrome, parchment search, serif fonts, and framed library buttons with Professions. Its header uses `character-armory-vignette.tga`, a 1024 × 512 uncompressed 32-bit RGBA texture with transparent, softly fading left and bottom edges. The UI displays the entire texture so cropping cannot discard the fade. Its source is retained at `Source/character-armory-vignette.png`; the original opaque artwork remains at `Source/character-armory.png`. Regenerate and verify both runtime exports with `ui-concepts/export-character-armory.py`, which checks transparency and exact pixel round-trips.
 
 The portrait remains the existing saved race/2D portrait. Equipment acquisition, storage, tooltips, synchronization, and cached-state semantics are unchanged.
 

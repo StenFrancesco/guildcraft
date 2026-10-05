@@ -555,6 +555,34 @@ local function showBrowser(GGM, api, db)
     return GGM.guildGearBrowserFrame
 end
 
+T.test("character content stays within the journal's painted page borders", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local detail = frame.gearPanel
+    T.assertTrue(detail.point.x >= 635 and detail.point.x <= 645, "detail misses the painted left border")
+    T.assertTrue(-detail.point.y >= 70 and -detail.point.y <= 80, "detail misses the painted top border")
+    T.assertTrue(detail.point.x + detail.width <= 1350, "detail extends beyond the painted right border")
+    T.assertTrue(-detail.point.y + detail.height <= 574, "detail extends beyond the painted bottom border")
+    local libraryLeft = frame.searchPanel.point.x
+    T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
+    T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
+        "native scrollbar extends beyond the library border")
+    local artworkLeft = detail.width + detail.armoryArt.point.x - detail.armoryArt.width
+    T.assertTrue(frame.completenessBadge.point.x + frame.completenessBadge.width + 6 <= artworkLeft,
+        "status badge overlaps the header artwork")
+end)
+
+T.test("journal headings reserve space for subtitles inside their columns", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    T.assertTrue((frame.pageSubtitle.width or 0) > 0, "page subtitle needs a bounded wrapping region")
+    T.assertTrue(frame.pageTitle.point.x + frame.pageSubtitle.width <= 620, "page subtitle crosses into the detail page")
+    T.assertTrue((frame.brandSubtitle.width or 0) > 0, "brand subtitle needs a bounded wrapping region")
+    local brandLeft = frame.brandIconFrame.point.x + frame.brandIconFrame.width + frame.brandTitle.point.x
+    T.assertTrue(brandLeft + frame.brandSubtitle.width <= GGM.UIStyleTokens.railWidth - 12,
+        "brand subtitle crosses out of the leather rail")
+end)
+
 T.test("character header artwork is above parchment and captured date has a bounded region", function()
     local GGM = loadUI()
     local api = makeBrowserAPI()

@@ -224,7 +224,7 @@ def build_browser_tree(lua, module, ggm):
             record["identity"]["name"] = "Alexandrianna"
             record["identity"]["realm"] = "ScarletBrotherhood"
             record["identity"]["key"] = "Alexandrianna-ScarletBrotherhood"
-        api["date"] = lua.eval('function() return "2026-10-05 08:03" end')
+        api["date"] = lua.eval('function() return "2026-10-05 08:03:02" end')
         api["C_CreatureInfo"] = lua.eval('{ GetRaceInfo = function() return { raceName = "Night Elf", clientFileString = "NightElf" } end }')
         api["GetItemIcon"] = lua.eval('function(id) return "Interface\\\\Icons\\\\INV_Chest_Plate01" end')
         db = module["makeDB"](ggm, lua.table_from([record]))
@@ -345,7 +345,8 @@ def solve_layout(controls, root_id, ui_id):
         if c["type"] == "FontString" and c["text"]:
             f = font_for(c)
             box = f.getbbox("Ag")
-            natural[c["id"]] = (max(f.getlength(line) for line in c["text"].splitlines()), (box[3] - box[1]) * len(c["text"].splitlines()))
+            lines = text_lines(c, f)
+            natural[c["id"]] = (max(f.getlength(line) for line in lines), max(round(c["font_size"]), box[3] - box[1]) * len(lines))
 
     def solve_axis(c, vertical, size):
         values = []
@@ -627,8 +628,8 @@ def main():
         x, y = x - root_x, y - root_y
         font = font_for(c)
         color = norm_color(c["text_color"])
-        lines = c["text"].splitlines() or [""]
-        line_height = max(1, font.getbbox("Ag")[3] - font.getbbox("Ag")[1])
+        lines = text_lines(c, font, w)
+        line_height = max(round(c["font_size"]), font.getbbox("Ag")[3] - font.getbbox("Ag")[1])
         for row, line in enumerate(lines):
             line_width = font.getlength(line)
             if c["justify"].upper() == "RIGHT":

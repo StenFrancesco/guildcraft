@@ -302,7 +302,7 @@ local JOURNAL_TEXTURES = {
     button = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button.tga",
     professionButton = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button-framed.tga",
     window = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-window.tga",
-    armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory.tga",
+    armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory-vignette.tga",
     font = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif.ttf",
     boldFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
     professions = {
@@ -367,13 +367,21 @@ local UI = {
     navigationTabWidth = 238,
     navigationIconSize = 38,
     browserColumnWidth = 297,
-    detailColumnWidth = 693,
+    detailColumnWidth = 702,
     contentGap = 18,
     ownershipButtonWidth = 105,
     controlHeightCompact = 28,
     characterRowHeight = 58,
     listScrollWidth = 244,
     listScrollHeight = 326,
+    -- Bounds inside the painted journal window, independent of the generic
+    -- page margins used by placeholder content.
+    characterLibraryX = 334,
+    characterLibraryWidth = 280,
+    characterLibraryBottom = 574,
+    characterDetailX = 638,
+    characterDetailTop = 73,
+    characterDetailHeight = 498,
     professionLibraryX = 314,
     professionLibraryTop = 109,
     professionDetailX = 629,
@@ -1083,7 +1091,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     frame.activeTab = selectedKey
     if frame.TitleText then frame.TitleText:SetText("Guild Gear Memory") end
 
-    if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known equipment snapshots across your guild")
+    if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known guild equipment")
     elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "Review captured profession snapshots and recipes")
     else setPageHeader(frame, "Bank", "Saved bank snapshots and shared storage") end
 
@@ -1311,9 +1319,9 @@ end
 
 local function createGearPanel(api, frame)
     local panel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
-    panel:SetSize(UI.detailColumnWidth, UI.windowHeight - UI.contentTop - UI.contentBottom)
+    panel:SetSize(UI.detailColumnWidth, UI.characterDetailHeight)
     GGM.ApplyJournalSurface(panel, "parchment")
-    panel:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth + UI.pageMargin + UI.browserColumnWidth + UI.contentGap, -UI.contentTop)
+    panel:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.characterDetailX, -UI.characterDetailTop)
 
     panel.header = panel:CreateTexture(nil, "BACKGROUND")
     panel.header:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -2)
@@ -1326,7 +1334,9 @@ local function createGearPanel(api, frame)
     panel.armoryArt:SetSize(264, 122)
     panel.armoryArt:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -3, -3)
     panel.armoryArt:SetTexture(JOURNAL_TEXTURES.armory)
-    panel.armoryArt:SetTexCoord(0.44, 1, 0, 0.53)
+    -- The vignette already fades to transparent at its left and lower edges.
+    -- Cropping it would discard the fade and recreate the rectangular seam.
+    panel.armoryArt:SetTexCoord(0, 1, 0, 1)
     panel.goldRule = panel:CreateTexture(nil, "ARTWORK")
     panel.goldRule:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, -124)
     panel.goldRule:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -124)
@@ -1458,8 +1468,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.brandTitle:SetText("Guild Gear Memory")
     setTextColor(frame.brandTitle, THEME.railGold)
     frame.brandSubtitle = createText(frame.navigationRail, "OVERLAY", "GameFontHighlightSmall")
-    GGM.ApplyJournalFont(frame.brandSubtitle, 13)
+    GGM.ApplyJournalFont(frame.brandSubtitle, 12)
     frame.brandSubtitle:SetPoint("TOPLEFT", frame.brandTitle, "BOTTOMLEFT", 0, -5)
+    frame.brandSubtitle:SetWidth(184)
     frame.brandSubtitle:SetText("Gear memory and recipe snapshots")
     setTextColor(frame.brandSubtitle, THEME.railMuted)
 
@@ -1481,12 +1492,13 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.pageSubtitle = createText(frame, "OVERLAY", "GameFontHighlightSmall")
     GGM.ApplyJournalFont(frame.pageSubtitle, 13)
     frame.pageSubtitle:SetPoint("TOPLEFT", frame.pageTitle, "BOTTOMLEFT", 0, -4)
+    frame.pageSubtitle:SetWidth(278)
     setTextColor(frame.pageSubtitle, THEME.muted)
     createCloseButton(api, frame)
 
     frame.searchPanel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
-    frame.searchPanel:SetSize(UI.browserColumnWidth, 148)
-    frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth + UI.pageMargin, -UI.contentTop)
+    frame.searchPanel:SetSize(UI.characterLibraryWidth, 148)
+    frame.searchPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.characterLibraryX, -UI.contentTop)
     frame.searchPanel.background:Hide()
     for _, edge in ipairs(frame.searchPanel.border) do edge:Hide() end
     for _, edge in ipairs(frame.searchPanel.innerBorder or {}) do edge:Hide() end
@@ -1533,8 +1545,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.searchBox:SetScript("OnTextChanged", function() updateBrowserList(frame, api) end)
 
     frame.listPanel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
-    frame.listPanel:SetSize(UI.browserColumnWidth,
-        UI.windowHeight - UI.contentTop - UI.contentBottom - 148)
+    frame.listPanel:SetSize(UI.characterLibraryWidth, UI.characterLibraryBottom - UI.contentTop - 148)
     frame.listPanel:SetPoint("TOPLEFT", frame.searchPanel, "BOTTOMLEFT", 0, 0)
     frame.listPanel.background:Hide()
     for _, edge in ipairs(frame.listPanel.border) do edge:Hide() end
@@ -1588,7 +1599,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
     frame.modelStage:SetSize(208, 226)
-    frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -146)
+    frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -136)
     frame.modelStage.background:Hide()
     for _, edge in ipairs(frame.modelStage.border) do edge:Hide() end
     frame.stageLabel = createSectionLabel(frame.modelStage, "SAVED PORTRAIT")
@@ -1634,9 +1645,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.detailEmpty:Hide()
 
     local sideX = { left = 42, right = UI.detailColumnWidth - 42 }
-    local sideStartY, sidePitch = -144, 41
-    local bottomX = { 250, 346, 442 }
-    local bottomY = -400
+    local sideStartY, sidePitch = -144, 40
+    local bottomX = { UI.detailColumnWidth / 2 - 96, UI.detailColumnWidth / 2, UI.detailColumnWidth / 2 + 96 }
+    local bottomY = -390
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
         local x, y
