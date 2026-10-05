@@ -466,6 +466,8 @@ local function newControl()
     function control:SetTexCoord(...) self.texCoord = { ... } end
     function control:CreateFontString() return newControl() end
     function control:CreateTexture() return newControl() end
+    function control:CreateMaskTexture() return newControl() end
+    function control:AddMaskTexture(mask) self.mask = mask end
     return control
 end
 
@@ -975,6 +977,9 @@ T.test("profession selection changes the full page artwork for each supported pr
         T.assertTrue(GGM.SelectProfession(frame, profession.key))
         T.assertTrue(frame.professionHeroArtwork ~= nil, "profession hero artwork should be visible")
         T.assertEqual(frame.professionHeroArtwork.texture, profession.texture)
+        T.assertNotNil(frame.professionHeroArtwork.mask, "every profession must retain the shared rounded edge fade")
+        T.assertEqual(frame.professionHeroArtwork.mask.texture, mediaPath .. "profession-page-mask.tga")
+        T.assertEqual(frame.professionHeroArtwork.mask.allPointsTo, frame.professionHeroArtwork)
     end
 end)
 

@@ -22,7 +22,11 @@ LUA_RUNTIME = PROJECT / "tools" / "lua" / "python-runtime"
 sys.path.insert(0, str(LUA_RUNTIME))
 
 from lupa.lua51 import LuaRuntime  # noqa: E402
-from PIL import Image, ImageDraw, ImageFont  # noqa: E402
+from PIL import Image, ImageChops, ImageDraw, ImageFont  # noqa: E402
+
+PROFESSION = next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--profession=")), "Engineering")
+if any(arg.startswith("--profession=") for arg in sys.argv) and not CHARACTER_MODE and not RECIPE_MODE:
+    OUTPUT = Path(__file__).resolve().parent / ("profession-" + PROFESSION.lower() + "-blend-preview.png")
 
 
 def patch_fixture(source: str) -> str:
@@ -244,7 +248,8 @@ def build_browser_tree(lua, module, ggm):
             frame["searchBox"]["SetText"](frame["searchBox"], "No matching character")
     else:
         ggm["SelectGuildGearBrowserTab"](frame, "Professions")
-        ggm["SelectProfession"](frame, "Engineering")
+        if not ggm["SelectProfession"](frame, PROFESSION):
+            raise ValueError("Unsupported profession: " + PROFESSION)
     frame["Show"](frame)
 
     return collect_controls(module, frame, api)
@@ -291,6 +296,7 @@ def collect_controls(module, frame, api):
             "tint": lv(item, "vertexColor"),
             "alpha": float(lv(item, "alpha", 1)),
             "uv": seq(lv(item, "texCoord")),
+            "mask": lv(lv(item, "mask"), "texture"),
             "all_points": int(lv(all_points, "_previewID", 0)) if all_points is not None else None,
             "width": float(lv(item, "width", 0)) or None,
             "height": float(lv(item, "height", 0)) or None,
@@ -605,6 +611,11 @@ def main():
                     img = crop_uv(opened.convert("RGBA"), c["uv"])
                     img = tint_image(img, c["tint"], c["alpha"])
                     img = img.resize((box[2] - box[0], box[3] - box[1]), Image.Resampling.LANCZOS)
+                    mask_path = local_texture(c["mask"])
+                    if mask_path:
+                        with Image.open(mask_path) as mask:
+                            alpha = mask.convert("RGBA").getchannel("A").resize(img.size, Image.Resampling.LANCZOS)
+                            img.putalpha(ImageChops.multiply(img.getchannel("A"), alpha))
                     canvas.alpha_composite(img, (box[0], box[1]))
                 continue
             except (OSError, ValueError):

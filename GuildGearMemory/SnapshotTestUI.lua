@@ -302,6 +302,7 @@ local JOURNAL_TEXTURES = {
     button = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button.tga",
     professionButton = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button-framed.tga",
     window = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-window.tga",
+    professionMask = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-page-mask.tga",
     armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory-vignette.tga",
     font = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif.ttf",
     boldFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
@@ -888,6 +889,11 @@ local function createProfessionsPage(api, frame)
     panel.background:SetTexture(JOURNAL_TEXTURES.professions.Alchemy)
     panel.background:SetVertexColor(1, 1, 1, 1)
     panel.background:SetTexCoord(0, 1, 0, 1)
+    -- Shared edge treatment preserves each profession's artwork and all controls.
+    panel.backgroundMask = panel:CreateMaskTexture()
+    panel.backgroundMask:SetTexture(JOURNAL_TEXTURES.professionMask, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    panel.backgroundMask:SetAllPoints(panel.background)
+    panel.background:AddMaskTexture(panel.backgroundMask)
     frame.professionDetailPanel = panel
     frame.professionHeroArtwork = panel.background
 

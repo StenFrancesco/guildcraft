@@ -9,6 +9,7 @@ The revised layout is 1400 × 630 logical UI units and scales down to fit the sc
 - `journal-window.tga`: 2048 × 1024 complete journal chrome, with transparent outside corners.
 - `profession-button-framed.tga`: 1024 × 256 darker inset button; the UI crops its transparent padding.
 - `{profession}-page.tga`: six 1024 × 1024 backgrounds displayed at the reference panel proportions.
+- `profession-page-mask.tga`: shared rounded perimeter mask for all six recipe panels. The top corners use a broader radius and the upper fade is 50% wider than the lower 5% fade. Profession artwork, chrome, controls, and anchors are unchanged.
 - `journal-serif.ttf` and `journal-serif-bold.ttf`: Crimson Text regular and bold; license included in `FONT-LICENSE.txt`.
 - The earlier nine TGA surfaces remain available for recipe details and secondary panels.
 
@@ -19,6 +20,8 @@ All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source P
 `ui-concepts/export-journal-reference.py` exports the eight revised textures, verifies pixel round-trips, and builds the complete `GuildGearMemory-ArtisanJournal-v2.zip`. `reference-export.json` records sources and dimensions. The older export script and artwork-only ZIP describe the first asset set.
 
 `ui-concepts/render-journal-preview.py` creates an off-game preview from the actual Lua UI anchors, fonts, and runtime textures. Native WoW icons are represented by placeholders. This preview does not establish in-game texture loading or font rendering.
+
+`ui-concepts/export-profession-mask.py` generates and verifies the mathematical mask without modifying any original image. Render each profession with `render-journal-preview.py --profession=Blacksmithing` (or another supported profession name). The mask attaches only to the recipe-panel background, so it cannot fade text, icons, or the outer frame.
 
 The Lua 5.1 regression suite passes 389 tests; syntax checks cover 37 Lua files. Final in-game appearance still needs checking after installing the complete v2 ZIP and reloading WoW.
 
