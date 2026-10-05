@@ -654,6 +654,29 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+T.test("recipe parchment and leather have explicit ordering on the same owning frame", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local createFrame = api.CreateFrame
+    api.CreateFrame = function(...)
+        local control = createFrame(...)
+        local createTexture = control.CreateTexture
+        control.CreateTexture = function(self, name, layer, template, sublevel)
+            local texture = createTexture(self, name, layer, template, sublevel)
+            texture.owner, texture.drawLayer, texture.sublevel = self, layer, sublevel or 0
+            return texture
+        end
+        return control
+    end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(details.paper.background.owner, details,
+        "paper must not depend on ordering between equal-level frames")
+    T.assertEqual(details.materialPanel.background.owner, details)
+    T.assertEqual(details.paper.background.drawLayer, "BACKGROUND")
+    T.assertTrue(details.paper.background.sublevel > details.background.sublevel)
+    T.assertTrue(details.materialPanel.background.sublevel > details.paper.background.sublevel)
+    T.assertEqual(details.paper.background.allPointsTo, details.paper)
+end)
+
 T.test("recipe clicks open one movable details window and pooled rows use current recipes", function()
     local GGM, api, browser, recipes, reads, db = recipeDetailsFixture()
     browser.professionRecipeRows[1].scripts.OnClick(browser.professionRecipeRows[1])
