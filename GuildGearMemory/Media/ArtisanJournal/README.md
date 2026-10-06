@@ -23,7 +23,7 @@ All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source P
 
 `ui-concepts/export-profession-mask.py` generates and verifies the mathematical mask without modifying any original image. Render each profession with `render-journal-preview.py --profession=Blacksmithing` (or another supported profession name). The mask attaches only to the recipe-panel background, so it cannot fade text, icons, or the outer frame.
 
-The Lua 5.1 regression suite passes 389 tests; syntax checks cover 37 Lua files. Final in-game appearance still needs checking after installing the complete v2 ZIP and reloading WoW.
+The current integrated PR CI run passes 405 tests with 0 failures; Lua syntax validation covers 38 Lua files. These results cover the integrated changes in that CI run. Final in-game appearance still needs checking after installing the complete v2 ZIP and reloading WoW.
 
 Artwork was coordinated by `gpt-6-luna` subagents at `max` effort using the built-in ImageGen tool. Original images are in `tests/Source/`; exact prompts are in `ui-concepts/artisan-journal-prompts/`.
 

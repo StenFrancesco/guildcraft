@@ -8,6 +8,7 @@ Existing runtime artwork was reused. No new data acquisition, network traffic, a
 
 ## Checks
 
+- Current integrated PR CI run: **405 passed, 0 failed**, with Lua syntax validation passing for **38 Lua files**. This is the integrated CI result; the earlier local counts below are historical context from when the recipe-only change was validated.
 - Lua 5.1 suite after the runtime stacking correction: **394 passed, 0 failed** in the full working tree; **392 passed, 0 failed** in an isolated copy of the recipe-only staged changes (the two additional tests belong to separate uncommitted armory work).
 - Five previews rendered from actual Lua anchors and runtime textures: `complete`, `long-name`, `empty`, `unavailable`, and `many-crafters`.
 - Visible non-scrolling labels checked for horizontal bounds, wrapping, and placement inside the window.
