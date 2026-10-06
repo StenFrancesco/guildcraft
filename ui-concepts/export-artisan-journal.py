@@ -10,7 +10,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "GuildGearMemory" / "Media" / "ArtisanJournal"
-SOURCE = MEDIA / "Source"
+SOURCE = ROOT / "tests" / "Source"
 PROFESSIONS = (
     "alchemy", "blacksmithing", "enchanting", "engineering",
     "leatherworking", "tailoring",
@@ -52,7 +52,7 @@ def main():
             "file": path.name,
             "wow_path": "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\" + path.name,
             "size": list(size),
-            "source": "Source/" + name + ".png",
+            "source": "tests/Source/" + name + ".png",
             "source_size": list(source_size),
             "role": "profession background" if name in PROFESSIONS else "reusable surface",
         }

@@ -11,7 +11,7 @@
         1024,
         512
       ],
-      "source": "Source/alchemy.png",
+      "source": "tests/Source/alchemy.png",
       "source_size": [
         1774,
         887
@@ -25,7 +25,7 @@
         1024,
         512
       ],
-      "source": "Source/blacksmithing.png",
+      "source": "tests/Source/blacksmithing.png",
       "source_size": [
         1774,
         887
@@ -39,7 +39,7 @@
         1024,
         512
       ],
-      "source": "Source/enchanting.png",
+      "source": "tests/Source/enchanting.png",
       "source_size": [
         1774,
         887
@@ -53,7 +53,7 @@
         1024,
         512
       ],
-      "source": "Source/engineering.png",
+      "source": "tests/Source/engineering.png",
       "source_size": [
         1774,
         887
@@ -67,7 +67,7 @@
         1024,
         512
       ],
-      "source": "Source/leatherworking.png",
+      "source": "tests/Source/leatherworking.png",
       "source_size": [
         1774,
         887
@@ -81,7 +81,7 @@
         1024,
         512
       ],
-      "source": "Source/tailoring.png",
+      "source": "tests/Source/tailoring.png",
       "source_size": [
         1774,
         887
@@ -95,7 +95,7 @@
         512,
         512
       ],
-      "source": "Source/parchment.png",
+      "source": "tests/Source/parchment.png",
       "source_size": [
         1254,
         1254
@@ -109,7 +109,7 @@
         512,
         512
       ],
-      "source": "Source/leather.png",
+      "source": "tests/Source/leather.png",
       "source_size": [
         1254,
         1254
@@ -123,7 +123,7 @@
         512,
         512
       ],
-      "source": "Source/profession-button.png",
+      "source": "tests/Source/profession-button.png",
       "source_size": [
         1254,
         1254

@@ -25,13 +25,13 @@ All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source P
 
 The Lua 5.1 regression suite passes 389 tests; syntax checks cover 37 Lua files. Final in-game appearance still needs checking after installing the complete v2 ZIP and reloading WoW.
 
-Artwork was coordinated by `gpt-6-luna` subagents at `max` effort using the built-in ImageGen tool. Original images are in `Source/`; exact prompts are in `ui-concepts/artisan-journal-prompts/`.
+Artwork was coordinated by `gpt-6-luna` subagents at `max` effort using the built-in ImageGen tool. Original images are in `tests/Source/`; exact prompts are in `ui-concepts/artisan-journal-prompts/`.
 
 Font sources: https://github.com/google/fonts/tree/main/ofl/crimsontext
 
 ## Character armory journal
 
-Characters shares the journal chrome, parchment search, serif fonts, and framed library buttons with Professions. Its header uses `character-armory-vignette.tga`, a 1024 × 512 uncompressed 32-bit RGBA texture with transparent, softly fading left and bottom edges. The UI displays the entire texture so cropping cannot discard the fade. Its source is retained at `Source/character-armory-vignette.png`; the original opaque artwork remains at `Source/character-armory.png`. Regenerate and verify both runtime exports with `ui-concepts/export-character-armory.py`, which checks transparency and exact pixel round-trips.
+Characters shares the journal chrome, parchment search, serif fonts, and framed library buttons with Professions. Its header uses `character-armory-vignette.tga`, a 1024 × 512 uncompressed 32-bit RGBA texture with transparent, softly fading left and bottom edges. The UI displays the entire texture so cropping cannot discard the fade. Its source is retained at `tests/Source/character-armory-vignette.png`; the original opaque artwork remains at `tests/Source/character-armory.png`. Regenerate and verify both runtime exports with `ui-concepts/export-character-armory.py`, which checks transparency and exact pixel round-trips.
 
 The portrait remains the existing saved race/2D portrait. Equipment acquisition, storage, tooltips, synchronization, and cached-state semantics are unchanged.
 

@@ -467,8 +467,9 @@ def local_texture(path):
     # Source PNG fallback makes the script useful before TGA export is regenerated.
     if candidate.suffix.lower() == ".tga":
         stem = candidate.stem
-        options = [MEDIA / "Source" / f"{stem}.png", MEDIA / "Source" / f"{stem}-page.png"]
-        options.insert(0, MEDIA / "Source" / f"{stem}-v2.png")
+        source = TESTS / "Source"
+        options = [source / f"{stem}.png", source / f"{stem}-page.png"]
+        options.insert(0, source / f"{stem}-v2.png")
         for option in options:
             if option.is_file():
                 return option
