@@ -59,7 +59,8 @@ def patch_fixture(source: str) -> str:
         ),
         (
             '    function control:GetStringHeight() return #self:GetText() > 80 and 56 or 14 end',
-            '    function control:GetStringHeight() return __previewStringHeight(self) end',
+            '    function control:GetStringHeight() return __previewStringHeight(self) end\n'
+            '    function control:GetStringWidth() return __previewStringWidth(self) end',
         ),
         (
             '    function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end',
@@ -144,6 +145,16 @@ def norm_color(value, default=(0.19, 0.125, 0.07, 1)):
     return tuple(max(0, min(255, round(v * 255))) for v in vals[:4])
 
 
+def draw_text_with_shadow(draw, control, position, text, font):
+    shadow = norm_color(control["shadow_color"], (0, 0, 0, 0))
+    offsets = control["shadow_offset"]
+    if shadow[3] and len(offsets) >= 2:
+        # WoW's positive y shadow offset moves upward; PIL's y axis moves down.
+        draw.text((position[0] + offsets[0], position[1] - offsets[1]),
+                  text, font=font, fill=shadow, anchor="lt")
+    draw.text(position, text, font=font, fill=norm_color(control["text_color"]), anchor="lt")
+
+
 def build_tree():
     os.chdir(PROJECT)
     lua = LuaRuntime(unpack_returned_tuples=True)
@@ -153,7 +164,17 @@ def build_tree():
                "font_template": lv(control, "fontTemplate"), "width": lv(control, "width"),
                "text": str(lv(control, "text", ""))}
         return max(14, len(text_lines(rec, font_for(rec))) * rec["font_size"])
+
+    def preview_string_width(control):
+        font = lv(control, "font")
+        rec = {"font_path": lv(font, "path"), "font_size": lv(font, "size", 14),
+               "font_template": lv(control, "fontTemplate"), "width": lv(control, "width"),
+               "text": str(lv(control, "text", ""))}
+        rendered_font = font_for(rec)
+        return max(rendered_font.getlength(line) for line in text_lines(rec, rendered_font))
+
     lua.globals()["__previewStringHeight"] = preview_string_height
+    lua.globals()["__previewStringWidth"] = preview_string_width
     fixture = (TESTS / "snapshot_test_ui_test.lua").read_text(encoding="utf-8")
     module = lua.execute(patch_fixture(fixture))
     ggm = module["loadUI"]()
@@ -289,6 +310,8 @@ def collect_controls(module, frame, api):
             "font_size": float(lv(font, "size", 14)),
             "font_template": lv(item, "fontTemplate"),
             "text_color": lv(item, "textColor"),
+            "shadow_color": lv(item, "shadowColor"),
+            "shadow_offset": seq(lv(item, "shadowOffset")),
             "justify": str(lv(item, "justifyH", "LEFT")),
             "texture": texture if isinstance(texture, str) else ("Interface\\Icons\\Item" if isinstance(texture, (int, float)) else None),
             "atlas": lv(item, "atlas"),
@@ -318,7 +341,7 @@ def fractions(point):
 def font_for(rec, media=MEDIA):
     path = rec["font_path"]
     name = str(path).replace("\\", "/").split("/")[-1] if path else ""
-    if name not in ("journal-serif.ttf", "journal-serif-bold.ttf"):
+    if name not in ("journal-serif.ttf", "journal-serif-bold.ttf", "journal-serif-italic.ttf"):
         name = "journal-serif-bold.ttf" if "Huge" in str(rec["font_template"] or "") else "journal-serif.ttf"
     return ImageFont.truetype(str(media / name), max(1, round(rec["font_size"] or 14)))
 
@@ -516,7 +539,7 @@ def render_recipe(controls, rects, by_id, root_id):
                 if row * line_height >= h:
                     break
                 tx = x + (w - font.getlength(line)) / 2 if c["justify"] == "CENTER" else x
-                draw.text((tx, y + row * line_height), line, font=font, fill=norm_color(c["text_color"]), anchor="lt")
+                draw_text_with_shadow(draw, c, (tx, y + row * line_height), line, font)
         elif c["type"] == "Texture":
             box = tuple(round(v) for v in (x, y, x + w, y + h))
             if box[2] <= box[0] or box[3] <= box[1]:
@@ -638,7 +661,6 @@ def main():
         x, y, w, _ = rect
         x, y = x - root_x, y - root_y
         font = font_for(c)
-        color = norm_color(c["text_color"])
         lines = text_lines(c, font, w)
         line_height = max(round(c["font_size"]), font.getbbox("Ag")[3] - font.getbbox("Ag")[1])
         for row, line in enumerate(lines):
@@ -649,7 +671,7 @@ def main():
                 tx = x + (w - line_width) / 2
             else:
                 tx = x
-            draw.text((tx, y + row * line_height), line, font=font, fill=color, anchor="lt")
+            draw_text_with_shadow(draw, c, (tx, y + row * line_height), line, font)
 
     # Native frame template content is not represented by the addon fixture; show its Lua-sized placeholder.
     for c in controls:

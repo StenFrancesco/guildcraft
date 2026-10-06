@@ -2,7 +2,7 @@
 
 The UI follows the approved `ui-concepts/03-artisan-journal.png` reference: a bronze and wood journal frame, illustrated leather sidebar, torn parchment, inset profession buttons, large serif text, and profession artwork behind the recipe page. Controls, labels, native item icons, and cached records are rendered by the addon.
 
-The revised layout is 1400 × 630 logical UI units and scales down to fit the screen. All six professions switch their own full-page background. Search, recipe details, crafter selection, navigation, and cached-data wording retain their existing behavior. No gameplay, data acquisition, or synchronization logic changes.
+The revised layout is 1400 × 630 logical UI units and scales down to fit the screen. All six professions switch their own full-page background and show their selected quoted subtitle in centered italic serif type. Search, recipe details, crafter selection, navigation, and cached-data wording retain their existing behavior. No gameplay, data acquisition, or synchronization logic changes.
 
 ## Runtime files
 
@@ -10,7 +10,7 @@ The revised layout is 1400 × 630 logical UI units and scales down to fit the sc
 - `profession-button-framed.tga`: 1024 × 256 darker inset button; the UI crops its transparent padding.
 - `{profession}-page.tga`: six 1024 × 1024 backgrounds displayed at the reference panel proportions.
 - `profession-page-mask.tga`: shared rounded perimeter mask for all six recipe panels. The top corners use a broader radius and the upper fade is 50% wider than the lower 5% fade. Profession artwork, chrome, controls, and anchors are unchanged.
-- `journal-serif.ttf` and `journal-serif-bold.ttf`: Crimson Text regular and bold; license included in `FONT-LICENSE.txt`.
+- `journal-serif.ttf`, `journal-serif-bold.ttf`, and `journal-serif-italic.ttf`: Crimson Text regular, bold, and italic; license included in `FONT-LICENSE.txt`.
 - The earlier nine TGA surfaces remain available for recipe details and secondary panels.
 
 All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source PNGs retain their original aspect ratio; the runtime viewport restores that ratio after technical export resizing. There is no baked UI text in the new artwork.

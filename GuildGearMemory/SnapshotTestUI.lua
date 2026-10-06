@@ -306,6 +306,7 @@ local JOURNAL_TEXTURES = {
     armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory-vignette.tga",
     font = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif.ttf",
     boldFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
+    italicFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-italic.ttf",
     professions = {
         Alchemy = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\alchemy-page.tga",
         Blacksmithing = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\blacksmithing-page.tga",
@@ -321,7 +322,9 @@ GGM.UIJournalTextures = JOURNAL_TEXTURES
 function GGM.ApplyJournalFont(text, size, flags)
     if not text or type(text.SetFont) ~= "function" then return false end
     local isBold = flags == "bold" or flags == true
-    local path = isBold and JOURNAL_TEXTURES.boldFont or JOURNAL_TEXTURES.font
+    local isItalic = flags == "italic"
+    local path = isBold and JOURNAL_TEXTURES.boldFont
+        or (isItalic and JOURNAL_TEXTURES.italicFont or JOURNAL_TEXTURES.font)
     local ok = pcall(text.SetFont, text, path, size or 15, "")
     if ok then
         if type(text.SetShadowColor) == "function" then text:SetShadowColor(0, 0, 0, 0) end
@@ -750,6 +753,41 @@ local PROFESSIONS = {
     { key = "Tailoring", professionID = 197, icon = "Interface\\Icons\\Trade_Tailoring" },
 }
 
+local PROFESSION_SUBTITLES = {
+    Alchemy = "Definitely safe. Probably drinkable.",
+    Blacksmithing = "Hit it until it becomes useful.",
+    Enchanting = "Now with magically inflated confidence.",
+    Engineering = "Safety third.",
+    Leatherworking = "Armor that remembers being angry.",
+    Tailoring = "Sew much responsibility.",
+    Cooking = "Raid fuel with extra seasoning.",
+    Fishing = "Gone fishing. Guild can wait.",
+    Herbalism = "Touching grass. Collecting it too.",
+    Mining = "Ore else.",
+    Skinning = "Fur a good cause.",
+}
+
+local function updateProfessionSubtitle(frame, selectedKey)
+    local subtitle = frame.professionSubtitle
+    if not subtitle then return end
+
+    local subtitleText = PROFESSION_SUBTITLES[selectedKey]
+    subtitle:SetText(subtitleText and ('"' .. subtitleText .. '"') or "")
+    local maxWidth = 360
+    local titleWidth = maxWidth
+    if type(frame.professionHeading.GetStringWidth) == "function" then
+        local measuredWidth = frame.professionHeading:GetStringWidth()
+        if type(measuredWidth) == "number" and measuredWidth > 0 then
+            titleWidth = math.min(maxWidth, measuredWidth)
+        end
+    end
+    subtitle:SetWidth(math.min(maxWidth, titleWidth + 28))
+    if type(subtitle.SetWordWrap) == "function" then subtitle:SetWordWrap(true) end
+    subtitle:ClearAllPoints()
+    subtitle:SetJustifyH("CENTER")
+    subtitle:SetPoint("TOP", frame.professionHeading, "BOTTOMLEFT", titleWidth / 2, -7)
+end
+
 local function professionButtonColor(button, selected)
     GGM.SetFlatButtonState(button, selected and "selected" or "idle")
     if button.icon then button.icon:SetAlpha(selected and 1 or 0.88) end
@@ -783,6 +821,7 @@ function GGM.SelectProfession(frame, selectedKey)
     if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.selectedProfession = selectedKey
     frame.professionHeading:SetText(selectedKey)
+    updateProfessionSubtitle(frame, selectedKey)
     if frame.professionHeroIcon then frame.professionHeroIcon:SetTexture(selectedProfession.icon) end
     if frame.professionHeroArtwork then
         frame.professionHeroArtwork:SetTexture(JOURNAL_TEXTURES.professions[selectedKey])
@@ -862,12 +901,6 @@ local function createProfessionsPage(api, frame)
     eyebrow:SetText("PROFESSION LIBRARY")
     setTextColor(eyebrow, THEME.text)
     eyebrow:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -10)
-    local helper = createText(sidebar, "OVERLAY", "GameFontHighlight")
-    GGM.ApplyJournalFont(helper, 14)
-    helper:SetPoint("TOPLEFT", eyebrow, "BOTTOMLEFT", 0, -5)
-    helper:SetWidth(UI.professionSidebarWidth - 56)
-    helper:SetText("Browse cached recipe snapshots")
-    setTextColor(helper, THEME.textSoft)
     local libraryRule = sidebar:CreateTexture(nil, "BORDER")
     libraryRule:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -53)
     libraryRule:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", -8, -53)
@@ -916,12 +949,12 @@ local function createProfessionsPage(api, frame)
     frame.professionHeading:SetJustifyH("LEFT")
     setTextColor(frame.professionHeading, THEME.text)
 
-    local subtitle = createText(hero, "OVERLAY", "GameFontHighlight")
-    GGM.ApplyJournalFont(subtitle, 14)
-    subtitle:SetPoint("TOPLEFT", frame.professionHeading, "BOTTOMLEFT", 0, -7)
-    subtitle:SetWidth(360)
-    subtitle:SetText("Last-known recipe information")
-    setTextColor(subtitle, THEME.textSoft)
+    frame.professionSubtitle = createText(hero, "OVERLAY", "GameFontHighlight")
+    GGM.ApplyJournalFont(frame.professionSubtitle, 14, "italic")
+    setTextColor(frame.professionSubtitle, THEME.muted)
+    frame.professionSubtitle:SetShadowColor(
+        THEME.panel[1], THEME.panel[2], THEME.panel[3], 0.78)
+    frame.professionSubtitle:SetShadowOffset(1, -1)
 
     local searchLabel = createText(panel, "OVERLAY", "GameFontHighlight")
     GGM.ApplyJournalFont(searchLabel, 15, "bold")
@@ -1090,7 +1123,8 @@ local updateBrowserList
 
 local function setPageHeader(frame, title, subtitle)
     frame.pageTitle:SetText(title)
-    frame.pageSubtitle:SetText(subtitle)
+    frame.pageSubtitle:SetText(subtitle or "")
+    if subtitle and subtitle ~= "" then frame.pageSubtitle:Show() else frame.pageSubtitle:Hide() end
 end
 
 function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
@@ -1100,7 +1134,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if frame.TitleText then frame.TitleText:SetText("Guild Gear Memory") end
 
     if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known guild equipment")
-    elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "Review captured profession snapshots and recipes")
+    elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "")
     else setPageHeader(frame, "Bank", "Saved bank snapshots and shared storage") end
 
     for _, tab in ipairs(frame.navigationTabs) do
@@ -1471,16 +1505,10 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.brandIcon:SetTexture("Interface\\Icons\\INV_Chest_Chain_05")
 
     frame.brandTitle = createText(frame.navigationRail, "OVERLAY", "GameFontNormalLarge")
-    GGM.ApplyJournalFont(frame.brandTitle, 20, "bold")
+    GGM.ApplyJournalFont(frame.brandTitle, 19, "bold")
     frame.brandTitle:SetPoint("TOPLEFT", frame.brandIconFrame, "TOPRIGHT", 10, -5)
     frame.brandTitle:SetText("Guild Gear Memory")
     setTextColor(frame.brandTitle, THEME.railGold)
-    frame.brandSubtitle = createText(frame.navigationRail, "OVERLAY", "GameFontHighlightSmall")
-    GGM.ApplyJournalFont(frame.brandSubtitle, 12)
-    frame.brandSubtitle:SetPoint("TOPLEFT", frame.brandTitle, "BOTTOMLEFT", 0, -5)
-    frame.brandSubtitle:SetWidth(184)
-    frame.brandSubtitle:SetText("Gear memory and recipe snapshots")
-    setTextColor(frame.brandSubtitle, THEME.railMuted)
 
     local navLabel = createSectionLabel(frame.navigationRail, "LIBRARY")
     GGM.ApplyJournalFont(navLabel, 15)

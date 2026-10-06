@@ -579,10 +579,7 @@ T.test("journal headings reserve space for subtitles inside their columns", func
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     T.assertTrue((frame.pageSubtitle.width or 0) > 0, "page subtitle needs a bounded wrapping region")
     T.assertTrue(frame.pageTitle.point.x + frame.pageSubtitle.width <= 620, "page subtitle crosses into the detail page")
-    T.assertTrue((frame.brandSubtitle.width or 0) > 0, "brand subtitle needs a bounded wrapping region")
-    local brandLeft = frame.brandIconFrame.point.x + frame.brandIconFrame.width + frame.brandTitle.point.x
-    T.assertTrue(brandLeft + frame.brandSubtitle.width <= GGM.UIStyleTokens.railWidth - 12,
-        "brand subtitle crosses out of the leather rail")
+    T.assertNil(frame.brandSubtitle, "brand subtitle should be removed")
 end)
 
 T.test("character header artwork is above parchment and captured date has a bounded region", function()
