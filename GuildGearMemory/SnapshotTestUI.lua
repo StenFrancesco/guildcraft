@@ -893,11 +893,6 @@ local function createProfessionsPage(api, frame)
     eyebrow:SetText("PROFESSION LIBRARY")
     setTextColor(eyebrow, THEME.text)
     eyebrow:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -10)
-    local libraryRule = sidebar:CreateTexture(nil, "BORDER")
-    libraryRule:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -53)
-    libraryRule:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", -8, -53)
-    libraryRule:SetHeight(1)
-    setColor(libraryRule, THEME.borderSoft)
 
     frame.professionButtons = {}
     for index, profession in ipairs(PROFESSIONS) do
