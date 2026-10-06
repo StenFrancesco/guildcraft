@@ -1,0 +1,14 @@
+Use case: stylized-concept
+Asset type: seamless reusable parchment background texture for a World of Warcraft profession addon UI
+Primary request: Create a square, tile-friendly warm aged quest-journal parchment paper grain matching the selected Artisan Journal concept.
+Input images: Image 1 is a style and palette reference only; use its honey-tan parchment color and subtle aged paper texture without copying its interface or illustrations.
+Scene/backdrop: A flat, evenly lit field of aged artisan journal parchment, suitable to repeat seamlessly behind interface panels.
+Subject: Paper surface only, with fine natural grain and restrained subtle wear.
+Style/medium: Warcraft-inspired fantasy quest parchment, hand-textured paper surface, painterly yet quiet and readable.
+Composition/framing: Square 1024x1024, seamless or tile-friendly edges with no visible seam; evenly consistent light central field, only gentle tonal variation.
+Lighting/mood: Soft warm ambient light, gentle and neutral; no dramatic shadows.
+Color palette: Honey-tan, pale amber, warm cream, sepia, and soft brown, consistent with the reference. Keep the central field light enough for dark UI text.
+Materials/textures: Fine aged paper fibers, delicate speckles and faint diffuse mottling; no strong stains.
+Text (verbatim): None.
+Constraints: Pure reusable paper grain only; no prominent focal point; maintain readability across the whole field.
+Avoid: Border, edge vignette, writing, letters, numbers, glyphs, runes, illustrations, objects, tools, UI, frames, buttons, icons, logos, watermarks, folds, strong stains, heavy shadows.

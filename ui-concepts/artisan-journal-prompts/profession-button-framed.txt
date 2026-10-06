@@ -1,0 +1,6 @@
+Use case: precise-object-edit
+Asset type: transparent reusable normal-state profession library button frame for the matching Warcraft addon
+Input images: Image 1 is the prior blank bronze-and-parchment button; preserve its materials and style, but fix the frame proportions
+Primary request: Create one isolated, blank horizontal button frame. Redesign its outer silhouette into a true 4:1 width-to-height rectangle, so it is distinctly deeper/taller than Image 1. The complete outer frame itself must have a 4:1 aspect ratio, independent of the surrounding transparent canvas. Its bounds should fill roughly 82% of canvas width and 62% of canvas height. Keep ample transparent padding outside it.
+Style/materials: match Image 1's warm medium-dark parchment center and understated carved brown/bronze border. Preserve straight sides and only small rounded bronze corner ornaments; avoid large circular corner medallions. Thin clean bevel, Warcraft artisan journal craftsmanship.
+Constraints: one frame only, fully blank, no art, text, letters, icon, symbol, glow, selected-state gold highlight, watermark, panels, or other controls. Clean true transparency outside the button. Center the full 4:1 button, keep it uncropped, and avoid distorting its rectangle.

@@ -1,0 +1,13 @@
+Use case: stylized-concept
+Asset type: World of Warcraft addon profession background texture
+Primary request: Create a reusable, broad landscape parchment background for the Artisan Journal profession detail panel, with faded Tailoring workshop art integrated into the paper.
+Input images: Image 1 is a style and palette reference only: `ui-concepts/03-artisan-journal.png`. Match its warm Warcraft quest-journal parchment, painterly finish, honey tan, sepia, muted amber, and brown tones. Do not copy its interface, words, borders, icons, or layout.
+Scene/backdrop: A softly lit, aged honey-tan journal page with even parchment texture and restrained natural wear. Let the sewing workshop details fade softly into the paper.
+Subject: A small, tasteful Tailoring still life on a rustic craft table: folded cloth, rolls of muted brown and gold fabric, thread spools, a sewing needle, and shears. Add a few extremely faint fabric-pattern and stitch-study sketches near the far-right margin, without symbols or writing.
+Style/medium: Painterly fantasy game illustration in the visual language of a classic Warcraft artisan journal; tactile paper and fabric, softly blended edges, refined and readable as an in-game background.
+Composition/framing: Wide 2:1 landscape composition, ideally 2048×1024. Keep the left 55–60% mostly open, pale parchment for overlaid UI text. Concentrate the Tailoring still life in the rightmost 40–45%, with its strongest detail in the upper-right. Keep the lower half mostly quiet parchment so recipe rows remain easy to read. Avoid a hard vignette or a cropped page edge.
+Lighting/mood: Warm, gentle workshop light; calm, handmade, practical, and slightly aged.
+Color palette: Match the reference's honey tan, parchment cream, sepia, subdued amber, and soft fabric brown. Keep contrast restrained and avoid vivid or saturated colors.
+Materials/textures: Fine fibrous parchment grain, softly worn paper, matte woven cloth with subtle folds, thread, worn wood, and softly faded graphite or ink line studies.
+Constraints: This is background art only, not a UI screenshot. Preserve large low-detail areas for readable overlaid text and recipe rows. No text, letters, numbers, glyphs, runes, logos, watermark, characters, UI frames, buttons, badges, or standalone icons.
+Avoid: Bright red, purple, blue, neon colors, hard graphic borders, strong shadows across the open parchment, dense all-over detail, modern tools, photorealism, and any legible marks.

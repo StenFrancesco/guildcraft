@@ -1,0 +1,13 @@
+Use case: stylized-concept
+Asset type: reusable 2:1 landscape profession-panel background texture for a World of Warcraft addon UI, ideally 2048×1024.
+Primary request: Create an Enchanting-themed background illustration in the visual style of Image 1, a reference for the warm painterly Warcraft journal aesthetic and color treatment only. Do not reproduce the screenshot or any interface elements.
+Scene/backdrop: A broad sheet of warm aged quest parchment in honey tan, sepia, amber, and muted brown, with a soft worn paper grain and gentle vignette. Let the illustration fade seamlessly into the parchment.
+Subject: An enchanter's workbench vignette concentrated in the rightmost 40% of the image: an etched enchanting rod, an aged closed tome with a completely blank cover and no writing, a few softly glowing amber crystals, drifting flecks of golden dust, and small artisan tools. Keep all objects secondary in scale and softly painted, like an old fantasy journal illustration.
+Style/medium: painterly high-fantasy Warcraft journal art, hand-painted, richly textured but restrained, matching the warm amber and parchment finish of Image 1.
+Composition/framing: wide 2:1 landscape. Keep the left 55% and most of the lower half quiet, light parchment with generous uncluttered negative space for UI headings and recipe rows. Use only very faint crystal and arcane-study ink sketches near the outer right margin. Preserve legibility under text overlays.
+Lighting/mood: softly lit, warm, contemplative artisan's journal mood; muted amber light and a delicate golden magical glimmer, no dramatic glow.
+Color palette: honey tan, aged parchment, sepia, amber, dark umber; magic stays muted amber-gold. No bright violet, blue, or red.
+Materials/textures: fibrous aged paper, subtle watercolor wash, delicate ink linework, etched metal, old leather, softly translucent crystals, golden dust.
+Text (verbatim): none.
+Constraints: make a pure background texture, not a UI mockup or screenshot. No visible words, letters, numbers, glyphs, logos, watermarks, characters, frames, borders, buttons, icons, or panel controls. Avoid busy detail behind future text. The tome must have no readable or decorative writing.
+Avoid: modern equipment, neon colors, high-contrast clutter, sharp hard-edged cutouts, ornate border framing, weapons, people, creatures, strong blue/violet/red magic, runes.

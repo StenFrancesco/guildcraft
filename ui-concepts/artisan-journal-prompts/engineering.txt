@@ -1,0 +1,14 @@
+Use case: stylized-concept
+Asset type: production background texture for a World of Warcraft profession addon panel
+Primary request: Create a standalone Engineering background inspired by the visual style of the selected Artisan Journal concept.
+Input images: Image 1 is a style and palette reference only; do not reproduce its interface, text, frames, icons, or layout.
+Scene/backdrop: Aged artisan journal parchment, with the illustration integrated into the paper rather than placed in a separate frame.
+Subject: A compact engineering workbench scene with a few brass gears, worn leather goggles, a hand wrench, and one small mechanical gadget. Keep the tools and objects recognizable and grounded.
+Style/medium: Warcraft-inspired hand-painted fantasy game illustration, detailed but restrained, with painterly shading and fine sepia ink etching.
+Composition/framing: Broad landscape about 2:1 (ideally 2048x1024). Concentrate the engineering scene in the upper and rightmost 40–45% of the image. Keep the left 55–60% light, calm, low-detail parchment for addon title and text overlays. Keep most of the bottom half quiet parchment for recipe rows. Let the scene softly fade into the paper with no hard boundary. Add only very faint mechanical schematic etchings near the outer margins.
+Lighting/mood: Soft warm lamplight, warm, old-world, practical and inviting.
+Color palette: Consistent with the reference's honey-tan, aged parchment, sepia, amber, ochre, brass, and dark brown palette. Keep the paper light enough for dark UI text. Avoid saturated blue or red.
+Materials/textures: Visible natural paper grain, softly worn parchment fibers, brass, leather, iron, and subtle ink lines.
+Text (verbatim): None.
+Constraints: This is a pure background texture; preserve large quiet paper areas for separately overlaid addon text and controls.
+Avoid: Any words, letters, numbers, glyphs, runes, typography, UI, panels, frames, borders, buttons, icons, logos, watermarks, characters, people, excessive clutter, strong vignette, saturated blue, saturated red.
