@@ -942,8 +942,8 @@ local function createProfessionsPage(api, frame)
     setTextColor(frame.professionHeading, THEME.text)
 
     frame.professionSubtitle = createText(hero, "OVERLAY", "GameFontHighlight")
-    GGM.ApplyJournalFont(frame.professionSubtitle, 14, "italic")
-    setTextColor(frame.professionSubtitle, THEME.muted)
+    GGM.ApplyJournalFont(frame.professionSubtitle, 18, "italic")
+    setTextColor(frame.professionSubtitle, THEME.text)
     frame.professionSubtitle:SetShadowColor(
         THEME.panel[1], THEME.panel[2], THEME.panel[3], 0.78)
     frame.professionSubtitle:SetShadowOffset(1, -1)

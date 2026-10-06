@@ -1,6 +1,6 @@
 # Profession subtitle choices
 
-Selected and applied on 2026-10-06. The selected subtitles below use quoted, left-aligned, muted-sepia italic serif text beneath the heading. The addon keeps its existing six-profession navigation.
+Selected and applied on 2026-10-06. The selected subtitles below use quoted, left-aligned, dark-ink italic serif text at 18px beneath the heading. The addon keeps its existing six-profession navigation.
 
 | Profession | Selected subtitle |
 | --- | --- |
