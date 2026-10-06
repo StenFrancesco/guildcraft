@@ -2,7 +2,7 @@
 
 The UI follows the approved `ui-concepts/03-artisan-journal.png` reference: a bronze and wood journal frame, illustrated leather sidebar, torn parchment, inset profession buttons, large serif text, and profession artwork behind the recipe page. Controls, labels, native item icons, and cached records are rendered by the addon.
 
-The revised layout is 1400 × 630 logical UI units and scales down to fit the screen. All six professions switch their own full-page background and show their selected quoted subtitle in centered italic serif type. Search, recipe details, crafter selection, navigation, and cached-data wording retain their existing behavior. No gameplay, data acquisition, or synchronization logic changes.
+The revised layout is 1400 × 630 logical UI units and scales down to fit the screen. All six professions switch their own full-page background and show their selected quoted subtitle in left-aligned italic serif type. Search, recipe details, crafter selection, navigation, and cached-data wording retain their existing behavior. No gameplay, data acquisition, or synchronization logic changes.
 
 ## Runtime files
 

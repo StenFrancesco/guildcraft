@@ -1,6 +1,6 @@
 # Profession subtitle choices
 
-Selected and applied on 2026-10-06. The selected subtitles below use quoted, centered, muted-sepia italic serif text beneath the heading. The addon keeps its existing six-profession navigation.
+Selected and applied on 2026-10-06. The selected subtitles below use quoted, left-aligned, muted-sepia italic serif text beneath the heading. The addon keeps its existing six-profession navigation.
 
 | Profession | Selected subtitle |
 | --- | --- |
@@ -16,7 +16,7 @@ Selected and applied on 2026-10-06. The selected subtitles below use quoted, cen
 | Mining | "Ore else." |
 | Skinning | "Fur a good cause." |
 
-Archaeology is excluded. Inscription and Jewelcrafting have no selection yet. The selected presentation is **style 2: centered italic serif beneath the profession title**.
+Archaeology is excluded. Inscription and Jewelcrafting have no selection yet. The selected presentation is **left-aligned italic serif beneath the profession title**.
 
 Removed presentation copy:
 

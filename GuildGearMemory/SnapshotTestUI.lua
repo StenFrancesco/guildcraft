@@ -773,19 +773,11 @@ local function updateProfessionSubtitle(frame, selectedKey)
 
     local subtitleText = PROFESSION_SUBTITLES[selectedKey]
     subtitle:SetText(subtitleText and ('"' .. subtitleText .. '"') or "")
-    local maxWidth = 360
-    local titleWidth = maxWidth
-    if type(frame.professionHeading.GetStringWidth) == "function" then
-        local measuredWidth = frame.professionHeading:GetStringWidth()
-        if type(measuredWidth) == "number" and measuredWidth > 0 then
-            titleWidth = math.min(maxWidth, measuredWidth)
-        end
-    end
-    subtitle:SetWidth(math.min(maxWidth, titleWidth + 28))
+    subtitle:SetWidth(360)
     if type(subtitle.SetWordWrap) == "function" then subtitle:SetWordWrap(true) end
     subtitle:ClearAllPoints()
-    subtitle:SetJustifyH("CENTER")
-    subtitle:SetPoint("TOP", frame.professionHeading, "BOTTOMLEFT", titleWidth / 2, -7)
+    subtitle:SetJustifyH("LEFT")
+    subtitle:SetPoint("TOPLEFT", frame.professionHeading, "BOTTOMLEFT", 0, -7)
 end
 
 local function professionButtonColor(button, selected)
@@ -1330,17 +1322,14 @@ local function createNavigationTab(api, frame, key, label, caption, iconPath, y)
     setColor(tab.accent, THEME.railGold)
     tab.accent:Hide()
 
-    tab.icon = tab:CreateTexture(nil, "ARTWORK")
-    tab.icon:SetSize(UI.navigationIconSize, UI.navigationIconSize)
-    tab.icon:SetPoint("LEFT", tab, "LEFT", 12, 0)
+    tab.iconHolder = createSurface(api, tab, THEME.slot, THEME.borderSoft)
+    tab.iconHolder:SetSize(42, 42)
+    tab.iconHolder:SetPoint("CENTER", tab, "LEFT", 12 + UI.navigationIconSize / 2, 0)
+    tab.icon = tab.iconHolder:CreateTexture(nil, "ARTWORK")
+    tab.icon:SetPoint("TOPLEFT", tab.iconHolder, "TOPLEFT", 3, -3)
+    tab.icon:SetPoint("BOTTOMRIGHT", tab.iconHolder, "BOTTOMRIGHT", -3, 3)
     tab.icon:SetTexture(iconPath)
     tab.icon:SetAlpha(0.88)
-
-    tab.iconBorder = tab:CreateTexture(nil, "OVERLAY")
-    tab.iconBorder:SetSize(UI.navigationIconSize + 8, UI.navigationIconSize + 8)
-    tab.iconBorder:SetPoint("CENTER", tab.icon, "CENTER", 0, 0)
-    tab.iconBorder:SetTexture("Interface\\Buttons\\UI-Quickslot2")
-    tab.iconBorder:SetAlpha(0.82)
 
     tab.label = createText(tab, "OVERLAY", "GameFontHighlight")
     GGM.ApplyJournalFont(tab.label, 16, "bold")
