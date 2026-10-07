@@ -1,0 +1,8 @@
+Edit Source/character-armory.png into a compact transparent UI header vignette.
+Retain the painterly antique shield, golden trim, gauntlets, sword, open travel
+ledger and candle motif, grouped on the right. Remove the parchment background
+and lower-right line drawings. Use actual alpha transparency with a generous
+soft fade at the left and bottom edges so the asset blends into the existing
+parchment page. Top and right may crop against the viewport. Wide landscape
+composition for the existing 264x122 header. No baked text, rectangular backdrop,
+shadow box, or checkerboard.

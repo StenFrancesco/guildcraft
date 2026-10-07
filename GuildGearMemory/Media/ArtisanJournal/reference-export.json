@@ -1,0 +1,90 @@
+{
+  "alchemy-page": {
+    "source": "alchemy-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "blacksmithing-page": {
+    "source": "blacksmithing-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "enchanting-page": {
+    "source": "enchanting-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "engineering-page": {
+    "source": "engineering-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "leatherworking-page": {
+    "source": "leatherworking-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "tailoring-page": {
+    "source": "tailoring-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "journal-window": {
+    "source": "journal-window-v2.png",
+    "source_size": [
+      1870,
+      841
+    ],
+    "size": [
+      2048,
+      1024
+    ]
+  },
+  "profession-button-framed": {
+    "source": "profession-button-framed-v2.png",
+    "source_size": [
+      2172,
+      724
+    ],
+    "size": [
+      1024,
+      256
+    ]
+  }
+}
