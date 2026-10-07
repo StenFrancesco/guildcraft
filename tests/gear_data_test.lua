@@ -41,6 +41,47 @@ T.test("item string parser preserves the exact instance payload and derives the 
     T.assertEqual(extractedID, 153787)
 end)
 
+T.test("item link extraction strips trailing player metadata from realm links", function()
+    local GGM = loadModules()
+    local itemString = "item:240948::::::::85:253::133:4:12249:12249:4785:12349:5:283:615:299:493:30:40:388:54:3:3127::::"
+    local itemLink = "|cnIQ3:|H" .. itemString
+        .. ":Player}-20732D3039464230430303:|h[Nocturnal Charm]|h"
+
+    local extracted, itemID, err = GGM.ExtractItemString(itemLink)
+
+    T.assertNil(err)
+    T.assertEqual(itemID, 240948)
+    T.assertEqual(extracted, itemString)
+end)
+
+T.test("item link extraction strips the complete opaque player metadata tail", function()
+    local GGM = loadModules()
+    local itemString = "item:240948::::::::85:253::133:4:12249:12249:4785:12349:5:283:615:299:493:30:40:388:54:3:3127::::"
+    local itemLink = "|H" .. itemString
+        .. ":Player}-20732D3039464230430303:extra:|h[Nocturnal Charm]|h"
+
+    local extracted, itemID, err = GGM.ExtractItemString(itemLink)
+
+    T.assertNil(err)
+    T.assertEqual(itemID, 240948)
+    T.assertEqual(extracted, itemString)
+end)
+
+T.test("item link extraction trims the crafted metadata sentinel before crafter GUID", function()
+    local GGM = loadModules()
+    local itemString = "item:240948::::::::85:253::133:4:12249:12249:4785:12349:5:283:615:299:493:30:40:388:54:3:3127::::"
+    local craftedFields = ":47:240167:48:245782:49"
+    local opaqueTail = ":-2147480301::::Player-1301-0CFA0615:"
+    local itemLink = "|H" .. itemString .. craftedFields .. opaqueTail
+        .. "|h[Nocturnal Charm]|h"
+
+    local extracted, itemID, err = GGM.ExtractItemString(itemLink)
+
+    T.assertNil(err)
+    T.assertEqual(itemID, 240948)
+    T.assertEqual(extracted, itemString .. craftedFields)
+end)
+
 T.test("item string parser accepts signed suffix and unique ids within existing bounds", function()
     local GGM = loadModules()
     local itemString = "item:153787:0:0:0:0:0:-123:-456"
