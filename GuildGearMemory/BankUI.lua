@@ -515,7 +515,7 @@ function GGM.CreateBankPage(api, frame)
     page.detailSubtitle:SetWidth(360)
     page.detailSubtitle:SetHeight(18)
     if page.detailSubtitle.SetWordWrap then page.detailSubtitle:SetWordWrap(false) end
-    page.detailStatus = label(page, "", 13)
+    page.detailStatus = label(panel, "", 13)
     page.detailStatus:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -80)
     page.detailStatus:SetWidth(470)
     page.detailStatus:SetHeight(16)
