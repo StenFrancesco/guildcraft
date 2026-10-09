@@ -137,6 +137,55 @@ local function createScroll(api, parent, width, height, topLeftX, topLeftY)
     return scroll, content
 end
 
+local function createSearchField(api, parent)
+    local theme = GGM.UITheme or {}
+    local searchBox = api.CreateFrame("EditBox", nil, parent)
+    searchBox:SetSize(254, 27)
+    searchBox:SetPoint("TOPLEFT", parent, "TOPLEFT", LEFT_X + 34, -78)
+    searchBox:SetAutoFocus(false)
+    if searchBox.SetTextInsets then searchBox:SetTextInsets(31, 8, 0, 0) end
+    GGM.ApplyJournalFont(searchBox, 13)
+    local textColor = theme.text or { 0.19, 0.125, 0.07, 1 }
+    if searchBox.SetTextColor then searchBox:SetTextColor(unpack(textColor)) end
+
+    searchBox.background = searchBox:CreateTexture(nil, "BACKGROUND")
+    searchBox.background:SetPoint("TOPLEFT", searchBox, "TOPLEFT", -2, 2)
+    searchBox.background:SetPoint("BOTTOMRIGHT", searchBox, "BOTTOMRIGHT", 2, -2)
+    searchBox.background:SetTexture(GGM.UIJournalTextures.parchment)
+    searchBox.background:SetVertexColor(0.96, 0.83, 0.62, 1)
+    local borderEdges = border(searchBox, theme.border or { 0.44, 0.275, 0.125, 0.96 })
+    searchBox.searchIcon = searchBox:CreateTexture(nil, "ARTWORK")
+    searchBox.searchIcon:SetSize(16, 16)
+    searchBox.searchIcon:SetPoint("LEFT", searchBox, "LEFT", 9, 0)
+    searchBox.searchIcon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+    searchBox.hint = label(searchBox, "Search owners or realms", 11)
+    searchBox.hint:SetPoint("LEFT", searchBox, "LEFT", 31, 0)
+    local muted = theme.muted or { 0.405, 0.315, 0.210, 1 }
+    if searchBox.hint.SetTextColor then searchBox.hint:SetTextColor(unpack(muted)) end
+
+    local function updateHint()
+        local text = searchBox:GetText() or ""
+        if text == "" and not searchBox.hasFocus then searchBox.hint:Show() else searchBox.hint:Hide() end
+    end
+    local function recolorBorder(color)
+        for _, edge in ipairs(borderEdges) do edge:SetColorTexture(unpack(color)) end
+    end
+    searchBox:SetText("")
+    searchBox:SetScript("OnEditFocusGained", function(self)
+        self.hasFocus = true
+        recolorBorder(theme.gold or { 0.475, 0.295, 0.075, 1 })
+        updateHint()
+    end)
+    searchBox:SetScript("OnEditFocusLost", function(self)
+        self.hasFocus = false
+        recolorBorder(theme.border or { 0.44, 0.275, 0.125, 0.96 })
+        updateHint()
+    end)
+    searchBox.updateHint = updateHint
+    updateHint()
+    return searchBox
+end
+
 local function getTab(model, tabID)
     if type(model) ~= "table" or type(model.tabs) ~= "table" then return nil end
     for _, tab in ipairs(model.tabs) do if tab.id == tabID then return tab end end
@@ -170,7 +219,7 @@ local function currentSavedTab(page)
 end
 
 local function renderEntries(page, listScroll, listContent)
-    local entries = page.entries or {}
+    local entries = page.filteredEntries or page.entries or {}
     local contentWidth = 244
     listContent:SetWidth(contentWidth)
     listContent:SetHeight(math.max(1, #entries * LIST_ROW_PITCH))
@@ -223,6 +272,14 @@ local function renderEntries(page, listScroll, listContent)
     end
     for index = #entries + 1, #page.entryButtons do page.entryButtons[index]:Hide() end
     setText(page.listCount, tostring(#entries) .. (#entries == 1 and " entry" or " entries"))
+    if page.listEmpty then
+        local query = page.searchBox and page.searchBox:GetText() or ""
+        if #entries == 0 and query ~= "" then
+            setText(page.listEmpty, "No bank owners match this search.")
+        else
+            page.listEmpty:Hide()
+        end
+    end
 end
 
 local function renderTabs(page, selectedEntry)
@@ -368,8 +425,15 @@ local function updateDetail(page)
     setText(page.detailSubtitle, entry and (entry.kind == "guild" and "Shared guild storage" or entry.realm) or "Your storage ledger")
     page.detailModel = entry and GGM.BuildBankDetail(entry, page.api) or nil
     if not page.detailModel or not page.detailModel.hasRecord then
-        setText(page.detailTitle, entry and (entry.kind == "guild" and "Guild Bank" or entry.name) or "Bank snapshots")
-        setText(page.detailStatus, "No saved snapshot")
+        local query = page.searchBox and page.searchBox:GetText() or ""
+        if not entry and query ~= "" then
+            setText(page.detailTitle, "No matching bank owner")
+            setText(page.detailSubtitle, "Try another character, guild, or realm.")
+            setText(page.detailStatus, "")
+        else
+            setText(page.detailTitle, entry and (entry.kind == "guild" and "Guild Bank" or entry.name) or "Bank snapshots")
+            setText(page.detailStatus, "No saved snapshot")
+        end
         setText(page.tabStatus, "")
         page.selectedTabID, page.selectedSlotID = nil, nil
         local tooltip = page.api.GameTooltip
@@ -408,6 +472,28 @@ local function updateDetail(page)
     renderSlots(page)
 end
 
+local function updateOwnerSearch(page, selectedKey, resetListScroll)
+    local previousKey = page.selectedEntry and page.selectedEntry.key
+    selectedKey = selectedKey or previousKey
+    local query = page.searchBox and page.searchBox:GetText() or ""
+    page.filteredEntries = GGM.FilterBankEntries(page.entries, query)
+    page.selectedEntry = nil
+    for _, entry in ipairs(page.filteredEntries) do
+        if selectedKey and entry.key == selectedKey then page.selectedEntry = entry; break end
+    end
+    if not page.selectedEntry then page.selectedEntry = page.filteredEntries[1] end
+
+    local nextKey = page.selectedEntry and page.selectedEntry.key
+    if nextKey ~= previousKey then
+        page.selectedTabID, page.selectedSlotID = nil, nil
+        setScroll(page.tabScroll, 0)
+        setScroll(page.itemScroll, 0)
+    end
+    renderEntries(page, page.listScroll, page.listContent)
+    updateDetail(page)
+    if resetListScroll then setScroll(page.listScroll, 0) end
+end
+
 local function refreshPage(page, db, bankDB)
     if not page then return false end
     local listPosition = getScroll(page.listScroll)
@@ -419,14 +505,8 @@ local function refreshPage(page, db, bankDB)
     local guildIdentity = currentGuildIdentity(page.api)
     page.guildIdentity = guildIdentity
     page.entries = GGM.BuildBankEntries(db, bankDB, guildIdentity)
-    page.selectedEntry = nil
-    for _, entry in ipairs(page.entries) do
-        if entry.key == selectedKey then page.selectedEntry = entry; break end
-    end
-    if not page.selectedEntry then page.selectedEntry = page.entries[1] end
     page.selectedTabID, page.selectedSlotID = selectedTabID, selectedSlotID
-    renderEntries(page, page.listScroll, page.listContent)
-    updateDetail(page)
+    updateOwnerSearch(page, selectedKey)
     setScroll(page.listScroll, listPosition)
     setScroll(page.tabScroll, tabPosition)
     setScroll(page.itemScroll, itemPosition)
@@ -436,7 +516,7 @@ end
 function GGM.SelectBankEntry(page, entry)
     if not page or type(entry) ~= "table" then return false end
     local found = false
-    for _, candidate in ipairs(page.entries or {}) do if candidate.key == entry.key then found = true; entry = candidate; break end end
+    for _, candidate in ipairs(page.filteredEntries or {}) do if candidate.key == entry.key then found = true; entry = candidate; break end end
     if not found then return false end
     page.selectedEntry = entry
     page.selectedTabID, page.selectedSlotID = nil, nil
@@ -472,13 +552,23 @@ function GGM.CreateBankPage(api, frame)
     page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -50, BANK_PAGE_BOTTOM)
     page:Hide()
     page.api, page.owner = api, frame
-    page.entries, page.entryButtons, page.tabButtons, page.itemButtons = {}, {}, {}, {}
+    page.entries, page.filteredEntries, page.entryButtons, page.tabButtons, page.itemButtons = {}, {}, {}, {}, {}
 
     page.libraryTitle = label(page, "BANK LIBRARY", 16, true)
     page.libraryTitle:SetPoint("TOPLEFT", page, "TOPLEFT", LEFT_X + 34, -55)
+    page.searchBox = createSearchField(api, page)
     page.listCount = label(page, "0 entries", 12)
     page.listCount:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", LEFT_X + 34, 18)
     page.listScroll, page.listContent = createScroll(api, page, 254, 356, LEFT_X + 34, -107)
+    page.listEmpty = label(page, "", 14)
+    page.listEmpty:SetPoint("CENTER", page.listScroll, "CENTER", 0, 0)
+    page.listEmpty:SetWidth(236)
+    page.listEmpty:SetJustifyH("CENTER")
+    page.listEmpty:Hide()
+    page.searchBox:SetScript("OnTextChanged", function()
+        page.searchBox.updateHint()
+        updateOwnerSearch(page, nil, true)
+    end)
 
     page.detailPanel = api.CreateFrame("Frame", nil, page)
     page.detailPanel:SetPoint("TOPLEFT", page, "TOPLEFT", RIGHT_X, 0)

@@ -177,6 +177,30 @@ function GGM.BuildBankEntries(db, bankDB, guildIdentity)
     return entries
 end
 
+local function containsIgnoreCase(value, needle)
+    return type(value) == "string" and needle ~= ""
+        and string.find(string.lower(value), needle, 1, true) ~= nil
+end
+
+function GGM.FilterBankEntries(entries, query)
+    local filtered = {}
+    if type(entries) ~= "table" then return filtered end
+    local needle = type(query) == "string" and string.lower(query) or ""
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" then
+            local identity = type(entry.identity) == "table" and entry.identity or {}
+            if needle == "" or containsIgnoreCase(entry.label, needle)
+                or containsIgnoreCase(entry.name, needle)
+                or containsIgnoreCase(entry.realm, needle)
+                or containsIgnoreCase(identity.name, needle)
+                or containsIgnoreCase(identity.realm, needle) then
+                filtered[#filtered + 1] = entry
+            end
+        end
+    end
+    return filtered
+end
+
 local function formatTimestamp(api, timestamp)
     if timestamp == nil then return "Time unavailable" end
     if type(api) == "table" and type(api.date) == "function" then
