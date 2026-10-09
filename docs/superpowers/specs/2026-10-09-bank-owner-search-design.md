@@ -1,24 +1,26 @@
-# Bank Owner Search Design
+# Bank Item Search Design
 
 ## Goal
 
-Let users quickly find a saved bank entry by the character or guild that owns it.
+Let users find which saved character or guild bank contains an item by searching its name.
 
 ## Design
 
-- Add a local search field to the Bank Library above its saved-entry list.
-- Filter the existing bank entries as the query changes, matching character names, guild names, entry labels, and realms without regard to case.
-- Keep the current selection when it remains in the filtered list; otherwise select the first matching entry. With no matches, clear the detail selection and show a clear empty result state.
-- Keep the query while the bank page refreshes. Clearing the query restores all saved entries.
-- Search only the bank owner list. Item slots and saved snapshots remain unchanged; searching does not read bank APIs, modify SavedVariables, or send network traffic.
+- Add a local item-name search field to the Bank Library above its saved-entry list.
+- Search every locally cached character and current-guild bank snapshot using the display name already stored in each saved item link. Match case-insensitively and filter the left list to owners with at least one matching saved item.
+- Keep the current owner selected when it still has a match; otherwise select the first matching owner. With no matching items, clear the detail selection and show a clear empty result state.
+- Select the first matching tab for a newly selected owner. Highlight every matching item slot in the visible tab; if the user selects another tab, highlight matches there too.
+- Keep the query while the bank page refreshes. Clearing the query restores all saved entries and removes item highlights.
+- Search reads cached saved snapshots only. It does not read bank APIs, modify SavedVariables, or send network traffic.
 
 ## Acceptance criteria
 
-- A partial character, guild, or realm query filters the bank entry list case-insensitively.
-- An empty query shows every existing entry, including Guild Bank.
+- A partial item-name query filters the bank entry list to owners whose cached item links contain a matching display name.
+- An empty query shows every existing entry, including Guild Bank, and removes all item highlights.
 - No matching query shows a no-results state and no stale selected-bank details.
-- Search preserves a still-matching selection and does not mutate cached bank records.
+- Search selects a matching tab and visibly highlights matching slots while preserving an owner selection that still has a match.
+- Refreshing the local cache keeps the query and recomputes matching owners and slots without mutating cached bank records.
 
 ## Verification
 
-Use the existing Lua 5.1 test harness to verify filtering, selection, refresh behavior, empty results, and no mutation. Review the Bank page layout and run the full suite.
+Review the focused diff and Bank page layout. Search must use only saved item-link display names and must not introduce bank API reads, SavedVariables writes, or network traffic.

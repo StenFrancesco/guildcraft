@@ -158,7 +158,7 @@ local function createSearchField(api, parent)
     searchBox.searchIcon:SetSize(16, 16)
     searchBox.searchIcon:SetPoint("LEFT", searchBox, "LEFT", 9, 0)
     searchBox.searchIcon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
-    searchBox.hint = label(searchBox, "Search owners or realms", 11)
+    searchBox.hint = label(searchBox, "Search item names", 11)
     searchBox.hint:SetPoint("LEFT", searchBox, "LEFT", 31, 0)
     local muted = theme.muted or { 0.405, 0.315, 0.210, 1 }
     if searchBox.hint.SetTextColor then searchBox.hint:SetTextColor(unpack(muted)) end
@@ -275,7 +275,7 @@ local function renderEntries(page, listScroll, listContent)
     if page.listEmpty then
         local query = page.searchBox and page.searchBox:GetText() or ""
         if #entries == 0 and query ~= "" then
-            setText(page.listEmpty, "No bank owners match this search.")
+            setText(page.listEmpty, "No bank items match this search.")
         else
             page.listEmpty:Hide()
         end
@@ -334,6 +334,9 @@ end
 local function renderSlots(page)
     local tab = currentSavedTab(page)
     local slots = tab and tab.slots or {}
+    local entryMatches = page.selectedEntry and page.itemMatchesByKey
+        and page.itemMatchesByKey[page.selectedEntry.key] or nil
+    local tabMatches = tab and entryMatches and entryMatches[tab.id] or nil
     local width = page.itemScroll.width or 624
     page.itemContent:SetWidth(width)
     local rowCount = math.ceil(#slots / GRID_COLUMNS)
@@ -377,6 +380,8 @@ local function renderSlots(page)
         button.icon:SetTexture(iconTexture)
         button.icon:SetAlpha(slot.empty and 0.25 or 1)
         button.label:SetText(slot.itemID and slot.count and slot.count > 1 and tostring(slot.count) or "")
+        local searchMatch = tabMatches and tabMatches[slot.id] == true
+        button.searchMatch = searchMatch == true
         button:SetScript("OnClick", function(self) GGM.SelectBankSlot(page, self.slotID) end)
         button:SetScript("OnEnter", function(self)
             local tooltip = page.api.GameTooltip
@@ -401,12 +406,20 @@ local function renderSlots(page)
             if page.selectedSlotID == slot.id then
                 local selected = GGM.UITheme and GGM.UITheme.gold or { 0.475, 0.295, 0.075, 1 }
                 button.background:SetColorTexture(selected[1], selected[2], selected[3], 0.65)
+            elseif searchMatch then
+                local highlight = GGM.UITheme and GGM.UITheme.goldBright or { 0.625, 0.405, 0.085, 1 }
+                button.background:SetColorTexture(highlight[1], highlight[2], highlight[3], 0.38)
             else
                 button.background:SetColorTexture(color[1], color[2], color[3], color[4] or 1)
             end
         end
         for _, edge in ipairs(button.borderEdges) do
-            edge:SetColorTexture(0.475, 0.295, 0.075, button.selected and 1 or (slot.itemID and 0.9 or 0.35))
+            if searchMatch then
+                local highlight = GGM.UITheme and GGM.UITheme.goldBright or { 0.625, 0.405, 0.085, 1 }
+                edge:SetColorTexture(highlight[1], highlight[2], highlight[3], 1)
+            else
+                edge:SetColorTexture(0.475, 0.295, 0.075, button.selected and 1 or (slot.itemID and 0.9 or 0.35))
+            end
         end
     end
     for index = #slots + 1, #page.itemButtons do page.itemButtons[index]:Hide() end
@@ -427,8 +440,8 @@ local function updateDetail(page)
     if not page.detailModel or not page.detailModel.hasRecord then
         local query = page.searchBox and page.searchBox:GetText() or ""
         if not entry and query ~= "" then
-            setText(page.detailTitle, "No matching bank owner")
-            setText(page.detailSubtitle, "Try another character, guild, or realm.")
+            setText(page.detailTitle, "No matching bank item")
+            setText(page.detailSubtitle, "Try another item name.")
             setText(page.detailStatus, "")
         else
             setText(page.detailTitle, entry and (entry.kind == "guild" and "Guild Bank" or entry.name) or "Bank snapshots")
@@ -472,11 +485,42 @@ local function updateDetail(page)
     renderSlots(page)
 end
 
-local function updateOwnerSearch(page, selectedKey, resetListScroll)
+local function firstMatchingTabID(page, entry)
+    local entryMatches = entry and page.itemMatchesByKey and page.itemMatchesByKey[entry.key]
+    local firstTabID
+    for tabID, slotMatches in pairs(entryMatches or {}) do
+        if next(slotMatches) and (not firstTabID or tabID < firstTabID) then firstTabID = tabID end
+    end
+    return firstTabID
+end
+
+local function scrollToFirstItemMatch(page)
+    local tabs = page.detailModel and page.detailModel.tabs or {}
+    for index, tab in ipairs(tabs) do
+        if tab.id == page.selectedTabID then
+            local row = math.floor((index - 1) / TAB_COLUMNS)
+            setScroll(page.tabScroll, row * TAB_ROW_PITCH)
+            break
+        end
+    end
+    local entry = page.selectedEntry
+    local entryMatches = entry and page.itemMatchesByKey and page.itemMatchesByKey[entry.key]
+    local tabMatches = entryMatches and entryMatches[page.selectedTabID]
+    local firstSlotID
+    for slotID in pairs(tabMatches or {}) do
+        if type(slotID) == "number" and (not firstSlotID or slotID < firstSlotID) then firstSlotID = slotID end
+    end
+    if firstSlotID then
+        local row = math.floor((firstSlotID - 1) / GRID_COLUMNS)
+        setScroll(page.itemScroll, row * GRID_ROW_PITCH)
+    end
+end
+
+local function updateBankSearch(page, selectedKey, resetListScroll)
     local previousKey = page.selectedEntry and page.selectedEntry.key
     selectedKey = selectedKey or previousKey
     local query = page.searchBox and page.searchBox:GetText() or ""
-    page.filteredEntries = GGM.FilterBankEntries(page.entries, query)
+    page.filteredEntries, page.itemMatchesByKey = GGM.SearchBankEntriesByItem(page.entries, query)
     page.selectedEntry = nil
     for _, entry in ipairs(page.filteredEntries) do
         if selectedKey and entry.key == selectedKey then page.selectedEntry = entry; break end
@@ -484,14 +528,33 @@ local function updateOwnerSearch(page, selectedKey, resetListScroll)
     if not page.selectedEntry then page.selectedEntry = page.filteredEntries[1] end
 
     local nextKey = page.selectedEntry and page.selectedEntry.key
-    if nextKey ~= previousKey then
+    local ownerChanged = nextKey ~= previousKey
+    if ownerChanged then
         page.selectedTabID, page.selectedSlotID = nil, nil
         setScroll(page.tabScroll, 0)
         setScroll(page.itemScroll, 0)
+    elseif resetListScroll then
+        page.selectedSlotID = nil
+    end
+
+    local shouldScrollToMatch = resetListScroll == true or ownerChanged
+    if query ~= "" and page.selectedEntry then
+        local currentTabMatches = page.itemMatchesByKey[page.selectedEntry.key]
+            and page.itemMatchesByKey[page.selectedEntry.key][page.selectedTabID]
+        if not currentTabMatches or not next(currentTabMatches) then
+            local firstTabID = firstMatchingTabID(page, page.selectedEntry)
+            if firstTabID ~= page.selectedTabID then
+                page.selectedTabID = firstTabID
+                setScroll(page.itemScroll, 0)
+                shouldScrollToMatch = true
+            end
+        end
     end
     renderEntries(page, page.listScroll, page.listContent)
     updateDetail(page)
     if resetListScroll then setScroll(page.listScroll, 0) end
+    if shouldScrollToMatch then scrollToFirstItemMatch(page) end
+    return ownerChanged, shouldScrollToMatch
 end
 
 local function refreshPage(page, db, bankDB)
@@ -506,10 +569,12 @@ local function refreshPage(page, db, bankDB)
     page.guildIdentity = guildIdentity
     page.entries = GGM.BuildBankEntries(db, bankDB, guildIdentity)
     page.selectedTabID, page.selectedSlotID = selectedTabID, selectedSlotID
-    updateOwnerSearch(page, selectedKey)
-    setScroll(page.listScroll, listPosition)
-    setScroll(page.tabScroll, tabPosition)
-    setScroll(page.itemScroll, itemPosition)
+    local ownerChanged, movedToMatch = updateBankSearch(page, selectedKey)
+    if ownerChanged then setScroll(page.listScroll, 0) else setScroll(page.listScroll, listPosition) end
+    if not movedToMatch then
+        setScroll(page.tabScroll, tabPosition)
+        setScroll(page.itemScroll, itemPosition)
+    end
     return true
 end
 
@@ -522,7 +587,11 @@ function GGM.SelectBankEntry(page, entry)
     page.selectedTabID, page.selectedSlotID = nil, nil
     setScroll(page.tabScroll, 0)
     setScroll(page.itemScroll, 0)
+    if (page.searchBox:GetText() or "") ~= "" then
+        page.selectedTabID = firstMatchingTabID(page, entry)
+    end
     updateDetail(page)
+    scrollToFirstItemMatch(page)
     renderEntries(page, page.listScroll, page.listContent)
     return true
 end
@@ -532,6 +601,7 @@ function GGM.SelectBankTab(page, tabID)
     page.selectedTabID, page.selectedSlotID = tabID, nil
     setScroll(page.itemScroll, 0)
     updateDetail(page)
+    scrollToFirstItemMatch(page)
     return true
 end
 
@@ -567,7 +637,7 @@ function GGM.CreateBankPage(api, frame)
     page.listEmpty:Hide()
     page.searchBox:SetScript("OnTextChanged", function()
         page.searchBox.updateHint()
-        updateOwnerSearch(page, nil, true)
+        updateBankSearch(page, nil, true)
     end)
 
     page.detailPanel = api.CreateFrame("Frame", nil, page)
