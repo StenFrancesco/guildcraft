@@ -418,6 +418,9 @@ local function newControl()
         if changed then changed(self, true) end
     end
     function control:SetTextColor(...) self.textColor = { ... } end
+    function control:SetEnabled(value) self.enabled = value end
+    function control:SetNumeric(value) self.numeric = value end
+    function control:SetMaxLetters(value) self.maxLetters = value end
     function control:GetText() return self.text or "" end
     function control:GetStringHeight() return #self:GetText() > 80 and 56 or 14 end
     function control:Show() self.visible = true end
@@ -456,6 +459,7 @@ local function newControl()
     function control:SetVerticalScroll(value) self.verticalScroll = value end
     function control:SetScript(name, callback) self.scripts[name] = callback end
     function control:RegisterForClicks() end
+    function control:RegisterEvent(name) self.registeredEvents = self.registeredEvents or {}; self.registeredEvents[name] = true end
     function control:SetDesaturated(value) self.desaturated = value end
     function control:SetAlpha(value) self.alpha = value end
     function control:SetBlendMode(value) self.blendMode = value end
@@ -681,6 +685,27 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+local function configureCrafterWhisperAPI(GGM, api, rows)
+    local sent = {}
+    GGM.professionRosterMembershipCurrent = true
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    api.IsInGuild = function() return true end
+    api.GetNumGuildMembers = function() return #rows end
+    api.GetGuildRosterInfo = function(index)
+        local row = rows[index]
+        return row[1], nil, nil, nil, nil, nil, nil, nil, row[2]
+    end
+    api.C_ChatInfo = {
+        InChatMessagingLockdown = function() return false end,
+        SendChatMessage = function(message, channel, language, target)
+            sent[#sent + 1] = { message, channel, language, target }
+        end,
+    }
+    api.GetTime = function() return 10 end
+    return sent
+end
+
 T.test("recipe parchment and leather have explicit ordering on the same owning frame", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     local createFrame = api.CreateFrame
@@ -750,6 +775,157 @@ T.test("crafter dropdown sorts saved owners and selection displays saved knowled
     T.assertEqual(details.selectedCrafterKey, "Bob-Realm")
     T.assertTrue(string.find(details.crafterStatus.text, "2026-09-02", 1, true) ~= nil)
     T.assertFalse(details.crafterMenu:IsShown())
+end)
+
+T.test("recipe detail whisper controls default to one and only an explicit click sends to the online selected crafter", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local sent = {}
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    api.IsInGuild = function() return true end
+    api.GetNumGuildMembers = function() return 2 end
+    api.GetGuildRosterInfo = function(index)
+        if index == 1 then return "Alice-OtherRealm", nil, nil, nil, nil, nil, nil, nil, true end
+        return "Alice-Realm", nil, nil, nil, nil, nil, nil, nil, true
+    end
+    api.C_ChatInfo = {
+        InChatMessagingLockdown = function() return false end,
+        SendChatMessage = function(message, channel, language, target)
+            sent[#sent + 1] = { message, channel, language, target }
+        end,
+    }
+    api.GetTime = function() return 10 end
+    GGM.professionRosterMembershipCurrent = true
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertEqual(details.amountInput:GetText(), "1")
+    T.assertEqual(details.whisperButton.enabled, true)
+    T.assertEqual(#sent, 0, "rendering must not send a whisper")
+    details.amountInput:SetText("3")
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+
+    T.assertEqual(#sent, 1)
+    T.assertEqual(sent[1][1], "Hi! Do you have time to craft 3 x Copper Bracers for me?")
+    T.assertEqual(sent[1][2], "WHISPER")
+    T.assertEqual(sent[1][4], "Alice-Realm")
+    T.assertTrue(string.find(details.whisperStatus.text, "Request attempted", 1, true) ~= nil)
+end)
+
+T.test("crafter whisper amount is preserved for same recipe and reset for a new recipe", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.amountInput:SetText("8")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(details.amountInput:GetText(), "8")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(details.amountInput:GetText(), "1")
+end)
+
+T.test("crafter whisper rejects invalid amounts and rechecks online status on click and roster events", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    for _, amount in ipairs({ "0", "1000", "2.5", "-1", "" }) do
+        details.amountInput:SetText(amount)
+        T.assertFalse(details.whisperButton.enabled, "invalid amount should disable the action: " .. amount)
+        details.whisperButton.scripts.OnClick(details.whisperButton)
+        T.assertEqual(#sent, 0)
+    end
+    details.amountInput:SetText("2")
+    rows[1][2] = false
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0, "click must recheck presence after selection state changed")
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "GUILD_ROSTER_UPDATE")
+    T.assertTrue(string.find(details.whisperPresenceStatus.text, "Offline", 1, true) ~= nil)
+    T.assertFalse(details.whisperButton.enabled)
+end)
+
+T.test("crafter whisper respects combat and chat restrictions and never retries through a fallback API", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+
+    api.InCombatLockdown = function() return true end
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0)
+    api.InCombatLockdown = function() return false end
+    api.C_ChatInfo.InChatMessagingLockdown = function() return true end
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0)
+
+    api.C_ChatInfo.InChatMessagingLockdown = function() return false end
+    local primaryCalls, fallbackCalls = 0, 0
+    api.C_ChatInfo.SendChatMessage = function() primaryCalls = primaryCalls + 1; error("restricted") end
+    api.SendChatMessage = function() fallbackCalls = fallbackCalls + 1 end
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(primaryCalls, 1)
+    T.assertEqual(fallbackCalls, 0)
+    T.assertTrue(string.find(details.whisperStatus.text, "unavailable", 1, true) ~= nil)
+end)
+
+T.test("crafter whisper applies a local cooldown and renders unavailable when required checks are missing", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    local now = 10
+    local cooldownCallback
+    api.GetTime = function() return now end
+    api.C_Timer = { After = function(seconds, callback)
+        T.assertEqual(seconds, 2)
+        cooldownCallback = callback
+    end }
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 1)
+    T.assertFalse(details.whisperButton.enabled)
+    now = 13
+    cooldownCallback()
+    T.assertTrue(details.whisperButton.enabled)
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 2)
+
+    api.issecretvalue = nil
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertFalse(details.whisperButton.enabled)
+    T.assertTrue(string.find(details.whisperPresenceStatus.text, "Unavailable", 1, true) ~= nil)
+end)
+
+T.test("crafter whisper uses the supported legacy sender only when the modern sender is absent", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    api.C_ChatInfo.SendChatMessage = nil
+    local legacyCalls = 0
+    api.SendChatMessage = function(message, channel, language, target)
+        legacyCalls = legacyCalls + 1
+        sent[#sent + 1] = { message, channel, language, target }
+    end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(legacyCalls, 1)
+    T.assertEqual(sent[1][2], "WHISPER")
+    T.assertEqual(sent[1][4], "Alice-Realm")
+end)
+
+T.test("crafter whisper rejects recipe names that cannot fit a normal chat message", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    recipes[1].name = string.rep("Long recipe ", 30)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0)
+    T.assertTrue(string.find(details.whisperStatus.text, "too long", 1, true) ~= nil)
 end)
 
 T.test("details refresh preserves eligible crafter without querying materials and removes obsolete attribution", function()
