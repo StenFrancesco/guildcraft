@@ -23,6 +23,8 @@ spec = importlib.util.spec_from_file_location("journal_preview", PROJECT / "ui-c
 renderer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(renderer)
 fixture = renderer.patch_fixture((PROJECT / "tests/snapshot_test_ui_test.lua").read_text(encoding="utf-8"))
+fixture = fixture.replace('    function control:SetAlpha(value)',
+    '    function control:SetWordWrap(value) self.wordWrap = value end\n    function control:SetAlpha(value)', 1)
 scenario = next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--state=")), "personal")
 lua_code = r'''
 __previewStringHeight = function(control) return 16 end
@@ -43,6 +45,17 @@ for i=1,30 do
     tab.slots[i] = { itemID=1000+i, itemLink="|Hitem:"..(1000+i).."|h[Supplies]|h", icon="Interface\\Icons\\INV_Misc_Bag_10", count=i*3 }
 end
 local record = { identity=identity, capturedAt=1791556920, status="cached", tabs={[6]=tab} }
+if __scenario == "long" then
+    identity.name = "DyshealtheTreasurer"
+    identity.realm = "TheVeryLongRealmName"
+    identity.key = identity.name .. "-" .. identity.realm
+    tab.name = "Supplies for the next guild expedition"
+    tab.numSlots = 200
+    for i=1,12 do
+        if i ~= 6 then record.tabs[i] = {id=i, name="Expedition supplies "..i,
+            numSlots=200, capturedAt=1791556920, status="cached", slots={}} end
+    end
+end
 local guildTab = { id=1, name="Guild Supplies", numSlots=98, capturedAt=1791556920, status="cached", slots=tab.slots }
 local guild = { identity=guildIdentity, capturedAt=1791556920, status="incomplete", tabs={
     [1]=guildTab,
@@ -62,7 +75,10 @@ if __scenario == "missing" then
     _G.DysbankMemoryAPI, _G.DysbankMemoryDB = nil, nil
     api.DysbankMemoryAPI, api.DysbankMemoryDB = nil, nil
     GGM.RefreshVisibleBankView()
-elseif __scenario == "personal" and page.entryButtons[2] then
+elseif __scenario == "no-data" then
+    _G.DysbankMemoryDB.characters, _G.DysbankMemoryDB.guilds = {}, {}
+    GGM.RefreshVisibleBankView()
+elseif (__scenario == "personal" or __scenario == "long") and page.entryButtons[2] then
     page.entryButtons[2].scripts.OnClick(page.entryButtons[2])
 elseif __scenario == "unavailable" and page.tabButtons[2] then
     page.tabButtons[2].scripts.OnClick(page.tabButtons[2])
@@ -81,6 +97,7 @@ for _, item in ipairs(fixture.controls) do
         frame_level=item:GetFrameLevel(), name=item.name, template=item.template,
         layer=item.drawLayer or "OVERLAY",sublevel=type(item.subLevel)=="number" and item.subLevel or 0,
         visible=item.visible,text=tostring(item.text or ""),font_path=font.path,font_size=font.size or 14,
+        word_wrap=item.wordWrap,
         font_template=item.fontTemplate,text_color=item.textColor,shadow_color=item.shadowColor,
         shadow_offset=item.shadowOffset or {},justify=item.justifyH or "LEFT",
         texture=type(item.texture)=="string" and item.texture or nil,

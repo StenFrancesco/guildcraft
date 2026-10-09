@@ -137,7 +137,7 @@ def seq(table):
 
 def norm_color(value, default=(0.19, 0.125, 0.07, 1)):
     try:
-        vals = [float(value[i]) for i in range(1, 5)]
+        vals = [float(v) for v in value] if isinstance(value, (list, tuple)) else [float(value[i]) for i in range(1, 5)]
     except (TypeError, KeyError, IndexError):
         vals = list(default)
     while len(vals) < 4:
@@ -349,6 +349,13 @@ def font_for(rec, media=MEDIA):
 def text_lines(rec, font, width=None):
     """Match the word wrapping of bounded in-game font strings."""
     width = rec["width"] if width is None else width
+    if rec.get("word_wrap") is False and width:
+        line = rec["text"].replace("\n", " ")
+        if font.getlength(line) > width:
+            while line and font.getlength(line + "…") > width:
+                line = line[:-1]
+            line += "…"
+        return [line]
     lines = []
     for paragraph in rec["text"].splitlines() or [""]:
         if not width or font.getlength(paragraph) <= width:
@@ -653,6 +660,8 @@ def main():
         elif c["texture"] and c["texture"].startswith("Interface\\"):
             draw_native_placeholder(draw, (x, y, w, h), c["texture"])
 
+    # alpha_composite may replace Pillow's image core; bind text to the final canvas.
+    draw = ImageDraw.Draw(canvas, "RGBA")
     for c in sorted((x for x in controls if x["type"] == "FontString" and x["text"]), key=lambda x: x["id"]):
         if not effectively_visible(c, by_id):
             continue

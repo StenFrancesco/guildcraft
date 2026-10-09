@@ -1742,7 +1742,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
                 end
             end
             tabs[tabID] = {
-                id = tabID, name = "Tab " .. tostring(tabID), numSlots = 40,
+                id = tabID, name = "Tab " .. tostring(tabID), numSlots = 200,
                 capturedAt = 1700000000 + tabID, status = "cached", slots = slots,
             }
         end
@@ -1794,7 +1794,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     local headerBottom = titleTop + frame.pageTitle.font.size + math.abs(frame.pageSubtitle.point.y)
         + frame.pageSubtitle.font.size
     local listTop = 64 - page.listScroll.point.y
-    T.assertNil(page.libraryTitle, "bank page should use the shared heading instead of a duplicate library title")
+    T.assertEqual(page.libraryTitle.text, "BANK LIBRARY")
     T.assertNil(page.libraryHelper, "bank page should use the shared subtitle instead of a duplicate helper")
     T.assertTrue(listTop >= headerBottom + 8, "bank list must begin below the shared page heading")
     T.assertEqual(page.selectedEntry.kind, "guild")
@@ -1865,7 +1865,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     T.assertNil(page.selectedTabID)
     T.assertNil(page.selectedSlotID)
     T.assertFalse(tooltip.visible, "missing companion should close a tooltip from the previous snapshot")
-    T.assertTrue(page.detailStatus.text:find("_retail_/Interface/AddOns/DysbankMemory", 1, true) ~= nil,
+    T.assertTrue(page.slotsEmpty.text:find("_retail_/Interface/AddOns/DysbankMemory", 1, true) ~= nil,
         "missing companion state should include its installation path")
     _G.DysbankMemoryAPI, _G.DysbankMemoryDB = previousAPI, previousDB
 end)

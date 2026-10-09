@@ -1122,7 +1122,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
 
     if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known guild equipment")
     elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "")
-    else setPageHeader(frame, "Bank", "Saved bank snapshots and shared storage") end
+    else setPageHeader(frame, "Bank", "") end
 
     for _, tab in ipairs(frame.navigationTabs) do
         local selected = tab.key == selectedKey
