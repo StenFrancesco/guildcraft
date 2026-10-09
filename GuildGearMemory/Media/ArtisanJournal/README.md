@@ -11,13 +11,13 @@ The revised layout is 1400 × 630 logical UI units and scales down to fit the sc
 - `{profession}-page.tga`: six 1024 × 1024 backgrounds displayed at the reference panel proportions.
 - `profession-page-mask.tga`: shared rounded perimeter mask for all six recipe panels. The top corners use a broader radius and the upper fade is 50% wider than the lower 5% fade. Profession artwork, chrome, controls, and anchors are unchanged.
 - `journal-serif.ttf`, `journal-serif-bold.ttf`, and `journal-serif-italic.ttf`: Crimson Text regular, bold, and italic; license included in `FONT-LICENSE.txt`.
-- The earlier nine TGA surfaces remain available for recipe details and secondary panels.
+- `parchment.tga`, `leather.tga`, and `profession-button.tga` remain available for recipe details and secondary panels.
 
 All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source PNGs retain their original aspect ratio; the runtime viewport restores that ratio after technical export resizing. There is no baked UI text in the new artwork.
 
 ## Reproduction and checking
 
-`ui-concepts/export-journal-reference.py` exports the eight revised textures, verifies pixel round-trips, and builds the complete `GuildGearMemory-ArtisanJournal-v2.zip`. `reference-export.json` records sources and dimensions. The older export script and artwork-only ZIP describe the first asset set.
+`ui-concepts/export-journal-reference.py` exports the eight revised textures, verifies pixel round-trips, and builds the complete `GuildGearMemory-ArtisanJournal-v2.zip`. `reference-export.json` records sources and dimensions. `ui-concepts/export-artisan-journal.py` exports the three shared surfaces and rebuilds the smaller artwork package; `manifest.json` records those surfaces.
 
 `ui-concepts/render-journal-preview.py` creates an off-game preview from the actual Lua UI anchors, fonts, and runtime textures. Native WoW icons are represented by placeholders. This preview does not establish in-game texture loading or font rendering.
 

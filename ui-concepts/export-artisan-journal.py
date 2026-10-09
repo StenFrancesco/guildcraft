@@ -11,16 +11,12 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "GuildGearMemory" / "Media" / "ArtisanJournal"
 SOURCE = ROOT / "tests" / "Source"
-PROFESSIONS = (
-    "alchemy", "blacksmithing", "enchanting", "engineering",
-    "leatherworking", "tailoring",
-)
 SURFACES = ("parchment", "leather", "profession-button")
 
 
 def main():
     # Fail before writing exports if any of the expected deliverables is absent.
-    for name in (*PROFESSIONS, *SURFACES):
+    for name in SURFACES:
         if not (SOURCE / f"{name}.png").is_file():
             raise FileNotFoundError(SOURCE / f"{name}.png")
 
@@ -31,8 +27,8 @@ def main():
         "format": "Uncompressed 32-bit RGBA TGA",
         "textures": {},
     }
-    for name in (*PROFESSIONS, *SURFACES):
-        size = (1024, 512) if name in PROFESSIONS else (512, 512)
+    for name in SURFACES:
+        size = (512, 512)
         with Image.open(SOURCE / f"{name}.png") as source:
             source.load()
             source_size = source.size
@@ -54,14 +50,14 @@ def main():
             "size": list(size),
             "source": "tests/Source/" + name + ".png",
             "source_size": list(source_size),
-            "role": "profession background" if name in PROFESSIONS else "reusable surface",
+            "role": "reusable surface",
         }
         print(f"Verified {path.name}: {size[0]} x {size[1]}, RGBA, uncompressed")
 
     (MEDIA / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     archive = ROOT / "ui-concepts" / "artisan-journal-runtime-assets.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as package:
-        for name in (*PROFESSIONS, *SURFACES):
+        for name in SURFACES:
             path = MEDIA / f"{name}.tga"
             package.write(path, path.relative_to(ROOT).as_posix())
         for filename in ("manifest.json", "README.md"):
@@ -70,8 +66,8 @@ def main():
                 package.write(path, path.relative_to(ROOT).as_posix())
     with zipfile.ZipFile(archive) as package:
         assert package.testzip() is None
-        assert len([p for p in package.namelist() if p.endswith(".tga")]) == 9
-    print(f"Verified package: {archive.name}; 9 textures")
+        assert len([p for p in package.namelist() if p.endswith(".tga")]) == len(SURFACES)
+    print(f"Verified package: {archive.name}; {len(SURFACES)} textures")
 
 
 if __name__ == "__main__":
