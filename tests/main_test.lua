@@ -110,6 +110,31 @@ T.test("main registers Phase 4 local gear and addon-message events", function()
     end)
 end)
 
+T.test("main refreshes the visible Bank view on local guild identity events", function()
+    local onEvent
+    local refreshedEvents = {}
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+    withGlobals({
+        CreateFrame = function() return frame end,
+        IsInGuild = function() return false end,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+        GGM.RefreshVisibleBankView = function() table.insert(refreshedEvents, true); return true end
+        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+
+        onEvent(frame, "PLAYER_GUILD_UPDATE")
+        onEvent(frame, "GUILD_ROSTER_UPDATE")
+        onEvent(frame, "PLAYER_ENTERING_WORLD")
+
+        T.assertEqual(#refreshedEvents, 3,
+            "guild membership, roster, and world-entry events should recheck the visible local cache")
+    end)
+end)
+
 T.test("guild roster refresh is bounded to guild periods and reconciliation waits for roster updates", function()
     local registered = {}
     local onEvent

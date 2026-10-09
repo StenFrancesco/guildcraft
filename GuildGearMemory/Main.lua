@@ -50,6 +50,12 @@ end
 frame:SetScript("OnEvent", function(_, event, ...)
     local arg1 = ...
 
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" or event == "GUILD_ROSTER_UPDATE" then
+        if type(GGM.RefreshVisibleBankView) == "function" then
+            GGM.RefreshVisibleBankView()
+        end
+    end
+
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then
             return

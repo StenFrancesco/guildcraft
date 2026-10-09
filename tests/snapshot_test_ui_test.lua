@@ -13,6 +13,10 @@ local function loadUI()
     T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
     T.loadAddonFile("GuildGearMemory/RecipeDetailsUI.lua", GGM)
+    local bankView = loadfile("GuildGearMemory/BankView.lua")
+    if bankView then bankView("GuildGearMemory", GGM) end
+    local bankUI = loadfile("GuildGearMemory/BankUI.lua")
+    if bankUI then bankUI("GuildGearMemory", GGM) end
     T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
     return GGM
 end
@@ -454,6 +458,7 @@ local function newControl()
     function control:StopMovingOrSizing() self.moving = false end
     function control:IsShown() return self.visible end
     function control:SetVerticalScroll(value) self.verticalScroll = value end
+    function control:EnableMouseWheel(value) self.mouseWheelEnabled = value end
     function control:SetScript(name, callback) self.scripts[name] = callback end
     function control:RegisterForClicks() end
     function control:SetDesaturated(value) self.desaturated = value end
@@ -1717,6 +1722,152 @@ T.test("gear sync status reports prefix availability and async errors even witho
     T.assertTrue(output:find("Gear sync: registered (GC_GEAR)", 1, true) ~= nil)
     T.assertTrue(output:find("Gear sync send/request error: send-addon-message-failed:NotInGuild", 1, true) ~= nil)
     T.assertTrue(output:find("Gear sync receive error: sync-frame-invalid", 1, true) ~= nil)
+end)
+
+T.test("journal Bank page selects cached entries, tabs, and slots and refreshes without losing selection", function()
+    local GGM = loadUI()
+    local previousAPI, previousDB = _G.DysbankMemoryAPI, _G.DysbankMemoryDB
+    _G.DysbankMemoryAPI = { schemaVersion = 1 }
+    local function record(name, realm, tabCount)
+        local tabs = {}
+        for tabID = 1, tabCount do
+            local slots = {}
+            for slotID = 1, 40 do
+                if slotID == 3 then
+                    slots[slotID] = {
+                        itemID = 19019 + tabID, itemLink = "|Hitem:" .. tostring(19019 + tabID)
+                            .. "|h[Saved " .. tostring(tabID) .. "]|h", icon = 134,
+                        count = 2,
+                    }
+                end
+            end
+            tabs[tabID] = {
+                id = tabID, name = "Tab " .. tostring(tabID), numSlots = 40,
+                capturedAt = 1700000000 + tabID, status = "cached", slots = slots,
+            }
+        end
+        local key = name .. "-" .. realm
+        return {
+            identity = { key = key, name = name, realm = realm },
+            capturedAt = 1700000001, status = "cached", tabs = tabs,
+        }
+    end
+    local ggmRecord = makeRecord(GGM)
+    local ggmRecords = { ggmRecord }
+    for index = 1, 14 do
+        local extra = makeRecord(GGM)
+        extra.identity = {
+            key = "Extra" .. tostring(index) .. "-Silvermoon",
+            name = "Extra" .. tostring(index),
+            realm = "Silvermoon",
+        }
+        table.insert(ggmRecords, extra)
+    end
+    local characterBank = record("Alice", "Silvermoon", 12)
+    local guildBank = record("Testers", "Silvermoon", 2)
+    _G.DysbankMemoryDB = {
+        schemaVersion = 1,
+        characters = { [characterBank.identity.key] = characterBank },
+        guilds = { [guildBank.identity.key] = guildBank },
+    }
+    local api = makeBrowserAPI()
+    api.GetGuildInfo = function(unit)
+        T.assertEqual(unit, "player")
+        return "Testers", "Guild Leader", 0, "Silvermoon"
+    end
+    api.GetRealmName = nil
+    api.issecretvalue = function() return false end
+    local tooltip = { SetOwner = function() end }
+    function tooltip:Show() self.visible = true end
+    function tooltip:Hide() self.visible = false; self.hideCount = (self.hideCount or 0) + 1 end
+    function tooltip:SetHyperlink(link) self.link = link end
+    api.GameTooltip = tooltip
+
+    local frame = showBrowser(GGM, api, makeDB(GGM, ggmRecords))
+    T.assertNotNil(frame.bankPage, "journal should construct a dedicated Bank page")
+    T.assertTrue(GGM.SelectGuildGearBrowserTab(frame, "Bank"))
+    local page = frame.bankPage
+    T.assertTrue(page.visible)
+    T.assertEqual(page.entries[1].label, "Guild Bank")
+    T.assertTrue(page.entries[1].record == guildBank, "guild tab should use the realm returned with guild identity")
+    local titleTop = -frame.pageTitle.point.y
+    local headerBottom = titleTop + frame.pageTitle.font.size + math.abs(frame.pageSubtitle.point.y)
+        + frame.pageSubtitle.font.size
+    local listTop = 64 - page.listScroll.point.y
+    T.assertNil(page.libraryTitle, "bank page should use the shared heading instead of a duplicate library title")
+    T.assertNil(page.libraryHelper, "bank page should use the shared subtitle instead of a duplicate helper")
+    T.assertTrue(listTop >= headerBottom + 8, "bank list must begin below the shared page heading")
+    T.assertEqual(page.selectedEntry.kind, "guild")
+    T.assertTrue(page.listScroll.scrollChild == page.listContent)
+    T.assertTrue(page.tabScroll.scrollChild == page.tabContent)
+    T.assertTrue(page.itemScroll.scrollChild == page.itemContent)
+    T.assertTrue(page.listScroll.mouseWheelEnabled)
+    T.assertTrue(page.tabScroll.mouseWheelEnabled)
+    T.assertTrue(page.itemScroll.mouseWheelEnabled)
+    T.assertTrue(page.listContent.height > page.listScroll.height, "character list should scroll when full")
+    T.assertTrue(page.itemContent.height > page.itemScroll.height, "long item grids should scroll")
+    page.listScroll.scripts.OnMouseWheel(page.listScroll, -1)
+    T.assertEqual(page.listScroll.verticalScroll, 42, "mouse wheel should scroll long bank lists")
+
+    page.entryButtons[2].scripts.OnClick(page.entryButtons[2])
+    T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
+    T.assertTrue(page.tabContent.height > page.tabScroll.height, "long tab lists should scroll")
+    page.tabButtons[2].scripts.OnClick(page.tabButtons[2])
+    T.assertEqual(page.selectedTabID, 2)
+    page.itemButtons[3].scripts.OnClick(page.itemButtons[3])
+    T.assertEqual(page.selectedSlotID, 3)
+    page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
+    T.assertEqual(tooltip.link, "|Hitem:19021|h[Saved 2]|h")
+    page.listScroll:SetVerticalScroll(42)
+    page.tabScroll:SetVerticalScroll(28)
+    page.itemScroll:SetVerticalScroll(80)
+
+    local refreshed = record("Alice", "Silvermoon", 12)
+    refreshed.capturedAt = 1700000500
+    refreshed.tabs[1].capturedAt = refreshed.capturedAt
+    _G.DysbankMemoryDB.characters[refreshed.identity.key] = refreshed
+    _G.GuildGearMemoryBankChanged()
+
+    T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
+    T.assertEqual(page.selectedTabID, 2)
+    T.assertEqual(page.selectedSlotID, 3)
+    T.assertEqual(page.listScroll.verticalScroll, 42)
+    T.assertEqual(page.tabScroll.verticalScroll, 28)
+    T.assertEqual(page.itemScroll.verticalScroll, 80)
+    T.assertEqual(page.detailModel.capturedAtText, "saved-1700000500")
+
+    frame:Hide()
+    local changedWhileHidden = record("Alice", "Silvermoon", 12)
+    changedWhileHidden.capturedAt = 1700000600
+    changedWhileHidden.tabs[1].capturedAt = changedWhileHidden.capturedAt
+    _G.DysbankMemoryDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
+    local addedWhileHidden = record("Beatrice", "Silvermoon", 1)
+    _G.DysbankMemoryDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
+    T.assertFalse(_G.GuildGearMemoryBankChanged(), "hidden Bank page should defer its visible refresh")
+    GGM.ShowGuildGearBrowserWindow(api, frame.db)
+
+    T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
+    T.assertEqual(page.detailModel.capturedAtText, "saved-1700000600",
+        "reopening the journal should read the latest local bank snapshot")
+    local foundAddedEntry = false
+    for _, entry in ipairs(page.entries) do
+        if entry.key == "Beatrice-Silvermoon" then foundAddedEntry = true end
+    end
+    T.assertTrue(foundAddedEntry, "reopening the journal should refresh the cached character list")
+    T.assertEqual(page.selectedTabID, 2)
+    T.assertEqual(page.selectedSlotID, 3)
+
+    page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
+    T.assertTrue(tooltip.visible)
+    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = nil, nil
+    _G.GuildGearMemoryBankChanged()
+    T.assertEqual(page.tabStatus.text, "", "missing companion should clear the previously selected tab status")
+    T.assertNil(page.selectedTabID)
+    T.assertNil(page.selectedSlotID)
+    T.assertFalse(tooltip.visible, "missing companion should close a tooltip from the previous snapshot")
+    T.assertTrue(page.detailStatus.text:find("_retail_/Interface/AddOns/DysbankMemory", 1, true) ~= nil,
+        "missing companion state should include its installation path")
+    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = previousAPI, previousDB
 end)
 
 T.test("paper doll layout uses the requested left right and bottom slot order", function()
