@@ -3,13 +3,16 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearData.lua", GGM)
+    T.loadAddonFile("DysgearMemory/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/StableGearTracker.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/LocalGearMemory.lua", GGM)
+    T.loadAddonFile("DysgearMemory/StableGearTracker.lua", GGM)
+    T.loadAddonFile("DysgearMemory/LocalGearMemory.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/LocalCharacterOwnership.lua", GGM)
     return GGM
 end
 
@@ -82,7 +85,7 @@ end
 
 T.test("capture and store writes the local player's complete record", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
 
     local record, err = GGM.CaptureAndStoreLocalPlayer(api, db)
@@ -96,7 +99,7 @@ end)
 
 T.test("recording local player ownership reads only the player GUID", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = {
         UnitGUID = function(unit)
             T.assertEqual(unit, "player")
@@ -126,7 +129,7 @@ end)
 
 T.test("recording local player ownership fails closed when GUID is unavailable", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
 
     local recorded, err = GGM.RecordLocalPlayerOwnership({
         UnitGUID = function() return nil end,
@@ -139,7 +142,7 @@ end)
 
 T.test("recapture keeps gear complete when the optional ranged slot is unavailable", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
     local first = assert(GGM.CaptureAndStoreLocalPlayer(api, db))
     T.assertEqual(first.gear.capturedAt, 1700000100)
@@ -169,7 +172,7 @@ end)
 
 T.test("get local record returns missing when no complete snapshot exists", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
 
     local record, err = GGM.GetLocalPlayerRecord(api, db)
@@ -180,7 +183,7 @@ end)
 
 T.test("starting tracking on first run creates a shared baseline with no pending slots", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api, _, _, timers = makeApi(GGM)
 
     local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5)
@@ -197,7 +200,7 @@ end)
 
 T.test("tracking startup rebuilds runtime slots from compact gear without wrapper-only changes", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
     local identity = assert(GGM.BuildPlayerIdentity(api))
     local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
@@ -219,7 +222,7 @@ end)
 
 T.test("tracking startup persists client-unavailable ranged gear in compact form", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
     local originalSlotInfo = api.GetInventorySlotInfo
     api.GetInventorySlotInfo = function(inventoryName)
@@ -239,7 +242,7 @@ end)
 
 T.test("starting tracking with an existing record preserves shared gear and starts pending differences", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api, itemIDs, itemLinks, timers = makeApi(GGM)
 
     assert(GGM.CaptureAndStoreLocalPlayer(api, db))
@@ -271,7 +274,7 @@ end)
 
 T.test("local tracking persists a confirmed slot before invoking its sync callback", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api, itemIDs, itemLinks, timers = makeApi(GGM)
     local calls = {}
     local callback = function(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
@@ -308,7 +311,7 @@ end)
 
 T.test("tracking startup rejects an invalid confirmation callback", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
 
     local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5, "not a function")
@@ -319,7 +322,7 @@ end)
 
 T.test("tracking does not confirm a slot when persistence throws", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api, itemIDs, itemLinks, timers = makeApi(GGM)
     local publishCount = 0
     local tracker = assert(GGM.StartLocalPlayerGearTracking(api, db, 5, function()
@@ -347,7 +350,7 @@ end)
 
 T.test("starting tracking marks the current character local after tracker creation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
 
     local tracker = assert(GGM.StartLocalPlayerGearTracking(api, db, 5))
@@ -388,7 +391,7 @@ T.test("tracking startup failures do not mark a character local", function()
 
     for _, scenario in ipairs(scenarios) do
         local GGM = loadModules()
-        local db = assert(GGM.InitializeDatabase(nil))
+        local db = assert(T.initializeDatabase(GGM, nil))
         local api = makeApi(GGM)
         scenario.configure(GGM, api, db)
 
@@ -401,7 +404,7 @@ end)
 
 T.test("cached guild record is marked local only when current player tracking starts", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
     local identity = assert(GGM.BuildPlayerIdentity(api))
     local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
@@ -417,7 +420,7 @@ end)
 
 T.test("tracking startup refreshes saved model identity without changing saved gear", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
     local identity = assert(GGM.BuildPlayerIdentity(api))
     identity.raceID, identity.sex, identity.displayID = nil, nil, nil
@@ -447,7 +450,7 @@ end)
 
 T.test("tracking startup preserves saved model identity when current observations are unavailable", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
     local identity = assert(GGM.BuildPlayerIdentity(api))
     local snapshot = assert(GGM.CapturePlayerGearSnapshot(api))
@@ -474,7 +477,7 @@ end)
 
 T.test("ownership marking failure is returned from tracking startup", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local api = makeApi(GGM)
     GGM.MarkLocalCharacter = function() return nil, "ownership-write-failed" end
 

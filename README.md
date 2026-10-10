@@ -16,7 +16,13 @@ remains the main addon and provides the `/ggm` browser.
 | --- | --- | --- |
 | GuildGearMemory | GuildGearMemoryDB | Professions, recipe index, and profession character metadata |
 | DysbankMemory | DysbankMemoryDB | Last-known personal and guild bank snapshots |
-| DysgearMemory | DysgearMemoryDB | Last-known gear, gear ownership, and synchronization sequences |
+| DysgearMemory | DysgearMemoryDB | Gear capture, stable changes, last-known gear, ownership, and guild synchronization |
+
+DysgearMemory owns the gear backend and runs capture and synchronization even
+when GuildGearMemory is disabled. GuildGearMemory reads its versioned backend
+interface to show the same gear browser and `/ggm` commands. Install matching
+versions of both folders; the earlier persistence-only companion is unsupported.
+The saved gear format and guild message protocol remain unchanged by this split.
 
 WoW writes these to separate files under
 `WTF/Account/<account>/SavedVariables` when you log out or reload. The three

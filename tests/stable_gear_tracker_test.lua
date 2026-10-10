@@ -3,10 +3,12 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearData.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/StableGearTracker.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
+    T.loadAddonFile("DysgearMemory/StableGearTracker.lua", GGM)
     return GGM
 end
 
@@ -85,7 +87,7 @@ local function makeEnvironment(GGM)
         }
     end
 
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     assert(GGM.SaveCompleteCharacterRecord(db, makeIdentity(), snapshot))
 
     local function setSlot(slotKey, itemID, itemLink)

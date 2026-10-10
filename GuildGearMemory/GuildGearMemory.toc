@@ -9,17 +9,12 @@
 
 Constants.lua
 CharacterIdentity.lua
-GearData.lua
-GearSnapshot.lua
+GearBackend.lua
+LocalCharacterOwnership.lua
 ProfessionSnapshot.lua
 ProfessionIndex.lua
 Storage.lua
 SavedDatabases.lua
-StableGearTracker.lua
-LocalGearMemory.lua
-SyncProtocol.lua
-SyncTransport.lua
-GuildSync.lua
 SavedCharacterModel.lua
 RecipeDetails.lua
 RecipeDetailsUI.lua

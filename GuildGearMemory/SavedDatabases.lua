@@ -5,7 +5,7 @@ local function readGearDatabase(api)
     if type(companion) ~= "table" then
         return nil, api.DysgearMemoryError or "gear-companion-missing"
     end
-    if companion.schemaVersion ~= 1 or type(companion.GetDatabase) ~= "function" then
+    if companion.schemaVersion ~= 2 or type(companion.GetDatabase) ~= "function" or type(companion.GetBackend) ~= "function" then
         return nil, "gear-companion-unsupported"
     end
     local ok, database = pcall(companion.GetDatabase)
@@ -21,8 +21,8 @@ end
 
 local function runtimeDatabase(professions, gear, gearErr)
     -- Never save this view. Only the two concrete databases are SavedVariables.
-    -- Keeping routing here lets UI/storage/sync share a view without duplicating
-    -- gear in the profession file or changing the existing synchronization path.
+    -- Keeping routing here lets presentation and profession membership use a view
+    -- without duplicating gear in the profession SavedVariables.
     return setmetatable({ gearUnavailableReason = gearErr }, {
         __index = function(_, key)
             if key == "characters" or key == "localCharacters" then
@@ -51,11 +51,7 @@ function GGM.InitializeSavedDatabases(api)
     end
 
     local gear, gearErr = readGearDatabase(api)
-    -- Profession validation still uses the existing storage initializer. When
-    -- gear is unavailable, validate against empty temporary tables, then omit
-    -- them from the runtime view so they cannot become an alternate gear cache.
-    local validationGear = gear or { characters = {}, localCharacters = {} }
-    local valid, err = GGM.InitializeDatabase(runtimeDatabase(professions, validationGear))
+    local valid, err = GGM.InitializeDatabase(professions)
     if not valid then return nil, err end
 
     -- Deliberately no migration: the user requested a fresh gear database.

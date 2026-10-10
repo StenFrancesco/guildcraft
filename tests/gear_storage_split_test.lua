@@ -3,7 +3,7 @@ local T = require("tests.testlib")
 local function loadMainModules()
     local GGM = {}
     for _, file in ipairs({ "Constants", "GearData", "GearSnapshot", "ProfessionSnapshot", "ProfessionIndex", "Storage", "SavedDatabases" }) do
-        T.loadAddonFile("GuildGearMemory/" .. file .. ".lua", GGM)
+        T.loadUnitModule(file, GGM)
     end
     return GGM
 end
@@ -14,13 +14,16 @@ local function loadCompanion(saved)
     api._G = api
     api.CreateFrame = function()
         return {
-            RegisterEvent = function(_, event) T.assertEqual(event, "ADDON_LOADED") end,
+            RegisterEvent = function() end,
             SetScript = function(_, _, fn) handler = fn end,
         }
     end
-    local chunk = assert(loadfile("DysgearMemory/Main.lua"))
-    setfenv(chunk, api)
-    chunk("DysgearMemory", {})
+    local backend = {}
+    for _, file in ipairs({ "Constants", "CharacterIdentity", "GearData", "GearSnapshot", "Storage", "StableGearTracker", "LocalGearMemory", "SyncProtocol", "SyncTransport", "GuildSync", "Main" }) do
+        local chunk = assert(loadfile("DysgearMemory/" .. file .. ".lua"))
+        setfenv(chunk, api)
+        chunk("DysgearMemory", backend)
+    end
     handler(nil, "ADDON_LOADED", "OtherAddon")
     T.assertNil(rawget(api, "DysgearMemoryAPI"))
     handler(nil, "ADDON_LOADED", "DysgearMemory")
@@ -48,7 +51,7 @@ end)
 
 T.test("split storage discards legacy gear while retaining professions and routes future writes", function()
     local GGM = loadMainModules()
-    local legacy = assert(GGM.InitializeDatabase(nil))
+    local legacy = assert(T.initializeDatabase(GGM, nil))
     legacy.characters.old = { sentinel = true }
     legacy.localCharacters.old = true
     local professions, guids = legacy.professions, legacy.localCharacterGUIDs
@@ -81,7 +84,7 @@ end)
 
 T.test("missing gear companion leaves professions available without exposing legacy gear", function()
     local GGM = loadMainModules()
-    local legacy = assert(GGM.InitializeDatabase(nil))
+    local legacy = assert(T.initializeDatabase(GGM, nil))
     legacy.characters.old = { sentinel = true }
     local runtime, err, saved, gear, gearErr = GGM.InitializeSavedDatabases({ GuildGearMemoryDB = legacy })
     T.assertNil(err)
@@ -168,7 +171,7 @@ end)
 T.test("main startup with missing gear companion still registers professions and records ownership", function()
     local GGM = loadMainModules()
     T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/LocalGearMemory.lua", GGM)
+    T.loadAddonFile("GuildGearMemory/LocalCharacterOwnership.lua", GGM)
     local handler, professionController
     local api = setmetatable({}, { __index = _G })
     api._G = api
@@ -225,10 +228,10 @@ end)
 T.test("unsupported and failing gear APIs degrade gracefully without replacing saved gear", function()
     local GGM = loadMainModules()
     for _, companion in ipairs({
-        { schemaVersion = 99, GetDatabase = function() error("must not call incompatible API") end },
-        { schemaVersion = 1, GetDatabase = function() error("unavailable") end },
-        { schemaVersion = 1, GetDatabase = function() return { schemaVersion = 99 } end },
-        { schemaVersion = 1, GetDatabase = function() return { schemaVersion = 7, characters = false, localCharacters = {} } end },
+        { schemaVersion = 99, GetDatabase = function() error("must not call incompatible API") end, expected = "gear-companion-unsupported" },
+        { schemaVersion = 2, GetBackend = function() return GGM end, GetDatabase = function() error("unavailable") end, expected = "gear-database-unavailable" },
+        { schemaVersion = 2, GetBackend = function() return GGM end, GetDatabase = function() return { schemaVersion = 99 } end, expected = "unsupported-gear-schema-version:99" },
+        { schemaVersion = 2, GetBackend = function() return GGM end, GetDatabase = function() return { schemaVersion = 7, characters = false, localCharacters = {} } end, expected = "gear-database-invalid" },
     }) do
         local saved = { sentinel = true }
         local runtime, err, professions, gear, gearErr = GGM.InitializeSavedDatabases({ DysgearMemoryAPI = companion, DysgearMemoryDB = saved })
@@ -236,7 +239,7 @@ T.test("unsupported and failing gear APIs degrade gracefully without replacing s
         T.assertNotNil(professions.professions)
         T.assertNil(runtime.characters)
         T.assertNil(gear)
-        T.assertNotNil(gearErr)
+        T.assertEqual(gearErr, companion.expected)
         T.assertTrue(saved.sentinel)
     end
 end)

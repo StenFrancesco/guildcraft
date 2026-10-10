@@ -3,6 +3,7 @@ local T = require("tests.testlib")
 T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
 
     T.assertEqual(#GGM.TRACKED_SLOTS, 19)
 
@@ -46,6 +47,7 @@ end)
 T.test("schema version is seven and protocol version stays five", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
     T.assertEqual(GGM.SCHEMA_VERSION, 7)
     T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
 end)
@@ -53,12 +55,14 @@ end)
 T.test("profession recipe index version is three", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
     T.assertEqual(GGM.PROFESSION_RECIPE_INDEX_VERSION, 3)
 end)
 
 T.test("profession snapshot limits are conservative", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
 
     T.assertEqual(GGM.PROFESSION_MAX_RECIPES, 4096)
     T.assertEqual(GGM.PROFESSION_MAX_NAME_BYTES, 128)
@@ -69,6 +73,7 @@ end)
 T.test("default stability delay is five minutes", function()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
 
     T.assertEqual(GGM.DEFAULT_STABILITY_DELAY_SECONDS, 300)
 end)
