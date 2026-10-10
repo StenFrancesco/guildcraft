@@ -56,6 +56,31 @@ T.test("capture creates a complete snapshot for every tracked slot", function()
     end
 end)
 
+T.test("complete snapshot accepts crafted metadata in every tracked slot", function()
+    local GGM = loadModules()
+    local api, itemIDs, itemLinks = makeCompleteApi(GGM)
+    local function addCraftedMetadata(itemLink)
+        return itemLink:gsub("|h", ":1:2:3:4:5:6:7:8:9:47:240167:48:245782:49:-2147480301::::Player-1301-0CFA0615:|h", 1)
+    end
+    for slotID, itemLink in pairs(itemLinks) do
+        itemLinks[slotID] = addCraftedMetadata(itemLink)
+    end
+
+    local snapshot, err = GGM.CapturePlayerGearSnapshot(api)
+
+    T.assertNil(err)
+    T.assertTrue(snapshot.complete)
+    local storedGear, storeErr = GGM.CreateStoredGear(snapshot)
+    T.assertNil(storeErr)
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        local itemID = itemIDs[slot.inventorySlotID]
+        T.assertEqual(
+            storedGear.slots[slot.inventorySlotID],
+            "item:" .. tostring(itemID) .. ":1:2:3:4:5:6:7:8:9:47:240167:48:245782:49"
+        )
+    end
+end)
+
 T.test("capture explicitly represents an empty slot", function()
     local GGM = loadModules()
     local api = makeCompleteApi(GGM)
