@@ -1124,7 +1124,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
 
     if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known guild equipment")
     elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "")
-    else setPageHeader(frame, "Bank", "Saved bank snapshots and shared storage") end
+    else setPageHeader(frame, "Bank", "") end
 
     for _, tab in ipairs(frame.navigationTabs) do
         local selected = tab.key == selectedKey
@@ -1151,6 +1151,14 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
         end
     else frame.professionsPage:Hide() end
     for pageKey, page in pairs(frame.placeholderPages) do if pageKey == selectedKey then page:Show() else page:Hide() end end
+    if frame.bankPage then
+        if selectedKey == "Bank" then
+            frame.bankPage:Show()
+            if type(GGM.RefreshVisibleBankView) == "function" then GGM.RefreshVisibleBankView() end
+        else
+            frame.bankPage:Hide()
+        end
+    end
 
     if showCharacter then
         setBrowserContentVisible(frame, true)
@@ -1702,7 +1710,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     setTextColor(footerText, THEME.muted)
 
     frame.placeholderPages = {}
-    do
+    if type(GGM.CreateBankPage) == "function" then
+        GGM.CreateBankPage(api, frame)
+    else
         local page = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
         page:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.railWidth + UI.pageMargin, -UI.contentTop)
         page:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -UI.pageMargin, UI.contentBottom)
@@ -1734,6 +1744,9 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     updateBrowserList(frame, api)
     GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Character")
     frame:Show()
+    if frame.activeTab == "Bank" and type(GGM.RefreshVisibleBankView) == "function" then
+        GGM.RefreshVisibleBankView()
+    end
     return frame.detailModel
 end
 
