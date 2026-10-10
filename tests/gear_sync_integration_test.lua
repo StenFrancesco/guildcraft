@@ -26,9 +26,9 @@ local function guild()
     end
     function bus:client(name)
         local G = {}
-        for _, module in ipairs({ "Constants", "GearData", "CharacterIdentity", "GearSnapshot", "Storage",
+        for _, module in ipairs({ "Constants", "GearData", "CharacterIdentity", "GearSnapshot", "ProfessionIndex", "Storage", "SavedDatabases",
             "StableGearTracker", "LocalGearMemory", "SyncProtocol", "SyncTransport", "GuildSync" }) do
-            T.loadAddonFile("GuildGearMemory/" .. module .. ".lua", G)
+            T.loadUnitModule(module, G)
         end
         local client = { G = G, identity = { key = name .. "-Silvermoon", name = name, realm = "Silvermoon", guid = name }, items = {} }
         for _, slot in ipairs(G.TRACKED_SLOTS) do client.items[slot.inventorySlotID] = 1000 + slot.inventorySlotID end
@@ -73,7 +73,14 @@ local function guild()
             end)
             return 0
         end
-        client.api, client.db = api, assert(G.InitializeDatabase(nil))
+        local gearDB = { schemaVersion = G.SCHEMA_VERSION, characters = {}, localCharacters = {} }
+        api.DysgearMemoryAPI = { schemaVersion = 2, GetDatabase = function() return gearDB end, GetBackend = function() return G end }
+        local db, startupErr, professionDB = G.InitializeSavedDatabases(api)
+        assert(db, startupErr)
+        api.GuildGearMemoryDB, api.DysgearMemoryDB = professionDB, gearDB
+        client.api, client.db = api, db
+        assert(client.db.characters == api.DysgearMemoryDB.characters)
+        assert(api.GuildGearMemoryDB.characters == nil)
         client.sync = assert(G.CreateGuildSync(api, client.db))
         assert(G.RegisterGuildSync(client.sync))
         function client:startTracking()

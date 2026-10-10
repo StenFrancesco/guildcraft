@@ -3,9 +3,10 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/SyncProtocol.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearData.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("DysgearMemory/SyncProtocol.lua", GGM)
     return GGM
 end
 

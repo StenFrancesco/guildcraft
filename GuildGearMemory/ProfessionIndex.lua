@@ -495,9 +495,8 @@ local function isLocallyOwnedGUID(db, guid)
 end
 
 local function hasUnresolvedLegacyLocalMarker(db, characterKey, guid)
-    return type(db.localCharacters) == "table"
-        and db.localCharacters[characterKey] == true
-        and not isLocallyOwnedGUID(db, guid)
+    return type(GGM.HasUnresolvedLocalGearMarker) == "function"
+        and GGM.HasUnresolvedLocalGearMarker(db, characterKey, guid)
 end
 
 local function removeCrafterFromAllProfessions(index, localID)
@@ -521,30 +520,9 @@ local function purgeProfessionCharacter(db, localID)
     db.professions[entry.key] = nil
     db.localCharacterIDByGUID[entry.guid] = nil
     db.professionCharacters[localID] = nil
-    db.localCharacters[entry.key] = nil
+    if type(GGM.RemoveLocalGearMarker) == "function" then GGM.RemoveLocalGearMarker(db, entry.key) end
     if type(db.professionIndexRepairCandidates) == "table" then
         db.professionIndexRepairCandidates[entry.guid] = nil
-    end
-end
-
-local function purgeDepartedGearRecords(db, currentByGUID)
-    local keysToRemove = {}
-
-    for characterKey, record in pairs(db.characters) do
-        local identity = type(record) == "table" and record.identity or nil
-        local guid = type(identity) == "table" and identity.guid or nil
-        if GGM.IsProfessionGUID(guid)
-            and currentByGUID[guid] == nil
-            and not isLocallyOwnedGUID(db, guid)
-            and not hasUnresolvedLegacyLocalMarker(db, characterKey, guid) then
-            keysToRemove[#keysToRemove + 1] = characterKey
-        end
-    end
-
-    table.sort(keysToRemove)
-    for _, characterKey in ipairs(keysToRemove) do
-        db.characters[characterKey] = nil
-        db.localCharacters[characterKey] = nil
     end
 end
 
@@ -904,8 +882,6 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
-        or type(db.characters) ~= "table"
-        or type(db.localCharacters) ~= "table"
         or type(db.localCharacterGUIDs) ~= "table" then
         return false, "profession-roster-unavailable"
     end
@@ -1013,7 +989,7 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         purgeProfessionCharacter(db, localID)
     end
 
-    purgeDepartedGearRecords(db, currentByGUID)
+    if type(GGM.PurgeDepartedGearRecords) == "function" then GGM.PurgeDepartedGearRecords(db, currentByGUID) end
     db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
 
     GGM.professionRosterMembershipCurrent = true

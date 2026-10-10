@@ -41,7 +41,30 @@ end
 
 function TestLib.loadAddonFile(path, namespace)
     local chunk = assert(loadfile(path))
-    chunk("GuildGearMemory", namespace)
+    chunk(path:match("^([^/]+)/"), namespace)
+end
+
+-- Legacy unit fixtures exercise both domains in one namespace. Manifest tests
+-- separately verify actual addon load order and independent namespaces.
+function TestLib.loadUnitModule(name, namespace)
+    local gear = { GearData = true, GearSnapshot = true, CharacterIdentity = true,
+        StableGearTracker = true, LocalGearMemory = true, SyncProtocol = true,
+        SyncTransport = true, GuildSync = true }
+    TestLib.loadAddonFile((gear[name] and "DysgearMemory/" or "GuildGearMemory/") .. name .. ".lua", namespace)
+    if name == "Constants" or name == "Storage" then
+        TestLib.loadAddonFile("DysgearMemory/" .. name .. ".lua", namespace)
+    end
+end
+
+function TestLib.initializeDatabase(namespace, existing)
+    local db, err = namespace.InitializeDatabase(existing)
+    if not db then return nil, err end
+    if namespace.InitializeGearDatabase then
+        local gear, gearErr = namespace.InitializeGearDatabase(existing)
+        if not gear then return nil, gearErr end
+        db.characters, db.localCharacters = gear.characters, gear.localCharacters
+    end
+    return db, nil
 end
 
 function TestLib.run()
