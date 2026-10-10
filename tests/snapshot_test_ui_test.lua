@@ -445,7 +445,7 @@ local function newControl()
     function control:SetAllPoints(relativeTo) self.allPointsTo = relativeTo end
     function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end
     function control:SetClampedToScreen(value) self.clampedToScreen = value end
-    function control:SetJustifyH() end
+    function control:SetJustifyH(value) self.justifyH = value end
     function control:SetAutoFocus() end
     function control:SetHeight(height) self.height = height end
     function control:SetWidth(width) self.width = width end
@@ -464,9 +464,9 @@ local function newControl()
     function control:SetAlpha(value) self.alpha = value end
     function control:SetBlendMode(value) self.blendMode = value end
     function control:SetVertexColor(...) self.vertexColor = { ... } end
-    function control:SetTexture(value) self.texture = value; self.atlas = nil end
+    function control:SetTexture(value) self.texture = value; self.atlas = nil; self.color = nil end
     function control:SetColorTexture(...) self.color = { ... }; self.texture = nil; self.atlas = nil end
-    function control:SetAtlas(value) self.atlas = value; self.texture = nil end
+    function control:SetAtlas(value) self.atlas = value; self.texture = nil; self.color = nil end
     function control:SetTexCoord(...) self.texCoord = { ... } end
     function control:CreateFontString() return newControl() end
     function control:CreateTexture() return newControl() end
@@ -505,7 +505,7 @@ local function makeModelBrowserAPI(failModelCreation)
     local createFrame = api.CreateFrame
     api.CreateFrame = function(frameType, name, parent)
         if failModelCreation and frameType == "Frame" and parent
-            and parent.width == 208 and parent.height == 226 then return nil end
+            and parent.width == 208 and parent.point and parent.point.point == "TOP" then return nil end
         return createFrame(frameType, name, parent)
     end
     return api
@@ -565,17 +565,18 @@ T.test("character content stays within the journal's painted page borders", func
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local detail = frame.gearPanel
-    T.assertTrue(detail.point.x >= 635 and detail.point.x <= 645, "detail misses the painted left border")
-    T.assertTrue(-detail.point.y >= 70 and -detail.point.y <= 80, "detail misses the painted top border")
+    local inset = detail.background.point
+    -- The fixture retains the last (bottom-right) anchor of the symmetric inset.
+    T.assertTrue(detail.point.x - inset.x >= 635 and detail.point.x - inset.x <= 645, "detail misses the painted left border")
+    T.assertTrue(-detail.point.y + inset.y >= 70 and -detail.point.y + inset.y <= 80, "detail misses the painted top border")
     T.assertTrue(detail.point.x + detail.width <= 1350, "detail extends beyond the painted right border")
     T.assertTrue(-detail.point.y + detail.height <= 574, "detail extends beyond the painted bottom border")
     local libraryLeft = frame.searchPanel.point.x
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
         "native scrollbar extends beyond the library border")
-    local artworkLeft = detail.width + detail.armoryArt.point.x - detail.armoryArt.width
-    T.assertTrue(frame.completenessBadge.point.x + frame.completenessBadge.width + 6 <= artworkLeft,
-        "status badge overlaps the header artwork")
+    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.completenessBadge.point.x,
+        "status badge overlaps the capture date")
 end)
 
 T.test("journal headings reserve space for subtitles inside their columns", function()
@@ -586,7 +587,25 @@ T.test("journal headings reserve space for subtitles inside their columns", func
     T.assertNil(frame.brandSubtitle, "brand subtitle should be removed")
 end)
 
-T.test("character header artwork is above parchment and captured date has a bounded region", function()
+T.test("character realm stays left aligned beneath the character name", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    T.assertEqual(frame.realmLine.justifyH, "LEFT")
+    T.assertTrue(math.abs(frame.realmLine.point.x - frame.characterLine.point.x) <= 1,
+        "realm label must share the name's left edge")
+end)
+
+T.test("portrait decoration follows the portrait bounds without an overlay icon texture", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeModelBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local view = frame.characterModelView
+    T.assertTrue(view.portraitFrame.allPointsTo == view.model.portraitBorder,
+        "portrait border must cover exactly the portrait surround")
+    T.assertNil(view.portraitFrame.texture, "a padded icon texture must not cover the portrait")
+    T.assertEqual(#view.portraitFrame.border, 4)
+end)
+
+T.test("character page uses blended artwork and captured date has a bounded region", function()
     local GGM = loadUI()
     local api = makeBrowserAPI()
     local createFrame = api.CreateFrame
@@ -601,8 +620,10 @@ T.test("character header artwork is above parchment and captured date has a boun
         return control
     end
     local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
-    T.assertEqual(frame.gearPanel.armoryArt.drawLayer, "ARTWORK",
-        "armory illustration must draw above the opaque parchment background")
+    T.assertEqual(frame.gearPanel.background.texture, GGM.UIJournalTextures.gearPage)
+    T.assertEqual(frame.gearPanel.background.mask.texture, GGM.UIJournalTextures.professionMask)
+    T.assertTrue(frame.gearPanel.background.mask.allPointsTo == frame.gearPanel.background,
+        "armory page must blend into the same painted border as professions")
     T.assertTrue((frame.capturedLine.width or 0) >= 140,
         "capture date needs explicit space independent of caption autosizing")
     T.assertTrue((frame.capturedLine.height or 0) >= 14)
@@ -613,13 +634,33 @@ T.test("character portrait and weapon labels have separate space above the foote
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local portraitBottom = -frame.modelStage.point.y + frame.modelStage.height
-    local footerTop = frame.gearPanel.height - 14 - frame.detailFooter.height
+    local footerTop = frame.gearPanel.height - frame.detailFooter.point.y - frame.detailFooter.height
     for _, button in ipairs(frame.slotButtons) do
         if button.paperDollGroup == "bottom" then
             local top = -button.point.y - button.height / 2
             local labelsBottom = -button.point.y + button.height / 2 + 5 + 16 + 1 + 14
             T.assertTrue(top >= portraitBottom + 8, "weapons overlap the saved portrait")
             T.assertTrue(labelsBottom <= footerTop - 6, "weapon labels overlap the footer")
+        end
+    end
+end)
+
+T.test("adjacent equipment rows leave room for icons and their separator", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local groups = { left = {}, right = {} }
+    for _, button in ipairs(frame.slotButtons) do
+        if groups[button.paperDollGroup] then
+            groups[button.paperDollGroup][button.paperDollOrder] = button
+        end
+    end
+    for _, rows in pairs(groups) do
+        for index = 2, #rows do
+            local previous, current = rows[index - 1], rows[index]
+            local previousBottom = -previous.point.y + previous.height / 2
+            local currentTop = -current.point.y - current.height / 2
+            T.assertTrue(currentTop >= previousBottom + 3,
+                "equipment icon and separator overlap the next row")
         end
     end
 end)
@@ -1477,11 +1518,10 @@ T.test("guild gear browser slot buttons fit inside the detail panel with a gap a
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local ui = GGM.UIStyleTokens
-    local panelLeft = ui.railWidth + ui.pageMargin + ui.browserColumnWidth + ui.contentGap
-    local listRight = ui.railWidth + ui.pageMargin + ui.browserColumnWidth
-    local panelHeight = ui.windowHeight - ui.contentTop - ui.contentBottom
-    local panelWidth = ui.detailColumnWidth
-    local footerTop = panelHeight - 14 - 32
+    local panelLeft = frame.gearPanel.point.x
+    local listRight = frame.listPanel.point.relativeTo.point.x + frame.listPanel.width
+    local panelWidth = frame.gearPanel.width
+    local footerTop = frame.gearPanel.height - frame.detailFooter.point.y - frame.detailFooter.height
 
     for index, button in ipairs(frame.slotButtons) do
         local point = button.point

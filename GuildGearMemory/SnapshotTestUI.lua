@@ -304,6 +304,7 @@ local JOURNAL_TEXTURES = {
     window = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-window.tga",
     professionMask = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-page-mask.tga",
     armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory-vignette.tga",
+    gearPage = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\gear-journal-page.tga",
     font = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif.ttf",
     boldFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
     italicFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-italic.ttf",
@@ -383,9 +384,10 @@ local UI = {
     characterLibraryX = 334,
     characterLibraryWidth = 280,
     characterLibraryBottom = 574,
-    characterDetailX = 638,
-    characterDetailTop = 73,
-    characterDetailHeight = 498,
+    characterDetailX = 629,
+    characterDetailTop = 64,
+    characterDetailHeight = 510,
+    characterDetailWidth = 721,
     professionLibraryX = 314,
     professionLibraryTop = 109,
     professionDetailX = 629,
@@ -1344,38 +1346,31 @@ local function createNavigationTab(api, frame, key, label, caption, iconPath, y)
 end
 
 local function createGearPanel(api, frame)
-    local panel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
-    panel:SetSize(UI.detailColumnWidth, UI.characterDetailHeight)
-    GGM.ApplyJournalSurface(panel, "parchment")
+    local panel = api.CreateFrame("Frame", nil, frame)
+    panel:SetSize(UI.characterDetailWidth, UI.characterDetailHeight)
     panel:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.characterDetailX, -UI.characterDetailTop)
-
-    panel.header = panel:CreateTexture(nil, "BACKGROUND")
-    panel.header:SetPoint("TOPLEFT", panel, "TOPLEFT", 2, -2)
-    panel.header:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -2, -2)
-    panel.header:SetHeight(122)
-    panel.header:Hide()
-    -- Keep the vignette above the opaque parchment; same-layer texture
-    -- creation order is not a reliable stacking contract in the game client.
-    panel.armoryArt = panel:CreateTexture(nil, "ARTWORK")
-    panel.armoryArt:SetSize(264, 122)
-    panel.armoryArt:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -3, -3)
-    panel.armoryArt:SetTexture(JOURNAL_TEXTURES.armory)
-    -- The vignette already fades to transparent at its left and lower edges.
-    -- Cropping it would discard the fade and recreate the rectangular seam.
-    panel.armoryArt:SetTexCoord(0, 1, 0, 1)
+    panel.background = panel:CreateTexture(nil, "BACKGROUND")
+    panel.background:SetPoint("TOPLEFT", panel, "TOPLEFT", 9, -9)
+    panel.background:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -9, 9)
+    panel.background:SetTexture(JOURNAL_TEXTURES.gearPage)
+    panel.background:SetTexCoord(0, 1, 0, 1)
+    panel.backgroundMask = panel:CreateMaskTexture()
+    panel.backgroundMask:SetTexture(JOURNAL_TEXTURES.professionMask, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    panel.backgroundMask:SetAllPoints(panel.background)
+    panel.background:AddMaskTexture(panel.backgroundMask)
     panel.goldRule = panel:CreateTexture(nil, "ARTWORK")
-    panel.goldRule:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, -124)
-    panel.goldRule:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -124)
+    panel.goldRule:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -145)
+    panel.goldRule:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -34, -145)
     panel.goldRule:SetHeight(1)
     setColor(panel.goldRule, THEME.gold, 0.48)
     panel.sectionLabel = createEyebrow(panel, "EQUIPMENT SNAPSHOT")
-    panel.sectionLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 28, -17)
+    panel.sectionLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -25)
     return panel
 end
 
 local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     local button = api.CreateFrame("Button", nil, frame.gearPanel)
-    button:SetSize(40, 40)
+    button:SetSize(34, 34)
     button:SetPoint("CENTER", frame.gearPanel, "TOPLEFT", x, y)
     button.paperDollGroup, button.paperDollOrder = layout.group, layout.order
 
@@ -1413,6 +1408,14 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     setTextColor(button.label, THEME.textSoft)
     button.status = createText(button, "OVERLAY", "GameFontDisableSmall")
     setTextColor(button.status, THEME.muted)
+
+    if layout.group ~= "bottom" then
+        button.rowRule = button:CreateTexture(nil, "BACKGROUND")
+        button.rowRule:SetSize(146, 1)
+        button.rowRule:SetPoint(layout.group == "left" and "TOPLEFT" or "TOPRIGHT",
+            button, layout.group == "left" and "BOTTOMLEFT" or "BOTTOMRIGHT", 0, -1)
+        setColor(button.rowRule, THEME.gold, 0.22)
+    end
 
     if layout.group == "left" then
         button.label:SetWidth(98); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
@@ -1594,32 +1597,36 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.gearPanel = createGearPanel(api, frame)
     frame.characterLine = createText(frame.gearPanel, "OVERLAY", "GameFontNormalHuge")
     GGM.ApplyJournalFont(frame.characterLine, 30, "bold")
-    frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 28, -37)
-    frame.characterLine:SetWidth(385)
+    frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 34, -50)
+    frame.characterLine:SetSize(345, 38)
+    if frame.characterLine.SetWordWrap then frame.characterLine:SetWordWrap(false) end
     frame.characterLine:SetJustifyH("LEFT")
     setTextColor(frame.characterLine, THEME.text)
     frame.realmLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
-    frame.realmLine:SetPoint("TOPLEFT", frame.characterLine, "BOTTOMLEFT", 1, -4)
+    frame.realmLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 35, -88)
+    frame.realmLine:SetWidth(345)
+    frame.realmLine:SetJustifyH("LEFT")
+    if frame.realmLine.SetWordWrap then frame.realmLine:SetWordWrap(false) end
     setTextColor(frame.realmLine, THEME.muted)
     frame.snapshotCaption = createSectionLabel(frame.gearPanel, "LAST CAPTURED")
     GGM.ApplyJournalFont(frame.snapshotCaption, 11, "bold")
-    frame.snapshotCaption:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 28, -95)
+    frame.snapshotCaption:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 34, -121)
     frame.capturedLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
     -- A bounded region avoids relying on a hidden caption's auto-sized bounds
     -- while selection changes hide and repopulate the header.
     frame.capturedLine:SetSize(152, 16)
-    frame.capturedLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 138, -95)
+    frame.capturedLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 140, -121)
     GGM.ApplyJournalFont(frame.capturedLine, 12)
     frame.capturedLine:SetJustifyH("LEFT")
     setTextColor(frame.capturedLine, THEME.textSoft)
     frame.completenessBadge = createStatusBadge(api, frame.gearPanel)
-    frame.completenessBadge:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 302, -89)
+    frame.completenessBadge:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
     frame.completenessBadge:Hide()
     frame.completenessLine = frame.completenessBadge.text
 
     frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
-    frame.modelStage:SetSize(208, 226)
-    frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -136)
+    frame.modelStage:SetSize(208, 218)
+    frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -164)
     frame.modelStage.background:Hide()
     for _, edge in ipairs(frame.modelStage.border) do edge:Hide() end
     frame.stageLabel = createSectionLabel(frame.modelStage, "SAVED PORTRAIT")
@@ -1629,14 +1636,20 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.characterModelView = GGM.CreateSavedCharacterModel(api, frame.modelStage)
     if frame.characterModelView.model then
         local view = frame.characterModelView
-        view.model:SetSize(208, 192)
+        view.model:SetSize(208, 182)
         view.model:SetPoint("BOTTOM", frame.modelStage, "BOTTOM", 0, 0)
         view.model.background:Hide()
-        view.model.portraitBorder:SetSize(126, 126)
+        view.model.portraitBorder:SetSize(120, 120)
         view.model.portraitBorder:ClearAllPoints()
         view.model.portraitBorder:SetPoint("TOP", view.model, "TOP", 0, 0)
         setColor(view.model.portraitBorder, THEME.gold)
-        view.portrait:SetSize(118, 118)
+        view.portrait:SetSize(110, 110)
+        -- Native icon-frame artwork contains padding and does not stretch into
+        -- a portrait surround. Draw the edges at the actual portrait bounds.
+        view.portraitFrame = api.CreateFrame("Frame", nil, view.model)
+        view.portraitFrame:SetAllPoints(view.model.portraitBorder)
+        view.portraitFrame.border = createFlatBorder(view.portraitFrame, THEME.borderDark)
+        view.portraitFrame.innerBorder = createFlatBorder(view.portraitFrame, THEME.goldBright, 1)
         GGM.ApplyJournalFont(view.raceLabel, 16, "bold")
         GGM.ApplyJournalFont(view.sexLabel, 13)
         GGM.ApplyJournalFont(view.caption, 11)
@@ -1664,10 +1677,10 @@ function GGM.CreateGuildGearBrowserWindow(api)
     setTextColor(frame.detailEmpty, THEME.muted)
     frame.detailEmpty:Hide()
 
-    local sideX = { left = 42, right = UI.detailColumnWidth - 42 }
-    local sideStartY, sidePitch = -144, 40
-    local bottomX = { UI.detailColumnWidth / 2 - 96, UI.detailColumnWidth / 2, UI.detailColumnWidth / 2 + 96 }
-    local bottomY = -390
+    local sideX = { left = 54, right = UI.characterDetailWidth - 54 }
+    local sideStartY, sidePitch = -185, 37
+    local bottomX = { UI.characterDetailWidth / 2 - 96, UI.characterDetailWidth / 2, UI.characterDetailWidth / 2 + 96 }
+    local bottomY = -411
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
         local x, y
@@ -1677,9 +1690,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     end
 
     frame.detailFooter = createSurface(api, frame.gearPanel, THEME.panelAlt, THEME.borderSoft)
-    frame.detailFooter:SetPoint("BOTTOMLEFT", frame.gearPanel, "BOTTOMLEFT", 14, 14)
-    frame.detailFooter:SetPoint("BOTTOMRIGHT", frame.gearPanel, "BOTTOMRIGHT", -14, 14)
-    frame.detailFooter:SetHeight(32)
+    frame.detailFooter:SetPoint("BOTTOMLEFT", frame.gearPanel, "BOTTOMLEFT", 14, 10)
+    frame.detailFooter:SetPoint("BOTTOMRIGHT", frame.gearPanel, "BOTTOMRIGHT", -14, 10)
+    frame.detailFooter:SetHeight(20)
     frame.detailFooter.background:Hide()
     for _, edge in ipairs(frame.detailFooter.border) do edge:Hide() end
     local footerText = createText(frame.detailFooter, "OVERLAY", "GameFontDisableSmall")

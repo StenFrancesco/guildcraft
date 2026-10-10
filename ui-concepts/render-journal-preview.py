@@ -67,7 +67,7 @@ def patch_fixture(source: str) -> str:
             '    function control:ClearAllPoints() self.point = nil; self.points = {}; self.allPointsTo = nil end',
         ),
         (
-            '    function control:SetJustifyH() end',
+            '    function control:SetJustifyH(value) self.justifyH = value end',
             '    function control:SetJustifyH(value) self.justifyH = value end\n'
             '    function control:SetJustifyV(value) self.justifyV = value end\n'
             '    function control:SetShadowColor(...) self.shadowColor = { ... } end',
@@ -312,7 +312,7 @@ def collect_controls(module, frame, api):
             "text_color": lv(item, "textColor"),
             "shadow_color": lv(item, "shadowColor"),
             "shadow_offset": seq(lv(item, "shadowOffset")),
-            "justify": str(lv(item, "justifyH", "LEFT")),
+            "justify": str(lv(item, "justifyH", "CENTER")),
             "texture": texture if isinstance(texture, str) else ("Interface\\Icons\\Item" if isinstance(texture, (int, float)) else None),
             "atlas": lv(item, "atlas"),
             "fill": lv(item, "color"),
