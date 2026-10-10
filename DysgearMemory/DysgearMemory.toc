@@ -1,0 +1,8 @@
+## Interface: 120000, 16001
+## Title: Dysgear Memory
+## Notes: Gear SavedVariables companion for Guild Gear Memory
+## Author: Guild Gear Memory contributors
+## Version: 1.0.0
+## SavedVariables: DysgearMemoryDB
+
+Main.lua

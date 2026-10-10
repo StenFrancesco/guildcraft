@@ -61,14 +61,16 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
-        local db, err = GGM.InitializeDatabase(GuildGearMemoryDB)
+        local db, err, professionDB, gearDB, gearErr = GGM.InitializeSavedDatabases(_G)
         if not db then
             GGM.startupError = err
             return
         end
 
-        GuildGearMemoryDB = db
+        GuildGearMemoryDB = professionDB
         GGM.db = db
+        GGM.gearDB = gearDB
+        GGM.gearStartupError = gearErr
         GGM.startupError = nil
 
         local professionLinkSave, professionControllerErr = GGM.CreateProfessionLinkSaveController(_G, db)
@@ -84,6 +86,13 @@ frame:SetScript("OnEvent", function(_, event, ...)
         else
             GGM.professionLinkSave = nil
             GGM.lastProfessionSaveError = professionControllerErr
+        end
+
+        if not gearDB then
+            GGM.guildSync = nil
+            GGM.lastSyncError = gearErr
+            GGM.lastGearTrackingError = gearErr
+            return
         end
 
         local sync, syncErr = GGM.CreateGuildSync(_G, db)
@@ -119,6 +128,8 @@ frame:SetScript("OnEvent", function(_, event, ...)
         else
             GGM.lastLocalOwnershipError = ownershipErr
         end
+
+        if not GGM.gearDB then return end
 
         C_Timer.After(1, function()
             if GGM.gearTracker or GGM.startupError or not GGM.db then

@@ -4,7 +4,7 @@
 ## Notes: Local last-known gear memory for guild characters
 ## Author: Guild Gear Memory contributors
 ## Version: 0.5.0-blizzard-ui
-## OptionalDeps: DysbankMemory
+## OptionalDeps: DysbankMemory, DysgearMemory
 ## SavedVariables: GuildGearMemoryDB
 
 Constants.lua
@@ -14,6 +14,7 @@ GearSnapshot.lua
 ProfessionSnapshot.lua
 ProfessionIndex.lua
 Storage.lua
+SavedDatabases.lua
 StableGearTracker.lua
 LocalGearMemory.lua
 SyncProtocol.lua

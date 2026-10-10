@@ -34,6 +34,12 @@ local function withGlobals(replacements, fn)
 end
 
 local function stubSnapshotUI(GGM, registerFn)
+    -- Isolated event tests supply their own database initializer. Real split
+    -- startup and persistence are exercised by gear_storage_split_test.
+    GGM.InitializeSavedDatabases = function(api)
+        local db, err = GGM.InitializeDatabase(api.GuildGearMemoryDB)
+        return db, err, db, db, nil
+    end
     GGM.RegisterSnapshotTestSlashCommand = registerFn or function() end
     GGM.CreateGuildSync = GGM.CreateGuildSync or function()
         return {}, nil

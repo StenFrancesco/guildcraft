@@ -1498,6 +1498,24 @@ T.test("guild gear browser distinguishes empty Mine and Guild views from unmatch
     T.assertEqual(emptyFrame.detailEmpty.text, "No personal snapshots yet")
 end)
 
+T.test("gear browser explains missing or unavailable gear storage while other tabs remain usable", function()
+    for _, reason in ipairs({ "gear-companion-missing", "gear-database-invalid" }) do
+        local GGM = loadUI()
+        local db = makeDB(GGM)
+        db.gearUnavailableReason = reason
+        local frame = showBrowser(GGM, makeBrowserAPI(), db)
+        local expected = reason == "gear-companion-missing"
+            and "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+            or "Gear storage is unavailable. Check /ggm status for details."
+        T.assertEqual(frame.detailEmpty.text, expected)
+        T.assertEqual(frame.listEmpty.text, "Gear unavailable")
+        GGM.SelectGuildGearBrowserTab(frame, "Professions")
+        T.assertEqual(frame.activeTab, "Professions")
+        GGM.SelectGuildGearBrowserTab(frame, "Bank")
+        T.assertEqual(frame.activeTab, "Bank")
+    end
+end)
+
 T.test("guild gear browser hides the model stage when detail has no valid record", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
@@ -1838,9 +1856,25 @@ T.test("unsupported schema status gives backup and removal guidance with cleared
     T.assertTrue(output:find("No automatic migration", 1, true) ~= nil)
     T.assertTrue(output:find("back up", 1, true) ~= nil)
     T.assertTrue(output:find("GuildGearMemory.lua", 1, true) ~= nil)
-    T.assertTrue(output:find("cached gear", 1, true) ~= nil)
+    T.assertTrue(output:find("Gear and bank companion databases are separate", 1, true) ~= nil)
     T.assertTrue(output:find("profession snapshots/index data", 1, true) ~= nil)
     T.assertTrue(output:find("local-character metadata", 1, true) ~= nil)
+end)
+
+T.test("gear companion status points to its own SavedVariables file", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = {
+        SlashCmdList = {},
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, message) messages[#messages + 1] = message end },
+    }
+    GGM.gearStartupError = "unsupported-schema-version:99"
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Gear storage: unavailable", 1, true) ~= nil)
+    T.assertTrue(output:find("DysgearMemory.lua", 1, true) ~= nil)
+    T.assertTrue(output:find("DysgearMemoryDB", 1, true) ~= nil)
 end)
 
 T.test("snapshot slash command can explicitly request exactly one named character", function()

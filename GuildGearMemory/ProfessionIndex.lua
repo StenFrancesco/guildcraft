@@ -521,13 +521,16 @@ local function purgeProfessionCharacter(db, localID)
     db.professions[entry.key] = nil
     db.localCharacterIDByGUID[entry.guid] = nil
     db.professionCharacters[localID] = nil
-    db.localCharacters[entry.key] = nil
+    if type(db.localCharacters) == "table" then db.localCharacters[entry.key] = nil end
     if type(db.professionIndexRepairCandidates) == "table" then
         db.professionIndexRepairCandidates[entry.guid] = nil
     end
 end
 
 local function purgeDepartedGearRecords(db, currentByGUID)
+    -- Gear is an optional companion cache. Its absence must not prevent
+    -- profession membership reconciliation or profession index cleanup.
+    if type(db.characters) ~= "table" or type(db.localCharacters) ~= "table" then return end
     local keysToRemove = {}
 
     for characterKey, record in pairs(db.characters) do
@@ -904,8 +907,8 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
-        or type(db.characters) ~= "table"
-        or type(db.localCharacters) ~= "table"
+        or (db.characters ~= nil and type(db.characters) ~= "table")
+        or (db.localCharacters ~= nil and type(db.localCharacters) ~= "table")
         or type(db.localCharacterGUIDs) ~= "table" then
         return false, "profession-roster-unavailable"
     end
