@@ -201,6 +201,10 @@ def build_tree():
             model["message"] = message
             ggm["BuildRecipeMaterialDetails"] = lambda *_: model
         frame = ggm["ShowRecipeDetailsWindow"](browser, recipe)
+        # The lightweight fixture does not fire Blizzard's OnDisable callback.
+        # Apply the real button style so unavailable actions are shown accurately.
+        if not frame["whisperButton"]["enabled"]:
+            ggm["SetFlatButtonState"](frame["whisperButton"], "disabled")
         if STATE == "many-crafters":
             frame["crafterDropdown"]["scripts"]["OnClick"](frame["crafterDropdown"])
     else:
@@ -531,7 +535,7 @@ def render_recipe(controls, rects, by_id, root_id):
     canvas = Image.new("RGBA", (width, height + 38), (39, 27, 18, 255))
     layers = {"BACKGROUND": 0, "BORDER": 1, "ARTWORK": 2, "OVERLAY": 3, "HIGHLIGHT": 4}
     for c in sorted(controls, key=lambda c: (c["frame_level"], layers.get(c["layer"], 3), c["sublevel"], c["id"])):
-        if not effectively_visible(c, by_id) or c["layer"] == "HIGHLIGHT" or c["type"] == "Frame":
+        if not effectively_visible(c, by_id) or c["layer"] == "HIGHLIGHT" or (c["type"] == "Frame" and c["frame_type"] != "EditBox"):
             continue
         rect = rects.get(c["id"])
         if not rect:
@@ -540,14 +544,15 @@ def render_recipe(controls, rects, by_id, root_id):
         x, y = x - root_x, y - root_y
         overlay = Image.new("RGBA", canvas.size)
         draw = ImageDraw.Draw(overlay)
-        if c["type"] == "FontString" and c["text"]:
+        if (c["type"] == "FontString" or c["frame_type"] == "EditBox") and c["text"]:
             font = font_for(c)
             line_height = max(round(c["font_size"]), font.getbbox("Ag")[3] - font.getbbox("Ag")[1])
             for row, line in enumerate(text_lines(c, font, w)):
                 if row * line_height >= h:
                     break
                 tx = x + (w - font.getlength(line)) / 2 if c["justify"] == "CENTER" else x
-                draw_text_with_shadow(draw, c, (tx, y + row * line_height), line, font)
+                ty = y + (h - line_height) / 2 if c["frame_type"] == "EditBox" else y + row * line_height
+                draw_text_with_shadow(draw, c, (tx, ty), line, font)
         elif c["type"] == "Texture":
             box = tuple(round(v) for v in (x, y, x + w, y + h))
             if box[2] <= box[0] or box[3] <= box[1]:

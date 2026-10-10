@@ -6,6 +6,7 @@ The revised layout is 1400 × 630 logical UI units and scales down to fit the sc
 
 ## Runtime files
 
+- `recipe-page.tga`: custom 1024 × 1024 uncompressed RGBA background for the 540 × 620 Recipe Details card. Bronze/wood framing, torn parchment and faint workshop sketches match the journal. Source: `tests/Source/recipe-page.png`. Created by a `gpt-6-luna` subagent at medium effort using ImageGen. No baked text or controls.
 - `journal-window.tga`: 2048 × 1024 complete journal chrome, with transparent outside corners.
 - `profession-button-framed.tga`: 1024 × 256 darker inset button; the UI crops its transparent padding.
 - `{profession}-page.tga`: six 1024 × 1024 backgrounds displayed at the reference panel proportions.

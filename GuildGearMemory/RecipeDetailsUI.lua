@@ -179,7 +179,7 @@ local function sendCrafterWhisper(details)
 end
 
 local WINDOW_WIDTH, WINDOW_HEIGHT = 540, 620
-local CONTENT_WIDTH, MATERIAL_WIDTH = 484, 448
+local CONTENT_WIDTH, MATERIAL_WIDTH = 468, 424
 
 local function applyTextTheme(label, tone)
     local theme = GGM.UITheme
@@ -219,6 +219,10 @@ local function surface(api, parent, kind, backgroundOwner, sublevel)
         panel.background = backgroundOwner:CreateTexture(nil, "BACKGROUND", nil, sublevel)
     end
     GGM.ApplyJournalSurface(panel, kind or "parchment")
+    if kind == "recipe" then
+        panel.background:SetTexture("Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\recipe-page.tga")
+        return panel
+    end
     border(panel, 0, "border")
     border(panel, 3, "borderSoft")
     return panel
@@ -318,7 +322,7 @@ createCrafterDropdown = function(details, forceScrollable)
         and type(api.UIDropDownMenu_SetWidth) == "function"
     if details.nativeDropdown then
         local dropdown = api.CreateFrame("Frame", "GuildGearMemoryRecipeCrafterDropdown", details, "UIDropDownMenuTemplate")
-        dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 12, 118)
+        dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 20, 180)
         api.UIDropDownMenu_SetWidth(dropdown, CONTENT_WIDTH - 40)
         for _, key in ipairs({ "Left", "Middle", "Right" }) do
             if dropdown[key] and dropdown[key].Hide then dropdown[key]:Hide() end
@@ -363,7 +367,7 @@ createCrafterDropdown = function(details, forceScrollable)
         or nil
     if not dropdown then dropdown = api.CreateFrame("Button", nil, details, "UIPanelButtonTemplate") end
     dropdown:SetSize(CONTENT_WIDTH, 34)
-    dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 28, 112)
+    dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 36, 174)
     if dropdown.label then
         dropdown.label:ClearAllPoints()
         dropdown.label:SetPoint("LEFT", dropdown, "LEFT", 12, 0)
@@ -418,8 +422,8 @@ local function renderMaterials(details, model)
     details.materialStatus:SetText(message)
     if message == "" then details.materialStatus:Hide() else details.materialStatus:Show() end
     details.materialScroll:ClearAllPoints()
-    details.materialScroll:SetPoint("TOPLEFT", details, "TOPLEFT", 36, message == "" and -202 or -234)
-    details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -56, 208)
+    details.materialScroll:SetPoint("TOPLEFT", details, "TOPLEFT", 46, message == "" and -210 or -244)
+    details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -70, 274)
     if #model.materials == 0 then details.materialScroll:Hide() else details.materialScroll:Show() end
     local rowIndex, y = 0, 0
     local function addRow(label, icon, heading)
@@ -448,10 +452,15 @@ local function renderMaterials(details, model)
         y = y + rowHeight
     end
     for _, group in ipairs(model.materials) do
-        local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " x" .. group.quantity
-        if #group.choices > 1 then label = label .. " (choose one)" end
-        addRow(label, nil, true)
-        for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+        if #group.choices == 1 then
+            local choice = group.choices[1]
+            addRow(choice.name .. "  ×" .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false)
+        else
+            local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " ×" .. group.quantity
+            if #group.choices > 1 then label = label .. " (choose one)" end
+            addRow(label, nil, true)
+            for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+        end
     end
     for index = rowIndex + 1, #details.materialRows do details.materialRows[index]:Hide() end
     details.materialContent:SetHeight(math.max(1, y))
@@ -460,9 +469,14 @@ end
 
 local function createWhisperControls(details)
     local api = details.api
-    details.amountInput = api.CreateFrame("EditBox", nil, details, "InputBoxTemplate")
-    details.amountInput:SetSize(44, 24)
-    details.amountInput:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 226, 64)
+    details.amountInput = api.CreateFrame("EditBox", nil, details)
+    details.amountInput:SetSize(52, 30)
+    details.amountInput:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 74, 88)
+    GGM.ApplyJournalSurface(details.amountInput, "button")
+    border(details.amountInput, 0, "border")
+    GGM.ApplyJournalFont(details.amountInput, 16, "bold")
+    details.amountInput:SetTextColor(0.19, 0.125, 0.07, 1)
+    details.amountInput:SetJustifyH("CENTER")
     details.amountInput:SetAutoFocus(false)
     details.amountInput:SetNumeric(true)
     details.amountInput:SetMaxLetters(3)
@@ -472,32 +486,29 @@ local function createWhisperControls(details)
     end)
 
     local function makeAmountButton(label, offset, delta)
-        local button = api.CreateFrame("Button", nil, details, "UIPanelButtonTemplate")
-        button:SetSize(24, 24)
-        button:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", offset, 64)
-        button:SetText(label)
+        local button = GGM.CreateFlatButton(api, details, label, 30, 30, "secondary")
+        button:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", offset, 88)
         button:SetScript("OnClick", function()
             local amount = parseAmount(api, details.amountInput:GetText()) or 1
             details.amountInput:SetText(tostring(math.max(1, math.min(999, amount + delta))))
         end)
         return button
     end
-    details.amountMinusButton = makeAmountButton("-", 198, -1)
-    details.amountPlusButton = makeAmountButton("+", 274, 1)
+    details.amountMinusButton = makeAmountButton("−", 36, -1)
+    details.amountPlusButton = makeAmountButton("+", 134, 1)
 
-    details.whisperButton = api.CreateFrame("Button", nil, details, "UIPanelButtonTemplate")
-    details.whisperButton:SetSize(116, 24)
-    details.whisperButton:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 304, 64)
-    details.whisperButton:SetText("Whisper crafter")
+    details.whisperButton = GGM.CreateFlatButton(api, details, "Whisper crafter", 180, 30, "primary")
+    details.whisperButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 88)
+    GGM.ApplyJournalFont(details.whisperButton.label, 16, "bold")
     details.whisperButton:SetScript("OnClick", function() sendCrafterWhisper(details) end)
 
-    text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 198, 94, 210)
+    text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 36, 126, 130)
         :SetText("Amount")
 
     details.whisperPresenceStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details,
-        "BOTTOMLEFT", 198, 42, 224)
+        "BOTTOMLEFT", 36, 59, CONTENT_WIDTH)
     details.whisperStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details,
-        "BOTTOMLEFT", 198, 8, 224)
+        "BOTTOMLEFT", 36, 25, CONTENT_WIDTH)
     details.whisperPresenceStatus:SetHeight(18)
     details.whisperStatus:SetHeight(32)
 
@@ -526,12 +537,8 @@ local function createWindow(browser, recipe)
     details.api = api
     details.background = details:CreateTexture(nil, "BACKGROUND", nil, -8)
     GGM.ApplyJournalSurface(details, "leather")
-    border(details, 0, "borderDark")
-    border(details, 3, "gold")
-    border(details, 6, "border")
-    details.paper = surface(api, details, "parchment", details, -7)
-    details.paper:SetPoint("TOPLEFT", details, "TOPLEFT", 10, -44)
-    details.paper:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -10, 10)
+    details.paper = surface(api, details, "recipe", details, -7)
+    details.paper:SetAllPoints(details)
     details:SetSize(WINDOW_WIDTH, WINDOW_HEIGHT)
     if details.SetScale and browser.GetScale then details:SetScale(browser:GetScale()) end
     details:SetPoint("CENTER", api.UIParent, "CENTER", 100, 0)
@@ -542,31 +549,34 @@ local function createWindow(browser, recipe)
     details:RegisterForDrag("LeftButton")
     details:SetScript("OnDragStart", function(self) self:StartMoving() end)
     details:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    details.TitleText = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 28, -14, CONTENT_WIDTH - 44)
+    details.TitleText = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 36, -30, CONTENT_WIDTH - 44)
     details.TitleText:SetText("RECIPE DETAILS")
-    applyTextTheme(details.TitleText, "railGold")
+    applyTextTheme(details.TitleText, "muted")
+    GGM.ApplyJournalFont(details.TitleText, 13, "bold")
     details.closeButton = GGM.CreateFlatButton(api, details, "×", 28, 28, "secondary")
-    details.closeButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -12, -9)
+    details.closeButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -24, -22)
     details.closeButton:SetScript("OnClick", function() details:Hide() end)
     details.iconFrame = surface(api, details, "button", details, -5)
     details.iconFrame:SetSize(66, 66)
-    details.iconFrame:SetPoint("TOPLEFT", details, "TOPLEFT", 28, -64)
+    details.iconFrame:SetPoint("TOPLEFT", details, "TOPLEFT", 36, -66)
     details.recipeIcon = details.iconFrame:CreateTexture(nil, "ARTWORK")
     details.recipeIcon:SetPoint("TOPLEFT", details.iconFrame, "TOPLEFT", 6, -6)
     details.recipeIcon:SetPoint("BOTTOMRIGHT", details.iconFrame, "BOTTOMRIGHT", -6, 6)
     details.recipeIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    details.recipeName = text(details, "GameFontNormalLarge", "TOPLEFT", details, "TOPLEFT", 110, -64, 402)
+    details.recipeName = text(details, "GameFontNormalLarge", "TOPLEFT", details, "TOPLEFT", 118, -66, 374)
     GGM.ApplyJournalFont(details.recipeName, 24, "bold")
     details.recipeName:SetHeight(56)
     if details.recipeName.SetMaxLines then details.recipeName:SetMaxLines(2) end
-    details.professionName = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 110, -124, 402)
+    details.professionName = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 118, -124, 374)
     applyTextTheme(details.professionName, "muted")
+    GGM.ApplyJournalFont(details.professionName, 16, "italic")
     details.materialPanel = surface(api, details, "parchment", details, -6)
-    details.materialPanel:SetPoint("TOPLEFT", details, "TOPLEFT", 22, -154)
-    details.materialPanel:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -22, 196)
-    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 36, -168, 448)
+    details.materialPanel:SetPoint("TOPLEFT", details, "TOPLEFT", 32, -164)
+    details.materialPanel:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -32, 262)
+    details.materialPanel.background:SetColorTexture(0.93, 0.78, 0.51, 0.18)
+    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 46, -180, 424)
     details.materialHeading:SetText("CRAFTING MATERIALS")
-    details.materialStatus = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 36, -194, 448)
+    details.materialStatus = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 46, -208, 424)
     details.materialStatus:SetHeight(32)
     applyTextTheme(details.materialStatus, "muted")
     details.materialScroll = api.CreateFrame("ScrollFrame", nil, details, "UIPanelScrollFrameTemplate")
@@ -576,13 +586,13 @@ local function createWindow(browser, recipe)
     details.materialContent:SetSize(MATERIAL_WIDTH, 1)
     details.materialScroll:SetScrollChild(details.materialContent)
     details.materialRows, details.crafters = {}, sortedCrafters(recipe)
-    details.crafterHeading = text(details, "GameFontNormal", "BOTTOMLEFT", details, "BOTTOMLEFT", 28, 160, CONTENT_WIDTH)
+    details.crafterHeading = text(details, "GameFontNormal", "BOTTOMLEFT", details, "BOTTOMLEFT", 36, 226, CONTENT_WIDTH)
     details.crafterHeading:SetText("KNOWN CRAFTERS")
-    details.crafterStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 28, 62, 158)
-    details.crafterStatus:SetHeight(40)
+    details.crafterStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 198, 124, 306)
+    details.crafterStatus:SetHeight(42)
     applyTextTheme(details.crafterStatus, "muted")
-    details.cachedStatus = text(details, "GameFontDisableSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 28, 24, 158)
-    details.cachedStatus:SetHeight(32)
+    details.cachedStatus = text(details, "GameFontDisableSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 36, 208, CONTENT_WIDTH)
+    details.cachedStatus:SetHeight(16)
     details.cachedStatus:SetText("Recipe knowledge is cached.")
     applyTextTheme(details.cachedStatus, "muted")
     createWhisperControls(details)
