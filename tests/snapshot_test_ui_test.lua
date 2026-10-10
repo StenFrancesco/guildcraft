@@ -759,7 +759,8 @@ T.test("recipe details display quantities optional groups and alternative choice
     T.assertEqual(details.materialRows[2].label.text, "Copper")
     T.assertEqual(details.materialRows[3].label.text, "Fine Copper")
     T.assertTrue(string.find(details.materialRows[4].label.text, "Optional", 1, true) ~= nil)
-    T.assertEqual(details.materialRows[5].label.text, "Polish")
+    T.assertTrue(string.find(details.materialRows[4].label.text, "Polish", 1, true) ~= nil)
+    T.assertEqual(#details.materialRows, 4, "single-choice materials should not repeat the item in a second row")
 end)
 
 T.test("crafter dropdown sorts saved owners and selection displays saved knowledge date", function()
