@@ -171,6 +171,53 @@ T.test("missing gear backend preserves the browser slot layout and status comman
     T.assertNil(GGM.db.characters)
 end)
 
+T.test("backend initialization failure is reported without disabling profession saves or changing gear", function()
+    local existingRecord = { sentinel = true }
+    local savedGear = {
+        schemaVersion = 7,
+        characters = { Existing = existingRecord },
+        localCharacters = { Existing = true },
+    }
+    local c = client(savedGear)
+    local databaseCalls = 0
+    c.api.DysgearMemoryAPI.GetBackend = function() error("backend initialization failed") end
+    c.api.DysgearMemoryAPI.GetDatabase = function()
+        databaseCalls = databaseCalls + 1
+        return savedGear
+    end
+    local messages = {}
+    c.api.SlashCmdList = {}
+    c.api.DEFAULT_CHAT_FRAME = { AddMessage = function(_, message) messages[#messages + 1] = message end }
+
+    local GGM = display(c)
+    T.assertEqual(GGM.gearStartupError, "gear-backend-call-failed")
+    T.assertNil(GGM.gearBackend)
+    T.assertNil(GGM.gearDB)
+    T.assertNil(GGM.db.characters)
+    T.assertEqual(type(GGM.db.professions), "table")
+    T.assertEqual(databaseCalls, 0)
+    T.assertTrue(c.api.DysgearMemoryDB == savedGear)
+    T.assertTrue(savedGear.characters.Existing == existingRecord)
+
+    c.api.SlashCmdList.GUILDGEARMEMORY("status")
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Gear storage: unavailable", 1, true) ~= nil)
+    T.assertTrue(output:find("DysgearMemory could not provide a compatible gear backend", 1, true) ~= nil)
+    T.assertTrue(output:find("saved gear was left unchanged", 1, true) ~= nil)
+
+    c:event("PLAYER_LOGIN")
+    local identity = assert(GGM.BuildPlayerIdentity(c.api))
+    local savedProfession, saveErr = GGM.SaveProfessionSnapshot(GGM.db, identity, {
+        complete = true, professionID = 164, professionName = "Blacksmithing",
+        capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER,
+        status = GGM.PROFESSION_CACHE_STATUS,
+        recipes = { { recipeID = 41234, name = "Copper Bracers" } },
+    }, { guildMembershipVerified = true })
+    T.assertTrue(savedProfession, saveErr)
+    T.assertNotNil(c.api.GuildGearMemoryDB.professions[identity.key])
+    T.assertTrue(savedGear.characters.Existing == existingRecord)
+end)
+
 T.test("profession ownership failure does not affect independent gear tracking", function()
     local c = client()
     c.api.SlashCmdList = {}

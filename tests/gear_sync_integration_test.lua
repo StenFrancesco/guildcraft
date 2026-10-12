@@ -30,6 +30,12 @@ local function guild()
             "StableGearTracker", "LocalGearMemory", "SyncProtocol", "SyncTransport", "GuildSync" }) do
             T.loadUnitModule(module, G)
         end
+        -- This suite isolates sync behavior; the real adapter contract is tested separately.
+        G.AttachGearBackend = function(backend)
+            if type(backend) ~= "table" then return false, "gear-backend-invalid" end
+            G.gearBackend = backend
+            return true, nil
+        end
         local client = { G = G, identity = { key = name .. "-Silvermoon", name = name, realm = "Silvermoon", guid = name }, items = {} }
         for _, slot in ipairs(G.TRACKED_SLOTS) do client.items[slot.inventorySlotID] = 1000 + slot.inventorySlotID end
         local api = {

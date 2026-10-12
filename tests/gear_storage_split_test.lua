@@ -2,9 +2,23 @@ local T = require("tests.testlib")
 
 local function loadMainModules()
     local GGM = {}
-    for _, file in ipairs({ "Constants", "GearData", "GearSnapshot", "ProfessionSnapshot", "ProfessionIndex", "Storage", "SavedDatabases" }) do
+    for _, file in ipairs({ "Constants", "CharacterIdentity" }) do
         T.loadUnitModule(file, GGM)
     end
+
+    local api = setmetatable({}, { __index = _G })
+    api._G = api
+    local chunk = assert(loadfile("GuildGearMemory/GearBackend.lua"))
+    setfenv(chunk, api)
+    chunk("GuildGearMemory", GGM)
+
+    for _, file in ipairs({
+        "GearData", "GearSnapshot", "Storage", "SyncProtocol", "SyncTransport", "GuildSync",
+        "ProfessionSnapshot", "ProfessionIndex",
+    }) do
+        T.loadUnitModule(file, GGM)
+    end
+    T.loadUnitModule("SavedDatabases", GGM)
     return GGM
 end
 
@@ -241,6 +255,47 @@ T.test("unsupported and failing gear APIs degrade gracefully without replacing s
         T.assertNil(gear)
         T.assertEqual(gearErr, companion.expected)
         T.assertTrue(saved.sentinel)
+    end
+end)
+
+T.test("unusable companion backends are rejected before accepting saved gear", function()
+    local GGM = loadMainModules()
+    local savedGear = {
+        schemaVersion = 7,
+        characters = { Existing = { sentinel = true } },
+        localCharacters = { Existing = true },
+    }
+    local cases = {
+        { name = "nil backend", getBackend = function() return nil end, expected = "gear-backend-invalid" },
+        { name = "throwing backend", getBackend = function() error("backend initialization failed") end, expected = "gear-backend-call-failed" },
+        { name = "wrong backend type", getBackend = function() return "not-a-backend" end, expected = "gear-backend-invalid" },
+        { name = "incomplete backend", getBackend = function() return {} end, expected = "gear-backend-incompatible" },
+    }
+
+    for _, case in ipairs(cases) do
+        local databaseCalls = 0
+        local professions = assert(GGM.InitializeDatabase(nil))
+        local api = {
+            GuildGearMemoryDB = professions,
+            DysgearMemoryDB = savedGear,
+            DysgearMemoryAPI = {
+                schemaVersion = 2,
+                GetBackend = case.getBackend,
+                GetDatabase = function()
+                    databaseCalls = databaseCalls + 1
+                    return savedGear
+                end,
+            },
+        }
+        local runtime, err, _, gear, gearErr = GGM.InitializeSavedDatabases(api)
+
+        T.assertNil(err, case.name .. " should not block profession startup")
+        T.assertEqual(gearErr, case.expected, case.name .. " should be reported")
+        T.assertNil(gear, case.name .. " must not connect its database")
+        T.assertNil(runtime.characters, case.name .. " must not expose gear records")
+        T.assertEqual(type(runtime.professions), "table", case.name .. " must preserve profession storage")
+        T.assertEqual(databaseCalls, 0, case.name .. " must be rejected before reading its database")
+        T.assertTrue(savedGear.characters.Existing.sentinel, case.name .. " must preserve saved gear")
     end
 end)
 

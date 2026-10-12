@@ -20,6 +20,63 @@ GGM.SYNC_PREFIX = "GC_GEAR"
 GGM.GetCharacterRecord = function() return nil, "database-invalid" end
 GGM.IsLocalCharacter = function() return false end
 
+local REQUIRED_BACKEND_FUNCTIONS = {
+    "BuildItemHyperlink",
+    "BuildPlayerIdentity",
+    "GetCharacterRecord",
+    "GetStoredGearSlot",
+    "HasUnresolvedLocalGearMarker",
+    "IsLocalCharacter",
+    "PurgeDepartedGearRecords",
+    "RemoveLocalGearMarker",
+    "RequestCompleteSnapshot",
+    "ValidateStoredGear",
+}
+
+function GGM.AttachGearBackend(backend)
+    GGM.gearBackend = nil
+    if type(backend) ~= "table" then
+        return false, "gear-backend-invalid"
+    end
+
+    local valid, compatible = pcall(function()
+        if rawget(backend, "SCHEMA_VERSION") ~= GGM.SCHEMA_VERSION
+            or rawget(backend, "SYNC_PREFIX") ~= GGM.SYNC_PREFIX
+            or type(rawget(backend, "TRACKED_SLOTS")) ~= "table" then
+            return false
+        end
+        for _, key in ipairs(REQUIRED_BACKEND_FUNCTIONS) do
+            if type(rawget(backend, key)) ~= "function" then
+                return false
+            end
+        end
+        return true
+    end)
+    if not valid or not compatible then
+        return false, "gear-backend-incompatible"
+    end
+
+    local exported = {}
+    local copied, copyErr = pcall(function()
+        for key, value in pairs(backend) do
+            if type(key) == "string"
+                and key ~= "BuildPlayerIdentity"
+                and (type(value) == "function" or key:match("^[A-Z_]+$")) then
+                exported[key] = value
+            end
+        end
+    end)
+    if not copied then
+        return false, "gear-backend-incompatible"
+    end
+
+    GGM.gearBackend = backend
+    for key, value in pairs(exported) do
+        GGM[key] = value
+    end
+    return true, nil
+end
+
 function GGM.RefreshGearBackendState()
     local backend = GGM.gearBackend
     GGM.guildSync = backend and backend.guildSync or nil
@@ -28,19 +85,6 @@ function GGM.RefreshGearBackendState()
     GGM.lastSyncReceiveError = backend and backend.lastSyncReceiveError or nil
     GGM.lastGearTrackingError = backend and backend.lastGearTrackingError or GGM.gearStartupError
     GGM.lastCaptureError = backend and backend.lastCaptureError or nil
-end
-
-local companion = _G.DysgearMemoryAPI
-if type(companion) == "table" and companion.schemaVersion == 2 and type(companion.GetBackend) == "function" then
-    local ok, backend = pcall(companion.GetBackend)
-    if ok and type(backend) == "table" then
-        GGM.gearBackend = backend
-        for key, value in pairs(backend) do
-            if key ~= "BuildPlayerIdentity" and (type(value) == "function" or key:match("^[A-Z_]+$")) then
-                GGM[key] = value
-            end
-        end
-    end
 end
 
 _G.GuildGearMemoryGearChanged = GGM.RefreshGearBackendState

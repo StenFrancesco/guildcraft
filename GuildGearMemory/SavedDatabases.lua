@@ -1,14 +1,31 @@
 local _, GGM = ...
 
 local function readGearDatabase(api)
-    local companion = api.DysgearMemoryAPI
+    local companion = rawget(api, "DysgearMemoryAPI")
     if type(companion) ~= "table" then
-        return nil, api.DysgearMemoryError or "gear-companion-missing"
+        return nil, rawget(api, "DysgearMemoryError") or "gear-companion-missing"
     end
-    if companion.schemaVersion ~= 2 or type(companion.GetDatabase) ~= "function" or type(companion.GetBackend) ~= "function" then
+    local schemaVersion = rawget(companion, "schemaVersion")
+    local getDatabase = rawget(companion, "GetDatabase")
+    local getBackend = rawget(companion, "GetBackend")
+    if schemaVersion ~= 2 or type(getDatabase) ~= "function" or type(getBackend) ~= "function" then
         return nil, "gear-companion-unsupported"
     end
-    local ok, database = pcall(companion.GetDatabase)
+    if type(GGM.AttachGearBackend) ~= "function" then
+        return nil, "gear-backend-incompatible"
+    end
+
+    GGM.gearBackend = nil
+    local backendCallOk, backend = pcall(getBackend)
+    if not backendCallOk then
+        return nil, "gear-backend-call-failed"
+    end
+    local backendAttached, backendErr = GGM.AttachGearBackend(backend)
+    if not backendAttached then
+        return nil, backendErr
+    end
+
+    local ok, database = pcall(getDatabase)
     if not ok or type(database) ~= "table" then return nil, "gear-database-unavailable" end
     if database.schemaVersion ~= GGM.SCHEMA_VERSION then
         return nil, "unsupported-gear-schema-version:" .. tostring(database.schemaVersion)

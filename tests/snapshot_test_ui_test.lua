@@ -1501,14 +1501,22 @@ T.test("guild gear browser distinguishes empty Mine and Guild views from unmatch
 end)
 
 T.test("gear browser explains missing or unavailable gear storage while other tabs remain usable", function()
-    for _, reason in ipairs({ "gear-companion-missing", "gear-database-invalid" }) do
+    for _, reason in ipairs({
+        "gear-companion-missing", "gear-database-invalid", "gear-backend-call-failed",
+        "gear-backend-invalid", "gear-backend-incompatible",
+    }) do
         local GGM = loadUI()
         local db = makeDB(GGM)
         db.gearUnavailableReason = reason
         local frame = showBrowser(GGM, makeBrowserAPI(), db)
-        local expected = reason == "gear-companion-missing"
-            and "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
-            or "Gear storage is unavailable. Check /ggm status for details."
+        local expected
+        if reason == "gear-companion-missing" then
+            expected = "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+        elseif reason:match("^gear%-backend%-") then
+            expected = "Gear backend unavailable. Check /ggm status for details."
+        else
+            expected = "Gear storage is unavailable. Check /ggm status for details."
+        end
         T.assertEqual(frame.detailEmpty.text, expected)
         T.assertEqual(frame.listEmpty.text, "Gear unavailable")
         GGM.SelectGuildGearBrowserTab(frame, "Professions")
@@ -1516,6 +1524,24 @@ T.test("gear browser explains missing or unavailable gear storage while other ta
         GGM.SelectGuildGearBrowserTab(frame, "Bank")
         T.assertEqual(frame.activeTab, "Bank")
     end
+end)
+
+T.test("gear backend status explains initialization failures without suggesting a data reset", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = {
+        SlashCmdList = {},
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, message) messages[#messages + 1] = message end },
+    }
+    GGM.gearStartupError = "gear-backend-call-failed"
+
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("DysgearMemory could not provide a compatible gear backend", 1, true) ~= nil)
+    T.assertTrue(output:find("saved gear was left unchanged", 1, true) ~= nil)
+    T.assertTrue(output:find("DysgearMemory.lua", 1, true) == nil)
 end)
 
 T.test("guild gear browser hides the model stage when detail has no valid record", function()

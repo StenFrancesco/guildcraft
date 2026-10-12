@@ -6,6 +6,9 @@ local function gearUnavailableMessage(db)
     if reason == "gear-companion-missing" then
         return "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
     end
+    if type(reason) == "string" and reason:match("^gear%-backend%-") then
+        return "Gear backend unavailable. Check /ggm status for details."
+    end
     return "Gear storage is unavailable. Check /ggm status for details."
 end
 
@@ -1828,6 +1831,9 @@ local function printAddonStatus(api)
         emit("Gear storage: unavailable (" .. tostring(GGM.gearStartupError) .. ")")
         if GGM.gearStartupError == "gear-companion-missing" then
             emit("Install and enable DysgearMemory beside GuildGearMemory in Interface/AddOns.")
+        elseif type(GGM.gearStartupError) == "string" and GGM.gearStartupError:match("^gear%-backend%-") then
+            emit("DysgearMemory could not provide a compatible gear backend (" .. GGM.gearStartupError
+                .. "). Check that DysgearMemory is enabled and up to date; saved gear was left unchanged.")
         else
             emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/DysgearMemory.lua (DysgearMemoryDB). Close WoW and back up that file before any manual reset.")
         end
