@@ -3,9 +3,11 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
     return GGM
 end
 
@@ -38,7 +40,7 @@ end
 
 T.test("profession browser reads saved recipes from the schema seven recipe index", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local snapshot = indexedSnapshot(GGM, 164, 41234)
     snapshot.professionName = "Blacksmithing"
@@ -67,7 +69,7 @@ end)
 
 T.test("first-run database creates profession index state", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
 
     T.assertEqual(db.schemaVersion, 7)
     T.assertEqual(db.nextLocalCharacterID, 1)
@@ -182,7 +184,7 @@ end)
 
 T.test("startup fails closed on a malformed registry key without catalog mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local canonical = { identity = identity, snapshots = { [164] = indexedMetadata(GGM, 164) } }
     db.professions[identity.key] = canonical
@@ -195,7 +197,7 @@ T.test("startup fails closed on a malformed registry key without catalog mutatio
     local reverseRegistry = db.localCharacterIDByGUID
     local catalog = db.professionRecipeIndex
 
-    local initialized, err = GGM.InitializeDatabase(db)
+    local initialized, err = T.initializeDatabase(GGM, db)
 
     T.assertNil(initialized)
     T.assertEqual(err, "profession-index-invalid")
@@ -208,7 +210,7 @@ end)
 
 T.test("startup fails closed on a malformed reverse registry value without catalog mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local canonical = { identity = identity, snapshots = { [164] = indexedMetadata(GGM, 164) } }
     db.professions[identity.key] = canonical
@@ -219,7 +221,7 @@ T.test("startup fails closed on a malformed reverse registry value without catal
     local reverseRegistry = db.localCharacterIDByGUID
     local catalog = db.professionRecipeIndex
 
-    local initialized, err = GGM.InitializeDatabase(db)
+    local initialized, err = T.initializeDatabase(GGM, db)
 
     T.assertNil(initialized)
     T.assertEqual(err, "profession-index-invalid")
@@ -240,7 +242,7 @@ T.test("startup fails closed on malformed repair state without mutation", functi
 
     for _, malformed in ipairs(malformedStates) do
         local GGM = loadModules()
-        local db = assert(GGM.InitializeDatabase(nil))
+        local db = assert(T.initializeDatabase(GGM, nil))
         db.professionIndexRepairCandidates = { ["keep"] = { localID = 9 } }
         db.professionIndexRepairNeeded = false
         if malformed.value == nil then
@@ -253,7 +255,7 @@ T.test("startup fails closed on malformed repair state without mutation", functi
         local professions = db.professions
         local catalog = db.professionRecipeIndex
 
-        local initialized, err = GGM.InitializeDatabase(db)
+        local initialized, err = T.initializeDatabase(GGM, db)
 
         T.assertNil(initialized)
         T.assertEqual(err, "profession-index-invalid")
@@ -266,7 +268,7 @@ end)
 
 T.test("unsafe profession ID high-water fails closed without replacing canonical data", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local canonical = { identity = identity, snapshots = { [164] = indexedMetadata(GGM, 164) } }
     db.professions[identity.key] = canonical
@@ -275,7 +277,7 @@ T.test("unsafe profession ID high-water fails closed without replacing canonical
     db.nextLocalCharacterID = 1e100
 
     local priorCatalog = db.professionRecipeIndex
-    local initialized, err = GGM.InitializeDatabase(db)
+    local initialized, err = T.initializeDatabase(GGM, db)
 
     T.assertNil(initialized)
     T.assertEqual(err, "profession-index-invalid")
@@ -285,7 +287,7 @@ end)
 
 T.test("local profession IDs are stable and retired IDs are not reused", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local aliceID = assert(GGM.EnsureProfessionCharacter(db, {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }))
@@ -301,7 +303,7 @@ end)
 
 T.test("unsupported or malformed recipe catalog fails closed without replacement", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local id = assert(GGM.EnsureProfessionCharacter(db, identity))
     db.professions[identity.key] = { identity = identity, snapshots = {} }
@@ -352,7 +354,7 @@ T.test("profession index rejects old sets and malformed crafter ID lists", funct
     }
 
     for _, case in ipairs(cases) do
-        local db = assert(GGM.InitializeDatabase(nil))
+        local db = assert(T.initializeDatabase(GGM, nil))
         local alice = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
         local bob = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
         assert(GGM.EnsureProfessionCharacter(db, alice))
@@ -378,7 +380,7 @@ end)
 
 T.test("stale registry key fails full validation without catalog mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local localID = assert(GGM.EnsureProfessionCharacter(db, identity))
     db.professionCharacters[localID].key = "OldName-Silvermoon"
@@ -399,7 +401,7 @@ end)
 
 T.test("profession recipe lookup resolves active local IDs through the named catalog", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     db.professions[identity.key] = { identity = identity, snapshots = {} }
     local id = assert(GGM.EnsureProfessionCharacter(db, identity))
@@ -424,7 +426,7 @@ end)
 
 T.test("full index validation preserves the authoritative named catalog", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     db.professions[identity.key] = { identity = identity, snapshots = {} }
     local id = assert(GGM.EnsureProfessionCharacter(db, identity))
@@ -449,7 +451,7 @@ end)
 
 T.test("saving a new GUID does not claim snapshots from an ownerless legacy row", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local oldSnapshot = indexedSnapshot(GGM, 164, 100)
     db.professions[identity.key] = {
@@ -468,7 +470,7 @@ end)
 
 T.test("duplicate canonical GUIDs are preserved and omitted from the index", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local guid = "Player-1-A"
     local first = indexedIdentity(GGM, "Alice-Silvermoon", guid)
     local second = indexedIdentity(GGM, "Alice-ArgentDawn", guid)
@@ -485,7 +487,7 @@ end)
 
 T.test("registry disagreement is repaired from unambiguous canonical GUIDs without reusing old IDs", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     db.professions["Alice-Silvermoon"] = {
         identity = {
             key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
@@ -510,7 +512,7 @@ end)
 
 T.test("overlapping canonical snapshots for one GUID remain excluded and flagged for repair", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local sharedGUID = "Player-1-A"
     db.professions = {
         ["Alice-Silvermoon"] = {
@@ -532,7 +534,7 @@ end)
 
 T.test("duplicate canonical records with disjoint professions remain untouched and unavailable", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local sharedGUID = "Player-1-A"
     db.professions = {
         ["Alice-Silvermoon"] = {
@@ -561,7 +563,7 @@ end)
 
 T.test("verified save recovers duplicate GUID records when registry provenance is trusted", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
     local sourceSnapshot = indexedSnapshot(GGM, 164, 100)
@@ -613,7 +615,7 @@ end)
 
 T.test("registry validation keeps persisted repair candidate IDs reserved when counter rolls back", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local seedIdentity = indexedIdentity(GGM, "Charlie-Silvermoon", "Player-1-C")
     assert(GGM.SaveProfessionSnapshot(db, seedIdentity, indexedSnapshot(GGM, 164, 50), {
         guildMembershipVerified = true,
@@ -665,7 +667,7 @@ end)
 
 T.test("successful registry repair keeps absent repair candidate IDs reserved after counter rollback", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local seedIdentity = indexedIdentity(GGM, "Charlie-Silvermoon", "Player-1-C")
     assert(GGM.SaveProfessionSnapshot(db, seedIdentity, indexedSnapshot(GGM, 164, 50), {
         guildMembershipVerified = true,
@@ -718,7 +720,7 @@ end)
 
 T.test("duplicate GUID records without registry provenance remain fail-closed", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
     local sourceRecord = { identity = sourceIdentity, snapshots = { [164] = indexedMetadata(GGM, 164) } }
@@ -743,7 +745,7 @@ end)
 
 T.test("verified save keeps duplicate GUID records blocked when a third record appears", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
     local thirdIdentity = indexedIdentity(GGM, "Ally-Silvermoon", sourceIdentity.guid)
@@ -778,7 +780,7 @@ end)
 
 T.test("verified save does not recover duplicate GUID records with overlapping professions", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local sourceIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local destinationIdentity = indexedIdentity(GGM, "Alicia-Silvermoon", sourceIdentity.guid)
     assert(GGM.SaveProfessionSnapshot(db, sourceIdentity, indexedSnapshot(GGM, 164, 100), {
@@ -810,7 +812,7 @@ end)
 
 T.test("near-exhausted profession ID counter fails closed and preserves canonical data", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local firstIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local secondIdentity = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
     local firstRecord = { identity = firstIdentity, snapshots = { [164] = indexedMetadata(GGM, 164) } }
@@ -819,7 +821,7 @@ T.test("near-exhausted profession ID counter fails closed and preserves canonica
     db.professions[secondIdentity.key] = secondRecord
     local priorCounter = 2 ^ 53 - 2
     db.nextLocalCharacterID = priorCounter
-    local initialized, err = GGM.InitializeDatabase(db)
+    local initialized, err = T.initializeDatabase(GGM, db)
 
     T.assertNil(initialized)
     T.assertEqual(err, "profession-index-invalid")
@@ -833,7 +835,7 @@ end)
 
 T.test("canonical GUID record with mismatched storage key fails full validation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local validIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local invalidIdentity = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
     db.professions[validIdentity.key] = {
@@ -860,7 +862,7 @@ end)
 
 T.test("named catalog lookup includes inactive crafters without current roster membership", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local inactiveIdentity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local activeIdentity = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
     local inactiveID = assert(GGM.EnsureProfessionCharacter(db, inactiveIdentity))
@@ -893,7 +895,7 @@ end)
 
 T.test("registry validation preserves numeric IDs reserved only by the reverse map", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local reservedID = 37
     local canonical = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
     db.localCharacterIDByGUID["Player-1-Retired"] = reservedID
@@ -915,7 +917,7 @@ end)
 
 T.test("registry validation preserves authoritative recipe membership and refuses ambiguous lookup", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local canonical = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     db.professions[canonical.key] = { identity = canonical, snapshots = {} }
     local localID = assert(GGM.EnsureProfessionCharacter(db, canonical))
@@ -953,7 +955,7 @@ end)
 
 T.test("exhausted registry validation preserves authoritative recipe catalog and version", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local first = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local second = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
     db.professions[first.key] = { identity = first, snapshots = {} }
@@ -986,7 +988,7 @@ end)
 
 T.test("complete recipe replacement stores one name and sorted shared crafter list", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local alice = {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }
@@ -1018,7 +1020,7 @@ end)
 
 T.test("recipe crafter lists preserve nonconsecutive local IDs in ascending order", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local alice = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local skipped = indexedIdentity(GGM, "Skipped-Silvermoon", "Player-1-S")
     local charlie = indexedIdentity(GGM, "Charlie-Silvermoon", "Player-1-C")
@@ -1047,7 +1049,7 @@ end)
 
 T.test("repeated profession reconciliation does not duplicate a crafter ID", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
     local localID = assert(GGM.EnsureProfessionCharacter(db, identity))
     local capture = indexedSnapshot(GGM, 164, 100)
@@ -1063,7 +1065,7 @@ end)
 
 T.test("complete replacement removes only that characters stale memberships", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local alice = {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }
@@ -1109,7 +1111,7 @@ end)
 
 T.test("existing catalog entry keeps its stored recipe name", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local aliceID = assert(GGM.EnsureProfessionCharacter(db, {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }))
@@ -1143,7 +1145,7 @@ end)
 
 T.test("malformed existing recipe catalog fails reconciliation without mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local aliceID = assert(GGM.EnsureProfessionCharacter(db, {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }))
@@ -1174,7 +1176,7 @@ end)
 
 T.test("profession recipe reconciliation accepts complete transient captures", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local alice = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local aliceID = assert(GGM.EnsureProfessionCharacter(db, alice))
     assert(GGM.SetProfessionCharacterActive(db, aliceID, true))
@@ -1202,7 +1204,7 @@ end)
 
 T.test("incremental profession reconciliation removes only one character from one profession", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local alice = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local bob = { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B" }
     local aliceID = assert(GGM.EnsureProfessionCharacter(db, alice))
@@ -1255,7 +1257,7 @@ end
 
 T.test("complete roster purges departed non-local gear profession registry and recipe references", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local localAlt = indexedIdentity(GGM, "LocalAlt-Silvermoon", "Player-1-LOCAL")
     local departed = indexedIdentity(GGM, "Departed-Silvermoon", "Player-1-GONE")
 
@@ -1312,7 +1314,7 @@ end)
 
 T.test("complete roster purges an absent non-local gear-only record", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "GearOnly-Silvermoon", "Player-1-GEAR")
     db.characters[identity.key] = {
         complete = true,
@@ -1332,7 +1334,7 @@ end)
 
 T.test("complete roster retains unresolved legacy local records without migration", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local key = "UnresolvedLocal-Silvermoon"
     local gearIdentity = indexedIdentity(GGM, key, "Player-1-LEGACY-GEAR")
     local professionIdentity = indexedIdentity(GGM, key, "Player-1-LEGACY-PROFESSION")
@@ -1366,7 +1368,7 @@ end)
 
 T.test("complete roster keeps an absent locally owned gear-only record", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "LocalGear-Silvermoon", "Player-1-LOCALGEAR")
     db.characters[identity.key] = {
         complete = true,
@@ -1387,7 +1389,7 @@ end)
 
 T.test("incomplete roster does not purge cached non-local data", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = indexedIdentity(GGM, "Cached-Silvermoon", "Player-1-CACHED")
     local capture = indexedSnapshot(GGM, 164, 100)
 
@@ -1422,7 +1424,7 @@ end)
 
 T.test("not being in a guild purges non-local data but retains local data", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local localAlt = indexedIdentity(GGM, "LocalAlt-Silvermoon", "Player-1-LOCAL")
     local cachedGuild = indexedIdentity(GGM, "Guildie-Silvermoon", "Player-1-GUILD")
 
@@ -1444,7 +1446,7 @@ end)
 
 T.test("guild roster reconciliation keeps absent locally owned characters available", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -1472,7 +1474,7 @@ end)
 
 T.test("inactive saved characters remain recipe crafters without invalidating the catalog", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local capture = {
         complete = true,
@@ -1500,7 +1502,7 @@ end)
 
 T.test("guild roster departure changes activity without changing recipe catalog", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local capture = {
         complete = true,
@@ -1533,7 +1535,7 @@ end)
 
 T.test("guild roster reconciliation fails closed when a same-key registry entry disagrees with canonical identity", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local key = "Alice-Silvermoon"
     local catalog = db.professionRecipeIndex
     db.professions[key] = {
@@ -1571,7 +1573,7 @@ end)
 
 T.test("real guild roster reconciliation sends no addon messages or gear updates", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -1607,7 +1609,7 @@ end)
 
 T.test("incomplete guild roster leaves cached activity and index unchanged", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -1638,7 +1640,7 @@ end)
 
 T.test("empty roster while still in a guild is unavailable, not an authoritative departure", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -1662,7 +1664,7 @@ end)
 
 T.test("guild roster reconciliation reactivates a known GUID and preserves merged records on rename", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -1718,7 +1720,7 @@ end)
 
 T.test("failed roster rename preserves the old key and inactive state on a collision", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -2374,7 +2376,7 @@ end)
 
 T.test("roster rename rejects a third canonical same-GUID record without mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,

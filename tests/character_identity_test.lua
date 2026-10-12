@@ -2,7 +2,7 @@ local T = require("tests.testlib")
 
 local function loadModule()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("DysgearMemory/CharacterIdentity.lua", GGM)
     return GGM
 end
 

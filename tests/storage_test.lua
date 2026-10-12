@@ -3,11 +3,13 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearData.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
     return GGM
 end
 
@@ -40,7 +42,7 @@ end
 T.test("database initialization creates schema seven with GUID ownership state", function()
     local GGM = loadModules()
 
-    local db, err = GGM.InitializeDatabase(nil)
+    local db, err = T.initializeDatabase(GGM, nil)
 
     T.assertNil(err)
     T.assertEqual(db.schemaVersion, 7)
@@ -82,7 +84,7 @@ T.test("schema four is rejected without mutating the old database", function()
     }
     local oldRecipes = existing.professions["Alice-Silvermoon"].snapshots[164].recipes
 
-    local db, err = GGM.InitializeDatabase(existing)
+    local db, err = T.initializeDatabase(GGM, existing)
 
     T.assertNil(db)
     T.assertEqual(err, "unsupported-schema-version:4")
@@ -93,12 +95,12 @@ end)
 T.test("schema five and six require manual reset without mutating the old database", function()
     local GGM = loadModules()
     for _, schemaVersion in ipairs({ 5, 6 }) do
-        local existing = assert(GGM.InitializeDatabase(nil))
+        local existing = assert(T.initializeDatabase(GGM, nil))
         existing.schemaVersion = schemaVersion
         existing.marker = { keep = true }
         local oldMarker = existing.marker
 
-        local db, err = GGM.InitializeDatabase(existing)
+        local db, err = T.initializeDatabase(GGM, existing)
 
         T.assertNil(db)
         T.assertEqual(err, "unsupported-schema-version:" .. tostring(schemaVersion))
@@ -113,7 +115,7 @@ T.test("schema one through four are rejected without automatic migration", funct
         local existing = { schemaVersion = schemaVersion, marker = { keep = true } }
         local oldMarker = existing.marker
 
-        local db, err = GGM.InitializeDatabase(existing)
+        local db, err = T.initializeDatabase(GGM, existing)
 
         T.assertNil(db)
         T.assertEqual(err, "unsupported-schema-version:" .. tostring(schemaVersion))
@@ -124,10 +126,10 @@ end)
 
 T.test("schema seven rejects malformed GUID ownership state", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     db.localCharacterGUIDs = { ["Player-1-A"] = false }
 
-    local initialized, err = GGM.InitializeDatabase(db)
+    local initialized, err = T.initializeDatabase(GGM, db)
 
     T.assertNil(initialized)
     T.assertEqual(err, "database-local-character-guids-invalid")
@@ -135,7 +137,7 @@ end)
 
 T.test("GUID ownership marks and queries only explicit valid GUIDs", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
 
     T.assertFalse(GGM.IsLocalCharacterGUID(db, "Player-1-A"))
     T.assertTrue(GGM.MarkLocalCharacterGUID(db, "Player-1-A"))
@@ -151,7 +153,7 @@ end)
 
 T.test("saving a player profession does not infer local GUID ownership", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = {
         key = "Alice-Silvermoon",
         name = "Alice",
@@ -217,7 +219,7 @@ T.test("schema seven rejects version two profession crafter sets without mutatio
         professionIndexRepairNeeded = false,
     }
 
-    local db, err = GGM.InitializeDatabase(existing)
+    local db, err = T.initializeDatabase(GGM, existing)
 
     T.assertNil(db)
     T.assertEqual(err, "profession-index-invalid")
@@ -236,7 +238,7 @@ T.test("schema seven initialization rejects missing required tables without synt
         professions = {},
     }
 
-    local db, err = GGM.InitializeDatabase(existing)
+    local db, err = T.initializeDatabase(GGM, existing)
 
     T.assertNil(db)
     T.assertEqual(err, "profession-index-invalid")
@@ -245,7 +247,7 @@ end)
 
 T.test("schema seven catalog corruption fails closed without clearing authoritative data", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local capture = {
         complete = true,
@@ -261,7 +263,7 @@ T.test("schema seven catalog corruption fails closed without clearing authoritat
     local entry = catalog[164][100]
     entry.crafters = false
 
-    local initialized, err = GGM.InitializeDatabase(db)
+    local initialized, err = T.initializeDatabase(GGM, db)
 
     T.assertNil(initialized)
     T.assertEqual(err, "profession-index-invalid")
@@ -272,7 +274,7 @@ end)
 
 T.test("local ownership marks and queries only valid marked keys", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
 
     T.assertFalse(GGM.IsLocalCharacter(db, "Alice-Silvermoon"))
     T.assertTrue(GGM.MarkLocalCharacter(db, "Alice-Silvermoon"))
@@ -287,7 +289,7 @@ end)
 
 T.test("received complete records do not become locally owned", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
 
     assert(GGM.SaveReceivedCompleteCharacterRecord(db, makeIdentity(), makeSnapshot(GGM), 0))
 
@@ -297,7 +299,7 @@ end)
 
 T.test("complete records copy valid model identity fields and old identities remain readable", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
     local snapshot = makeSnapshot(GGM)
@@ -321,7 +323,7 @@ end)
 
 T.test("half-present or invalid model identity pairs are omitted without changing gear", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     identity.raceID, identity.sex, identity.displayID = 1, nil, 12345
     local snapshot = makeSnapshot(GGM)
@@ -342,7 +344,7 @@ T.test("half-present or invalid model identity pairs are omitted without changin
     T.assertNil(record.identity.displayID)
     T.assertEqual(record.gear.slots[1], "item:2001")
 
-    local receivedDB = assert(GGM.InitializeDatabase(nil))
+    local receivedDB = assert(T.initializeDatabase(GGM, nil))
     identity.raceID, identity.sex, identity.displayID = 1, nil, 12345
     assert(GGM.SaveReceivedCompleteCharacterRecord(receivedDB, identity, snapshot, 11))
     local received = assert(GGM.GetCompleteCharacterRecord(receivedDB, identity.key))
@@ -354,7 +356,7 @@ end)
 
 T.test("local model identity update changes metadata only", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 12))
     local before = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
@@ -381,7 +383,7 @@ end)
 
 T.test("local model identity refresh preserves valid last-known metadata conservatively", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
     local snapshot = makeSnapshot(GGM)
@@ -414,7 +416,7 @@ end)
 
 T.test("received complete baseline still replaces model metadata from its identity", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
@@ -432,9 +434,9 @@ end)
 
 T.test("database initialization reuses a valid existing SavedVariables table", function()
     local GGM = loadModules()
-    local existing = assert(GGM.InitializeDatabase(nil))
+    local existing = assert(T.initializeDatabase(GGM, nil))
 
-    local db, err = GGM.InitializeDatabase(existing)
+    local db, err = T.initializeDatabase(GGM, existing)
 
     T.assertNil(err)
     T.assertTrue(db == existing)
@@ -447,7 +449,7 @@ T.test("database initialization rejects an unsupported schema version", function
         characters = {},
     }
 
-    local db, err = GGM.InitializeDatabase(existing)
+    local db, err = T.initializeDatabase(GGM, existing)
 
     T.assertNil(db)
     T.assertEqual(err, "unsupported-schema-version:99")
@@ -469,7 +471,7 @@ end)
 
 T.test("reading rejects a database with an unsupported schema version", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
     db.schemaVersion = 99
@@ -482,7 +484,7 @@ end)
 
 T.test("saving a complete snapshot creates a usable character record", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     local snapshot = makeSnapshot(GGM)
 
@@ -502,7 +504,7 @@ end)
 
 T.test("saving a complete snapshot persists only compact numeric gear slots", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local snapshot = makeSnapshot(GGM)
     snapshot.slots.OFF_HAND = { inventorySlotID = 17, itemID = false, itemLink = false }
     snapshot.slots.RANGED = { unavailable = true }
@@ -519,7 +521,7 @@ end)
 
 T.test("schema seven saves the exact compact numeric gear shape", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local snapshot = makeSnapshot(GGM)
     local headItemString = "item:153787::::::::19:105::105:1:13572:2:9:19:28:2852:::::"
     local mainHandItemString = "item:153792::::::::19:105::105:1:13572:2:9:19:28:2852:::::"
@@ -575,7 +577,7 @@ end)
 
 T.test("malformed compact gear cannot replace a previously saved character record", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
     local previousRecord = db.characters[identity.key]
@@ -591,7 +593,7 @@ end)
 
 T.test("saving a snapshot stores a defensive copy", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     local snapshot = makeSnapshot(GGM)
 
@@ -607,7 +609,7 @@ end)
 
 T.test("an incomplete snapshot is never saved over a complete record", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     local original = makeSnapshot(GGM)
     assert(GGM.SaveCompleteCharacterRecord(db, identity, original))
@@ -625,7 +627,7 @@ end)
 
 T.test("reading a malformed saved record returns no usable data", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     db.characters["Alice-Silvermoon"] = {
         complete = true,
         identity = makeIdentity(),
@@ -645,7 +647,7 @@ end)
 
 T.test("confirmed slot update changes only the selected shared slot", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
@@ -674,7 +676,7 @@ end)
 
 T.test("confirmed slot update stores a defensive slot copy", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
@@ -694,7 +696,7 @@ end)
 
 T.test("confirmed slot update rejects a mismatched inventory slot id without mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
@@ -722,7 +724,7 @@ end)
 
 T.test("confirmed slot update rejects an unknown slot without mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
@@ -741,7 +743,7 @@ end)
 
 T.test("new complete records persist confirmed sequence zero", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
 
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
@@ -754,7 +756,7 @@ end)
 
 T.test("new schema seven database initializes profession storage", function()
     local GGM = loadModules()
-    local db, err = GGM.InitializeDatabase(nil)
+    local db, err = T.initializeDatabase(GGM, nil)
 
     T.assertNil(err)
     T.assertEqual(db.schemaVersion, 7)
@@ -763,7 +765,7 @@ end)
 
 T.test("saving a profession capture stores metadata only and catalogs recipes", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }
@@ -797,7 +799,7 @@ end)
 
 T.test("invalid profession refresh preserves membership and last complete metadata", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }
@@ -835,7 +837,7 @@ end)
 
 T.test("saving profession data creates a profession-only character entry", function()
     local GGM = loadModules()
-    local db = GGM.InitializeDatabase(nil)
+    local db = T.initializeDatabase(GGM, nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -865,7 +867,7 @@ end)
 
 T.test("re-saving the same profession replaces that profession snapshot predictably", function()
     local GGM = loadModules()
-    local db = GGM.InitializeDatabase(nil)
+    local db = T.initializeDatabase(GGM, nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local first = {
         complete = true,
@@ -896,7 +898,7 @@ end)
 
 T.test("saving a second profession preserves the first profession", function()
     local GGM = loadModules()
-    local db = GGM.InitializeDatabase(nil)
+    local db = T.initializeDatabase(GGM, nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
 
     local function snapshot(id, name)
@@ -918,7 +920,7 @@ end)
 
 T.test("invalid profession snapshot writes nothing", function()
     local GGM = loadModules()
-    local db = GGM.InitializeDatabase(nil)
+    local db = T.initializeDatabase(GGM, nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
 
     local saved, err = GGM.SaveProfessionSnapshot(db, identity, { professionID = 164 })
@@ -930,7 +932,7 @@ end)
 
 T.test("invalid replacement cannot overwrite an existing profession snapshot", function()
     local GGM = loadModules()
-    local db = GGM.InitializeDatabase(nil)
+    local db = T.initializeDatabase(GGM, nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local valid = {
         complete = true,
@@ -952,7 +954,7 @@ end)
 
 T.test("saving a profession snapshot updates only that profession membership", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }
@@ -999,7 +1001,7 @@ end)
 
 T.test("two characters may share one profession recipe bucket", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local snapshot = {
         complete = true,
         professionID = 171, professionName = "Alchemy", capturedAt = 1700000000,
@@ -1022,7 +1024,7 @@ end)
 
 T.test("two complete snapshots share one catalog recipe and store no duplicate recipe arrays", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local capture = {
         complete = true,
         professionID = 171,
@@ -1057,7 +1059,7 @@ end)
 
 T.test("a local-player save cannot reactivate a departed profession character", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = {
         key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
     }
@@ -1082,7 +1084,7 @@ end)
 
 T.test("profession save requires a GUID and legacy guidless records stay readable", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local snapshot = {
         complete = true,
         professionID = 164, professionName = "Blacksmithing", capturedAt = 1700000000,
@@ -1112,7 +1114,7 @@ end)
 
 T.test("verified same-GUID rename moves the canonical profession record and preserves other professions", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local oldIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local first = {
         complete = true,
@@ -1140,7 +1142,7 @@ end)
 
 T.test("verified same-GUID rename merges disjoint profession records", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local oldIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local first = {
         complete = true,
@@ -1183,7 +1185,7 @@ end)
 
 T.test("same-GUID rename with overlapping profession snapshots fails without mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local oldIdentity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A" }
     local snapshot = {
         complete = true,
@@ -1214,7 +1216,7 @@ end)
 
 T.test("rename never overwrites a different GUID at the destination key", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local snapshot = {
         complete = true,
         professionID = 164, professionName = "Blacksmithing", capturedAt = 1,
@@ -1260,7 +1262,7 @@ end)
 
 T.test("malformed profession snapshot records fail closed without raising", function()
     local GGM = loadModules()
-    local db = GGM.InitializeDatabase(nil)
+    local db = T.initializeDatabase(GGM, nil)
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon" }
     db.professions[identity.key] = {
         identity = identity,
@@ -1276,7 +1278,7 @@ end)
 
 T.test("legacy complete records without confirmed sequence remain valid as sequence zero", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
     db.characters[identity.key].confirmedSequence = nil
@@ -1291,7 +1293,7 @@ end)
 
 T.test("local confirmed slot updates increment and persist sequence exactly once", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
@@ -1315,7 +1317,7 @@ end)
 
 T.test("failed local confirmed slot update does not increment sequence", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
@@ -1334,7 +1336,7 @@ end)
 
 T.test("confirmed empty update removes the numeric item entry and increments sequence once", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     assert(GGM.SaveCompleteCharacterRecord(db, makeIdentity(), makeSnapshot(GGM), 4))
 
     local ok, err, sequence = GGM.UpdateConfirmedCharacterSlot(db, "Alice-Silvermoon", "OFF_HAND", {
@@ -1351,7 +1353,7 @@ end)
 
 T.test("confirmed unavailable update replaces compact optional slot state", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     assert(GGM.SaveCompleteCharacterRecord(db, makeIdentity(), makeSnapshot(GGM), 4))
 
     local ok, err, sequence = GGM.UpdateConfirmedCharacterSlot(db, "Alice-Silvermoon", "RANGED", {
@@ -1368,7 +1370,7 @@ end)
 
 T.test("invalid confirmed slot update leaves compact maps and metadata untouched", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
     local gear = db.characters[identity.key].gear
@@ -1389,7 +1391,7 @@ end)
 
 T.test("received slot update requires a complete baseline and stores the transmitted sequence", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     identity.raceID, identity.sex, identity.displayID = 1, 3, 12345
     local changedHead = { inventorySlotID = 1, itemID = 9100, itemLink = "|Hitem:9100|h[Remote]|h" }
@@ -1418,7 +1420,7 @@ end)
 
 T.test("received empty and unavailable updates persist compact slot states", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
 
@@ -1444,7 +1446,7 @@ end)
 
 T.test("received slot update rejects a sequence regression without mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 8))
 
@@ -1467,7 +1469,7 @@ end)
 
 T.test("sequence gaps preserve values but require a full baseline before becoming complete", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     local originalSnapshot = makeSnapshot(GGM)
     assert(GGM.SaveCompleteCharacterRecord(db, identity, originalSnapshot, 4))
@@ -1538,7 +1540,7 @@ end)
 
 T.test("sequence gap keeps the compact baseline stale until a full repair arrives", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 5))
     local before = db.characters[identity.key].gear.slots[1]
@@ -1568,7 +1570,7 @@ end)
 
 T.test("received slot update rejects a mismatched inventory slot id without mutation", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM)))
 
@@ -1590,7 +1592,7 @@ end)
 
 T.test("received complete snapshot cannot move confirmed sequence backwards", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     local original = makeSnapshot(GGM)
     assert(GGM.SaveCompleteCharacterRecord(db, identity, original, 8))
@@ -1611,7 +1613,7 @@ end)
 
 T.test("received complete snapshot may replace at equal or higher sequence", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 3))
 
@@ -1631,7 +1633,7 @@ end)
 
 T.test("newer received baselines replace or clear saved target model identity", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
     identity.raceID, identity.sex, identity.displayID = 1, 2, 1111
     assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 3))
@@ -1657,7 +1659,7 @@ end)
 
 T.test("received complete snapshot rejects invalid identity before touching the database", function()
     local GGM = loadModules()
-    local db = assert(GGM.InitializeDatabase(nil))
+    local db = assert(T.initializeDatabase(GGM, nil))
     local snapshot = makeSnapshot(GGM)
 
     local callOk, saved, err = pcall(

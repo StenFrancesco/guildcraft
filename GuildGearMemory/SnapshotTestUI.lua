@@ -1,5 +1,17 @@
 local _, GGM = ...
 
+local function gearUnavailableMessage(db)
+    local reason = type(db) == "table" and db.gearUnavailableReason or nil
+    if not reason then return nil end
+    if reason == "gear-companion-missing" then
+        return "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+    end
+    if type(reason) == "string" and reason:match("^gear%-backend%-") then
+        return "Gear backend unavailable. Check /ggm status for details."
+    end
+    return "Gear storage is unavailable. Check /ggm status for details."
+end
+
 local function missingModel()
     return { hasSnapshot = false, emptyStateText = "No saved snapshot", slots = {} }
 end
@@ -655,7 +667,10 @@ local function renderBrowserDetail(frame, entry, api)
     for _, slot in ipairs(frame.slotButtons) do slot:Hide() end
 
     if not entry then
-        if #frame.activeEntries == 0 then
+        local unavailable = gearUnavailableMessage(frame.db)
+        if unavailable then
+            frame.detailEmpty:SetText(unavailable)
+        elseif #frame.activeEntries == 0 then
             frame.detailEmpty:SetText(frame.browserView == "Mine" and "No personal snapshots yet" or "No guild snapshots yet")
         elseif #frame.filteredEntries == 0 then
             frame.detailEmpty:SetText("No characters match your search")
@@ -1274,7 +1289,8 @@ updateBrowserList = function(frame, api)
     frame.listContent:SetHeight(math.max(#frame.filteredEntries * UI.characterRowHeight, 1))
 
     if #frame.activeEntries == 0 then
-        frame.listEmpty:SetText(frame.browserView == "Mine" and "No personal snapshots yet" or "No guild snapshots yet")
+        frame.listEmpty:SetText(gearUnavailableMessage(frame.db) and "Gear unavailable"
+            or (frame.browserView == "Mine" and "No personal snapshots yet" or "No guild snapshots yet"))
         frame.listEmpty:Show()
     elseif #frame.filteredEntries == 0 then
         frame.listEmpty:SetText("No characters match your search")
@@ -1811,12 +1827,23 @@ local function printAddonStatus(api)
     local receiveErr = transport and transport.lastReceiveError or GGM.lastSyncReceiveError
     emit("Gear sync send/request error: " .. tostring(sendErr or "none"))
     emit("Gear sync receive error: " .. tostring(receiveErr or "none"))
+    if GGM.gearStartupError then
+        emit("Gear storage: unavailable (" .. tostring(GGM.gearStartupError) .. ")")
+        if GGM.gearStartupError == "gear-companion-missing" then
+            emit("Install and enable DysgearMemory beside GuildGearMemory in Interface/AddOns.")
+        elseif type(GGM.gearStartupError) == "string" and GGM.gearStartupError:match("^gear%-backend%-") then
+            emit("DysgearMemory could not provide a compatible gear backend (" .. GGM.gearStartupError
+                .. "). Check that DysgearMemory is enabled and up to date; saved gear was left unchanged.")
+        else
+            emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/DysgearMemory.lua (DysgearMemoryDB). Close WoW and back up that file before any manual reset.")
+        end
+    end
     if GGM.startupError then
         emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
         if type(GGM.startupError) == "string"
             and GGM.startupError:match("^unsupported%-schema%-version:%d+$") then
             emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/GuildGearMemory.lua (or remove only its GuildGearMemoryDB global), then relaunch.")
-            emit("This clears cached gear, profession snapshots/index data, and local-character metadata.")
+            emit("This clears profession snapshots/index data and local-character metadata. Gear and bank companion databases are separate.")
         end
         return
     end
