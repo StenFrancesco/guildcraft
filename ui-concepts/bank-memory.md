@@ -6,17 +6,17 @@ Copy both complete folders into the Retail addon directory:
 
 ```text
 World of Warcraft/_retail_/Interface/AddOns/
-    GuildGearMemory/GuildGearMemory.toc
-    DysbankMemory/DysbankMemory.toc
+    The Guild Book/The Guild Book.toc
+    The Guild Book Bank/The Guild Book Bank.toc
 ```
 
-Enable both addons on characters whose banks you want to save. The folders contain multiple files; placing two individual files directly in Interface is not an addon installation. Guild Gear Memory can still be used without the companion, but Bank explains that DysbankMemory is needed for capture.
+Enable both addons on characters whose banks you want to save. The folders contain multiple files; placing two individual files directly in Interface is not an addon installation. The Guild Book can still be used without the companion, but Bank explains that The Guild Book Bank is needed for capture.
 
-DysbankMemory stores account-wide `DysbankMemoryDB` SavedVariables. Blizzard writes SavedVariables to disk on normal logout or UI reload. Guild Gear Memory reads the already-loaded Lua table inside the game; there is no external file reader, service, executable, or network synchronization.
+The Guild Book Bank stores account-wide `TheGuildBookBankDB` SavedVariables. Blizzard writes SavedVariables to disk on normal logout or UI reload. The Guild Book reads the already-loaded Lua table inside the game; there is no external file reader, service, executable, or network synchronization.
 
 ## Using the view
 
-Open Guild Gear Memory and select Bank. Guild Bank is always first and resolves to the current character's guild. Character entries combine characters already known to Guild Gear Memory with characters observed by DysbankMemory. A guild character's entry does not imply that you can remotely read their personal bank.
+Open The Guild Book and select Bank. Guild Bank is always first and resolves to the current character's guild. Character entries combine characters already known to The Guild Book with characters observed by The Guild Book Bank. A guild character's entry does not imply that you can remotely read their personal bank.
 
 Visit a banker on each of your characters to save that character's available personal bank. Open a guild bank and normally view the guild tabs you want to remember. The companion observes the normal data-ready events; it does not request or select other tabs itself. Different guilds and characters keep separate records. Warband/account banks are outside this feature.
 
@@ -53,7 +53,7 @@ Automated fixtures verify the Lua behavior; a live Retail client check is still 
 6. Test a character without guild-bank tab permissions and confirm unavailable tabs are never shown as empty/current.
 7. Switch characters belonging to different guilds and verify the fixed Guild Bank entry selects only the current guild's record.
 8. Exercise bank availability/combat restrictions where the client permits it; confirm unavailable data leaves older valid snapshots intact and capture resumes only through allowed events.
-9. Disable DysbankMemory and verify gear/professions still load and Bank displays installation guidance.
+9. Disable The Guild Book Bank and verify gear/professions still load and Bank displays installation guidance.
 
 ## Offline layout previews
 

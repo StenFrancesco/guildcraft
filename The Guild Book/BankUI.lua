@@ -699,7 +699,7 @@ function GGM.CreateBankPage(api, frame)
     page.slotsEmpty:SetJustifyH("CENTER")
 
     page:Show()
-    refreshPage(page, frame.db, rawget(_G, "DysbankMemoryDB"))
+    refreshPage(page, frame.db, rawget(_G, "TheGuildBookBankDB"))
     page:Hide()
     frame.bankPage = page
     return page
@@ -709,7 +709,7 @@ function GGM.RefreshVisibleBankView()
     local frame = GGM.guildGearBrowserFrame
     if not frame or frame.activeTab ~= "Bank" or not frame.bankPage then return false end
     if type(frame.IsShown) == "function" and not frame:IsShown() then return false end
-    return refreshPage(frame.bankPage, frame.db, rawget(_G, "DysbankMemoryDB"))
+    return refreshPage(frame.bankPage, frame.db, rawget(_G, "TheGuildBookBankDB"))
 end
 
 _G.GuildGearMemoryBankChanged = function()

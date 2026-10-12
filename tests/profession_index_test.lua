@@ -2,12 +2,12 @@ local T = require("tests.testlib")
 
 local function loadModules()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
-    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionIndex.lua", GGM)
+    T.loadAddonFile("The Guild Book/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/Storage.lua", GGM)
     return GGM
 end
 

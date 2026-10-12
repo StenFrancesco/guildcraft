@@ -2,7 +2,7 @@ local T = require("tests.testlib")
 
 local function loadGGM()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
     return GGM
 end
 

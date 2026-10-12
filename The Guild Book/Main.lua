@@ -44,7 +44,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
-        GuildGearMemoryDB = professionDB
+        TheGuildBookDB = professionDB
         GGM.db = db
         GGM.gearDB = gearDB
         GGM.gearStartupError = gearErr

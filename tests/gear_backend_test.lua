@@ -14,7 +14,7 @@ end
 local function client(saved)
     local c = { frames = {}, timers = {}, sent = {}, now = 100, items = {} }
     for id = 1, 19 do c.items[id] = 1000 + id end
-    local api = setmetatable({ DysgearMemoryDB = saved }, { __index = _G })
+    local api = setmetatable({ TheGuildBookGearDB = saved }, { __index = _G })
     api._G = api
     api.CreateFrame = function()
         local frame = { events = {} }
@@ -69,28 +69,28 @@ local function client(saved)
         error("unbounded timer activity")
     end
     c.api, c.backend = api, {}
-    loadManifest("DysgearMemory", api, c.backend)
-    c:event("ADDON_LOADED", "DysgearMemory")
+    loadManifest("The Guild Book gear", api, c.backend)
+    c:event("ADDON_LOADED", "The Guild Book gear")
     return c
 end
 
 local function display(c)
     local GGM = {}
-    loadManifest("GuildGearMemory", c.api, GGM, true)
+    loadManifest("The Guild Book", c.api, GGM, true)
     GGM.CreateProfessionLinkSaveController = function() return nil, "unavailable" end
-    local chunk = assert(loadfile("GuildGearMemory/Main.lua"))
+    local chunk = assert(loadfile("The Guild Book/Main.lua"))
     setfenv(chunk, c.api)
-    chunk("GuildGearMemory", GGM)
-    c:event("ADDON_LOADED", "GuildGearMemory")
+    chunk("The Guild Book", GGM)
+    c:event("ADDON_LOADED", "The Guild Book")
     return GGM
 end
 
 T.test("gear backend captures and publishes a stable change with display addon absent", function()
     local c = client()
-    T.assertEqual(c.registered, 1, "DysgearMemory must register its own sync")
+    T.assertEqual(c.registered, 1, "The Guild Book gear must register its own sync")
     c:event("PLAYER_LOGIN")
     c:advance(1)
-    local record = c.api.DysgearMemoryDB.characters["Alice-Silvermoon"]
+    local record = c.api.TheGuildBookGearDB.characters["Alice-Silvermoon"]
     T.assertNotNil(record)
     T.assertEqual(#c.sent, 0)
     c.items[1] = 9999
@@ -100,14 +100,14 @@ T.test("gear backend captures and publishes a stable change with display addon a
     c:advance(5)
     T.assertEqual(record.confirmedSequence, 1)
     T.assertTrue(#c.sent > 0)
-    T.assertNil(c.api.GuildGearMemoryDB)
+    T.assertNil(c.api.TheGuildBookDB)
 end)
 
 T.test("gear backend preserves saved records and does not broadcast at startup", function()
     local record = { sentinel = true, confirmedSequence = 42 }
     local saved = { schemaVersion = 7, characters = { old = record }, localCharacters = { old = true } }
     local c = client(saved)
-    T.assertTrue(c.api.DysgearMemoryDB == saved)
+    T.assertTrue(c.api.TheGuildBookGearDB == saved)
     T.assertTrue(saved.characters.old == record)
     T.assertEqual(#c.sent, 0)
 end)
@@ -117,7 +117,7 @@ T.test("gear backend rejects an unsupported database without mutating it", funct
     local c = client(saved)
     c:event("PLAYER_LOGIN")
     c:advance(10)
-    T.assertTrue(c.api.DysgearMemoryDB == saved)
+    T.assertTrue(c.api.TheGuildBookGearDB == saved)
     T.assertNil(rawget(c.api, "DysgearMemoryAPI"))
     T.assertEqual(c.api.DysgearMemoryError, "unsupported-schema-version:99")
     T.assertEqual(#c.sent, 0)
@@ -126,19 +126,19 @@ end)
 T.test("display addon binds the same backend without a second tracker or sync registration", function()
     local c = client()
     local GGM = {}
-    loadManifest("GuildGearMemory", c.api, GGM, true)
+    loadManifest("The Guild Book", c.api, GGM, true)
     GGM.RegisterSnapshotTestSlashCommand = function() end
     GGM.CreateProfessionLinkSaveController = function() return nil, "unavailable" end
-    local chunk = assert(loadfile("GuildGearMemory/Main.lua"))
+    local chunk = assert(loadfile("The Guild Book/Main.lua"))
     setfenv(chunk, c.api)
-    chunk("GuildGearMemory", GGM)
-    c:event("ADDON_LOADED", "GuildGearMemory")
+    chunk("The Guild Book", GGM)
+    c:event("ADDON_LOADED", "The Guild Book")
     c:event("PLAYER_LOGIN")
     c:advance(1)
     T.assertEqual(c.registered, 1)
     T.assertTrue(GGM.gearTracker == c.backend.gearTracker)
     T.assertTrue(GGM.guildSync == c.backend.guildSync)
-    T.assertTrue(GGM.db.characters == c.api.DysgearMemoryDB.characters)
+    T.assertTrue(GGM.db.characters == c.api.TheGuildBookGearDB.characters)
     T.assertNotNil(GGM.GetCharacterRecord(GGM.db, "Alice-Silvermoon"))
     local entries = GGM.BuildGuildGearBrowserEntries(GGM.db)
     T.assertEqual(#entries, 1)
@@ -147,7 +147,7 @@ T.test("display addon binds the same backend without a second tracker or sync re
     T.assertEqual(#detail.slots, 19)
     T.assertEqual(detail.slots[1].itemID, 1001)
     T.assertEqual(detail.completenessText, "Complete")
-    T.assertNil(c.api.GuildGearMemoryDB.characters)
+    T.assertNil(c.api.TheGuildBookDB.characters)
     local mainFrame = c.frames[#c.frames]
     T.assertNil(mainFrame.events.PLAYER_EQUIPMENT_CHANGED)
     T.assertNil(mainFrame.events.CHAT_MSG_ADDON)
@@ -196,13 +196,13 @@ T.test("backend initialization failure is reported without disabling profession 
     T.assertNil(GGM.db.characters)
     T.assertEqual(type(GGM.db.professions), "table")
     T.assertEqual(databaseCalls, 0)
-    T.assertTrue(c.api.DysgearMemoryDB == savedGear)
+    T.assertTrue(c.api.TheGuildBookGearDB == savedGear)
     T.assertTrue(savedGear.characters.Existing == existingRecord)
 
     c.api.SlashCmdList.GUILDGEARMEMORY("status")
     local output = table.concat(messages, "\n")
     T.assertTrue(output:find("Gear storage: unavailable", 1, true) ~= nil)
-    T.assertTrue(output:find("DysgearMemory could not provide a compatible gear backend", 1, true) ~= nil)
+    T.assertTrue(output:find("The Guild Book gear could not provide a compatible gear backend", 1, true) ~= nil)
     T.assertTrue(output:find("saved gear was left unchanged", 1, true) ~= nil)
 
     c:event("PLAYER_LOGIN")
@@ -214,7 +214,7 @@ T.test("backend initialization failure is reported without disabling profession 
         recipes = { { recipeID = 41234, name = "Copper Bracers" } },
     }, { guildMembershipVerified = true })
     T.assertTrue(savedProfession, saveErr)
-    T.assertNotNil(c.api.GuildGearMemoryDB.professions[identity.key])
+    T.assertNotNil(c.api.TheGuildBookDB.professions[identity.key])
     T.assertTrue(savedGear.characters.Existing == existingRecord)
 end)
 
@@ -235,7 +235,7 @@ T.test("profession ownership and saving remain available without gear backend", 
     c.api.SlashCmdList = {}
     local GGM = display(c)
     c:event("PLAYER_LOGIN")
-    T.assertTrue(c.api.GuildGearMemoryDB.localCharacterGUIDs["Player-1-Alice"])
+    T.assertTrue(c.api.TheGuildBookDB.localCharacterGUIDs["Player-1-Alice"])
     local identity = assert(GGM.BuildPlayerIdentity(c.api))
     T.assertTrue(GGM.SaveProfessionSnapshot(GGM.db, identity, {
         complete = true, professionID = 164, professionName = "Blacksmithing",
@@ -243,13 +243,13 @@ T.test("profession ownership and saving remain available without gear backend", 
         status = GGM.PROFESSION_CACHE_STATUS,
         recipes = { { recipeID = 41234, name = "Copper Bracers" } },
     }, { guildMembershipVerified = true }))
-    T.assertNotNil(c.api.GuildGearMemoryDB.professions[identity.key])
-    T.assertNil(c.api.GuildGearMemoryDB.characters)
+    T.assertNotNil(c.api.TheGuildBookDB.professions[identity.key])
+    T.assertNil(c.api.TheGuildBookDB.characters)
 end)
 
 T.test("old persistence-only companion is reported as unsupported", function()
     local c = client()
-    c.api.DysgearMemoryAPI = { schemaVersion = 1, GetDatabase = function() return c.api.DysgearMemoryDB end }
+    c.api.DysgearMemoryAPI = { schemaVersion = 1, GetDatabase = function() return c.api.TheGuildBookGearDB end }
     c.api.SlashCmdList = {}
     local GGM = display(c)
     T.assertEqual(GGM.gearStartupError, "gear-companion-unsupported")
@@ -259,7 +259,7 @@ end)
 T.test("gear backend owns departed member cache cleanup", function()
     local c = client()
     T.assertEqual(type(c.backend.PurgeDepartedGearRecords), "function")
-    local db = c.api.DysgearMemoryDB
+    local db = c.api.TheGuildBookGearDB
     db.characters.Departed = { identity = { guid = "Player-1-Departed" } }
     db.characters.Local = { identity = { guid = "Player-1-Local" } }
     db.localCharacters.Local = true

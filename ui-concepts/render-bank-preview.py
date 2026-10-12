@@ -62,8 +62,8 @@ local guild = { identity=guildIdentity, capturedAt=1791556920, status="incomplet
     [2]={id=2,name="Raid Materials",numSlots=0,status="unavailable",slots={}},
 } }
 _G.DysbankMemoryAPI = { schemaVersion=1 }
-_G.DysbankMemoryDB = { schemaVersion=1, characters={[identity.key]=record}, guilds={[guildIdentity.key]=guild} }
-api.DysbankMemoryAPI, api.DysbankMemoryDB = _G.DysbankMemoryAPI, _G.DysbankMemoryDB
+_G.TheGuildBookBankDB = { schemaVersion=1, characters={[identity.key]=record}, guilds={[guildIdentity.key]=guild} }
+api.DysbankMemoryAPI, api.TheGuildBookBankDB = _G.DysbankMemoryAPI, _G.TheGuildBookBankDB
 local db = { schemaVersion=GGM.SCHEMA_VERSION, characters={ [identity.key]={identity=identity} } }
 local frame = GGM.CreateGuildGearBrowserWindow(api)
 frame.db = db
@@ -72,11 +72,11 @@ GGM.SelectGuildGearBrowserTab(frame, "Bank")
 frame:Show()
 local page = frame.bankPage
 if __scenario == "missing" then
-    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = nil, nil
-    api.DysbankMemoryAPI, api.DysbankMemoryDB = nil, nil
+    _G.DysbankMemoryAPI, _G.TheGuildBookBankDB = nil, nil
+    api.DysbankMemoryAPI, api.TheGuildBookBankDB = nil, nil
     GGM.RefreshVisibleBankView()
 elseif __scenario == "no-data" then
-    _G.DysbankMemoryDB.characters, _G.DysbankMemoryDB.guilds = {}, {}
+    _G.TheGuildBookBankDB.characters, _G.TheGuildBookBankDB.guilds = {}, {}
     GGM.RefreshVisibleBankView()
 elseif (__scenario == "personal" or __scenario == "long") and page.entryButtons[2] then
     page.entryButtons[2].scripts.OnClick(page.entryButtons[2])

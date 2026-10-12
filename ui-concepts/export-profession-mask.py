@@ -5,7 +5,7 @@ from PIL import Image
 import sys
 import zipfile
 
-MEDIA = Path(__file__).resolve().parents[1] / "GuildGearMemory" / "Media" / "ArtisanJournal"
+MEDIA = Path(__file__).resolve().parents[1] / "The Guild Book" / "Media" / "ArtisanJournal"
 SIZE = 1024
 BASE_FADE = 0.05
 UPPER_FADE = BASE_FADE * 1.5
@@ -45,8 +45,8 @@ if __name__ == "__main__":
     print(f"Verified shared rounded mask: {target}")
     if "--package" in sys.argv:
         root = MEDIA.parents[2]
-        addon = root / "GuildGearMemory"
-        archive = root / "ui-concepts" / "GuildGearMemory-rounded-professions.zip"
+        addon = root / "The Guild Book"
+        archive = root / "ui-concepts" / "The-Guild-Book-rounded-professions.zip"
         files = sorted(p for p in addon.rglob("*") if p.is_file()
                        and "Source" not in p.parts
                        and (p.suffix.lower() in {".lua", ".toc", ".tga", ".ttf", ".json", ".md"}
@@ -58,8 +58,8 @@ if __name__ == "__main__":
             assert bundle.testzip() is None
             for path in files:
                 assert bundle.read(path.relative_to(root).as_posix()) == path.read_bytes()
-            for line in (addon / "GuildGearMemory.toc").read_text().splitlines():
+            for line in (addon / "The Guild Book.toc").read_text().splitlines():
                 if line.strip() and not line.startswith("#"):
-                    assert "GuildGearMemory/" + line.strip() in bundle.namelist()
-            assert "GuildGearMemory/Media/ArtisanJournal/profession-page-mask.tga" in bundle.namelist()
+                    assert "The Guild Book/" + line.strip() in bundle.namelist()
+            assert "The Guild Book/Media/ArtisanJournal/profession-page-mask.tga" in bundle.namelist()
         print(f"Verified complete addon package ({len(files)} files): {archive}")

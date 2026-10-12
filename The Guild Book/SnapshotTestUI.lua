@@ -1835,14 +1835,14 @@ local function printAddonStatus(api)
             emit("The Guild Book gear could not provide a compatible gear backend (" .. GGM.gearStartupError
                 .. "). Check that The Guild Book gear is enabled and up to date; saved gear was left unchanged.")
         else
-            emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/The Guild Book gear.lua (DysgearMemoryDB). Close WoW and back up that file before any manual reset.")
+            emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/The Guild Book gear.lua (TheGuildBookGearDB). Close WoW and back up that file before any manual reset.")
         end
     end
     if GGM.startupError then
         emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
         if type(GGM.startupError) == "string"
             and GGM.startupError:match("^unsupported%-schema%-version:%d+$") then
-            emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/The Guild Book.lua (or remove only its GuildGearMemoryDB global), then relaunch.")
+            emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/The Guild Book.lua (or remove only its TheGuildBookDB global), then relaunch.")
             emit("This clears profession snapshots/index data and local-character metadata. Gear and bank companion databases are separate.")
         end
         return

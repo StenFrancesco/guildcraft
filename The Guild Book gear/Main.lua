@@ -21,7 +21,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     local arg1 = ...
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then return end
-        local database, err = GearMemory.InitializeGearDatabase(api.DysgearMemoryDB)
+        local database, err = GearMemory.InitializeGearDatabase(api.TheGuildBookGearDB)
         api.DysgearMemoryError = err
         GearMemory.startupError = err
         if not database then
@@ -29,7 +29,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             notifyDisplay()
             return
         end
-        api.DysgearMemoryDB = database
+        api.TheGuildBookGearDB = database
         GearMemory.db = database
         api.DysgearMemoryAPI = {
             schemaVersion = 2,

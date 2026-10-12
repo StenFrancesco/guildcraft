@@ -5,7 +5,7 @@
 ## Author: Guild Gear Memory contributors
 ## Version: 0.5.0-blizzard-ui
 ## OptionalDeps: The Guild Book Bank, The Guild Book gear
-## SavedVariables: GuildGearMemoryDB
+## SavedVariables: TheGuildBookDB
 
 Constants.lua
 CharacterIdentity.lua

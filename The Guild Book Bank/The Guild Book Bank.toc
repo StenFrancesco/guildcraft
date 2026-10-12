@@ -3,7 +3,7 @@
 ## Notes: Local, last-known character and guild bank snapshots
 ## Author: Guild Gear Memory contributors
 ## Version: 1.0.0
-## SavedVariables: DysbankMemoryDB
+## SavedVariables: TheGuildBookBankDB
 
 BankMemory.lua
 Main.lua

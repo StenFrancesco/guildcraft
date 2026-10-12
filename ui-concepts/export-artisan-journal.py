@@ -9,7 +9,7 @@ from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parent.parent
-MEDIA = ROOT / "GuildGearMemory" / "Media" / "ArtisanJournal"
+MEDIA = ROOT / "The Guild Book" / "Media" / "ArtisanJournal"
 SOURCE = ROOT / "tests" / "Source"
 SURFACES = ("parchment", "leather", "profession-button")
 
@@ -46,7 +46,7 @@ def main():
         assert header[16] == 32 and header[17] & 15 == 8
         manifest["textures"][name] = {
             "file": path.name,
-            "wow_path": "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\" + path.name,
+            "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\" + path.name,
             "size": list(size),
             "source": "tests/Source/" + name + ".png",
             "source_size": list(source_size),

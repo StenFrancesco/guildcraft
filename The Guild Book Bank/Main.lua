@@ -35,7 +35,7 @@ local function publishAPI()
     addon.DysbankMemoryAPI = {
         schemaVersion = 1,
         GetDatabase = function()
-            return addon.DysbankMemoryDB
+            return addon.TheGuildBookBankDB
         end,
     }
 end
@@ -47,14 +47,14 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
-        local database, err = BankMemory.InitializeDatabase(addon.DysbankMemoryDB)
+        local database, err = BankMemory.InitializeDatabase(addon.TheGuildBookBankDB)
         if not database then
             addon.DysbankMemoryError = err
             addon.DysbankMemoryAPI = nil
             return
         end
 
-        addon.DysbankMemoryDB = database
+        addon.TheGuildBookBankDB = database
         addon.DysbankMemoryError = nil
         local newController, controllerErr = BankMemory.CreateController(
             addon,

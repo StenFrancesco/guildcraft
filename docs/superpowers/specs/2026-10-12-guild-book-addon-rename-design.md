@@ -16,9 +16,9 @@ Rename the three installed World of Warcraft addon folders and their visible nam
 
 Each addon folder and its `.toc` file will use the exact new name. The `.toc` titles, optional dependency names, addon-load identity checks, hard-coded asset paths, install guidance, packaging tools, and repository references will be updated to match. The three folders will remain siblings directly under `Interface/AddOns` in packaged installs.
 
-Internal Lua APIs and SavedVariables globals (`GuildGearMemoryDB`, `DysgearMemoryDB`, and `DysbankMemoryDB`) will retain their current names. No capture, storage schema, synchronization behavior, or data source will change.
+All three TOCs and their Lua references will use the SavedVariables globals `TheGuildBookDB`, `TheGuildBookGearDB`, and `TheGuildBookBankDB`. Lua API identifiers and addon-message prefixes keep their existing names. No capture, storage schema, synchronization behavior, or data source will change.
 
-Because changing an addon ID can change the SavedVariables file basename, existing users will receive a migration note. It will explain how to rename the old account-wide files after fully closing WoW, without deleting or overwriting them automatically.
+This task does not migrate SavedVariables data or access user WoW files.
 
 ## Acceptance criteria
 
@@ -26,9 +26,9 @@ Because changing an addon ID can change the SavedVariables file basename, existi
 - TOC dependencies and runtime addon identity checks use the new folder names.
 - Every addon asset and installation path points to the renamed folders.
 - Packaging and repository documentation use the new folder structure and names.
-- Existing SavedVariables globals and Lua API identifiers remain unchanged.
+- The TOCs and Lua references use the three new SavedVariables globals; Lua API identifiers and addon-message prefixes remain unchanged.
 - Existing test fixtures refer to the new paths and addon IDs.
 
 ## Scope and safety
 
-This is a naming and packaging change only. It does not add game-state access, addon-message traffic, gameplay automation, or external data paths. Migration guidance preserves user control over existing local SavedVariables files.
+This is a naming and packaging change only. It does not add game-state access, addon-message traffic, gameplay automation, or external data paths. Existing SavedVariables data is not migrated.
