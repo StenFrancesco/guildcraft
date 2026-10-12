@@ -50,9 +50,9 @@ function TestLib.loadUnitModule(name, namespace)
     local gear = { GearData = true, GearSnapshot = true, CharacterIdentity = true,
         StableGearTracker = true, LocalGearMemory = true, SyncProtocol = true,
         SyncTransport = true, GuildSync = true }
-    TestLib.loadAddonFile((gear[name] and "DysgearMemory/" or "GuildGearMemory/") .. name .. ".lua", namespace)
+    TestLib.loadAddonFile((gear[name] and "The Guild Book gear/" or "The Guild Book/") .. name .. ".lua", namespace)
     if name == "Constants" or name == "Storage" then
-        TestLib.loadAddonFile("DysgearMemory/" .. name .. ".lua", namespace)
+        TestLib.loadAddonFile("The Guild Book gear/" .. name .. ".lua", namespace)
     end
 end
 

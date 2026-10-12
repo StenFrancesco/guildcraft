@@ -83,10 +83,10 @@ local function guild()
         api.DysgearMemoryAPI = { schemaVersion = 2, GetDatabase = function() return gearDB end, GetBackend = function() return G end }
         local db, startupErr, professionDB = G.InitializeSavedDatabases(api)
         assert(db, startupErr)
-        api.GuildGearMemoryDB, api.DysgearMemoryDB = professionDB, gearDB
+        api.TheGuildBookDB, api.TheGuildBookGearDB = professionDB, gearDB
         client.api, client.db = api, db
-        assert(client.db.characters == api.DysgearMemoryDB.characters)
-        assert(api.GuildGearMemoryDB.characters == nil)
+        assert(client.db.characters == api.TheGuildBookGearDB.characters)
+        assert(api.TheGuildBookDB.characters == nil)
         client.sync = assert(G.CreateGuildSync(api, client.db))
         assert(G.RegisterGuildSync(client.sync))
         function client:startTracking()

@@ -4,7 +4,7 @@ local function gearUnavailableMessage(db)
     local reason = type(db) == "table" and db.gearUnavailableReason or nil
     if not reason then return nil end
     if reason == "gear-companion-missing" then
-        return "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+        return "Install and enable The Guild Book gear beside The Guild Book to save and view gear."
     end
     if type(reason) == "string" and reason:match("^gear%-backend%-") then
         return "Gear backend unavailable. Check /ggm status for details."
@@ -309,24 +309,24 @@ local THEME = {
 }
 
 local JOURNAL_TEXTURES = {
-    parchment = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\parchment.tga",
-    leather = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\leather.tga",
-    button = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button.tga",
-    professionButton = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button-framed.tga",
-    window = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-window.tga",
-    professionMask = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-page-mask.tga",
-    armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory-vignette.tga",
-    gearPage = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\gear-journal-page.tga",
-    font = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif.ttf",
-    boldFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
-    italicFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-italic.ttf",
+    parchment = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\parchment.tga",
+    leather = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leather.tga",
+    button = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button.tga",
+    professionButton = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button-framed.tga",
+    window = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-window.tga",
+    professionMask = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-page-mask.tga",
+    armory = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\character-armory-vignette.tga",
+    gearPage = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\gear-journal-page.tga",
+    font = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif.ttf",
+    boldFont = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
+    italicFont = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif-italic.ttf",
     professions = {
-        Alchemy = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\alchemy-page.tga",
-        Blacksmithing = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\blacksmithing-page.tga",
-        Enchanting = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\enchanting-page.tga",
-        Engineering = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\engineering-page.tga",
-        Leatherworking = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\leatherworking-page.tga",
-        Tailoring = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\tailoring-page.tga",
+        Alchemy = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\alchemy-page.tga",
+        Blacksmithing = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\blacksmithing-page.tga",
+        Enchanting = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\enchanting-page.tga",
+        Engineering = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\engineering-page.tga",
+        Leatherworking = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leatherworking-page.tga",
+        Tailoring = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\tailoring-page.tga",
     },
 }
 GGM.UITheme = THEME
@@ -1135,7 +1135,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then return false end
     if selectedKey ~= "Professions" and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.activeTab = selectedKey
-    if frame.TitleText then frame.TitleText:SetText("Guild Gear Memory") end
+    if frame.TitleText then frame.TitleText:SetText("The Guild Book") end
 
     if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known guild equipment")
     elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "")
@@ -1518,7 +1518,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.brandTitle = createText(frame.navigationRail, "OVERLAY", "GameFontNormalLarge")
     GGM.ApplyJournalFont(frame.brandTitle, 19, "bold")
     frame.brandTitle:SetPoint("TOPLEFT", frame.brandIconFrame, "TOPRIGHT", 10, -5)
-    frame.brandTitle:SetText("Guild Gear Memory")
+    frame.brandTitle:SetText("The Guild Book")
     setTextColor(frame.brandTitle, THEME.railGold)
 
     local navLabel = createSectionLabel(frame.navigationRail, "LIBRARY")
@@ -1820,7 +1820,7 @@ end
 
 local function printAddonStatus(api)
     local emit = chatEmitter(api)
-    emit("Guild Gear Memory status:")
+    emit("The Guild Book status:")
     local transport = GGM.guildSync and GGM.guildSync.transport
     emit("Gear sync: " .. (GGM.guildSync and "registered" or "unavailable") .. " (" .. GGM.SYNC_PREFIX .. ")")
     local sendErr = transport and transport.lastSendError or GGM.lastSyncError
@@ -1830,19 +1830,19 @@ local function printAddonStatus(api)
     if GGM.gearStartupError then
         emit("Gear storage: unavailable (" .. tostring(GGM.gearStartupError) .. ")")
         if GGM.gearStartupError == "gear-companion-missing" then
-            emit("Install and enable DysgearMemory beside GuildGearMemory in Interface/AddOns.")
+            emit("Install and enable The Guild Book gear beside The Guild Book in Interface/AddOns.")
         elseif type(GGM.gearStartupError) == "string" and GGM.gearStartupError:match("^gear%-backend%-") then
-            emit("DysgearMemory could not provide a compatible gear backend (" .. GGM.gearStartupError
-                .. "). Check that DysgearMemory is enabled and up to date; saved gear was left unchanged.")
+            emit("The Guild Book gear could not provide a compatible gear backend (" .. GGM.gearStartupError
+                .. "). Check that The Guild Book gear is enabled and up to date; saved gear was left unchanged.")
         else
-            emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/DysgearMemory.lua (DysgearMemoryDB). Close WoW and back up that file before any manual reset.")
+            emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/The Guild Book gear.lua (TheGuildBookGearDB). Close WoW and back up that file before any manual reset.")
         end
     end
     if GGM.startupError then
         emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
         if type(GGM.startupError) == "string"
             and GGM.startupError:match("^unsupported%-schema%-version:%d+$") then
-            emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/GuildGearMemory.lua (or remove only its GuildGearMemoryDB global), then relaunch.")
+            emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/The Guild Book.lua (or remove only its TheGuildBookDB global), then relaunch.")
             emit("This clears profession snapshots/index data and local-character metadata. Gear and bank companion databases are separate.")
         end
         return

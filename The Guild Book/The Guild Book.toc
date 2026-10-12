@@ -1,11 +1,11 @@
 # Midnight / Mainline 12.0 and WoW: Forever 1.60.1.
 ## Interface: 120000, 16001
-## Title: Guild Gear Memory
+## Title: The Guild Book
 ## Notes: Local last-known gear memory for guild characters
 ## Author: Guild Gear Memory contributors
 ## Version: 0.5.0-blizzard-ui
-## OptionalDeps: DysbankMemory, DysgearMemory
-## SavedVariables: GuildGearMemoryDB
+## OptionalDeps: The Guild Book Bank, The Guild Book gear
+## SavedVariables: TheGuildBookDB
 
 Constants.lua
 CharacterIdentity.lua

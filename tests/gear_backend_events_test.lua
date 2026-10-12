@@ -67,7 +67,7 @@ T.test("player login defers stable gear tracking until equipment is ready", func
                 deferredStartup = callback
             end,
         },
-        DysgearMemoryDB = NIL,
+        TheGuildBookGearDB = NIL,
     }, function()
         local GGM = {
             DEFAULT_STABILITY_DELAY_SECONDS = 300,
@@ -87,8 +87,8 @@ T.test("player login defers stable gear tracking until equipment is ready", func
             return "ignored", nil
         end
 
-        T.loadAddonFile("DysgearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "DysgearMemory")
+        T.loadAddonFile("The Guild Book gear/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book gear")
         onEvent(frame, "PLAYER_LOGIN")
 
         T.assertEqual(startCount, 0)
@@ -119,7 +119,7 @@ T.test("equipment change routes the changed inventory slot to the active tracker
             return frame
         end,
         C_Timer = { After = function(_, callback) callback() end },
-        DysgearMemoryDB = NIL,
+        TheGuildBookGearDB = NIL,
     }, function()
         local GGM = {
             DEFAULT_STABILITY_DELAY_SECONDS = 300,
@@ -137,8 +137,8 @@ T.test("equipment change routes the changed inventory slot to the active tracker
             return "pending", nil
         end
 
-        T.loadAddonFile("DysgearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "DysgearMemory")
+        T.loadAddonFile("The Guild Book gear/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book gear")
         onEvent(frame, "PLAYER_LOGIN")
         onEvent(frame, "PLAYER_EQUIPMENT_CHANGED", 16, true)
 
@@ -176,7 +176,7 @@ T.test("equipment change before tracker startup is ignored", function()
             return "pending", nil
         end
 
-        T.loadAddonFile("DysgearMemory/Main.lua", GGM)
+        T.loadAddonFile("The Guild Book gear/Main.lua", GGM)
         onEvent(frame, "PLAYER_EQUIPMENT_CHANGED", 16, true)
 
         T.assertFalse(routed)
@@ -199,7 +199,7 @@ T.test("addon loaded creates and registers guild sync without sending a logical 
         CreateFrame = function()
             return frame
         end,
-        DysgearMemoryDB = NIL,
+        TheGuildBookGearDB = NIL,
     }, function()
         local GGM = {}
         stubBackend(GGM)
@@ -227,8 +227,8 @@ T.test("addon loaded creates and registers guild sync without sending a logical 
             return "ignored", nil
         end
 
-        T.loadAddonFile("DysgearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "DysgearMemory")
+        T.loadAddonFile("The Guild Book gear/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book gear")
 
         T.assertTrue(GGM.guildSync == sync)
         T.assertEqual(publishCount, 0)
@@ -259,7 +259,7 @@ T.test("player login passes a post-persistence publisher into local tracking but
                 deferredStartup = callback
             end,
         },
-        DysgearMemoryDB = NIL,
+        TheGuildBookGearDB = NIL,
     }, function()
         local GGM = {
             DEFAULT_STABILITY_DELAY_SECONDS = 300,
@@ -293,8 +293,8 @@ T.test("player login passes a post-persistence publisher into local tracking but
             return "ignored", nil
         end
 
-        T.loadAddonFile("DysgearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "DysgearMemory")
+        T.loadAddonFile("The Guild Book gear/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book gear")
         onEvent(frame, "PLAYER_LOGIN")
 
         T.assertEqual(publishCount, 0)
@@ -332,7 +332,7 @@ T.test("chat msg addon routes the full addon-message tuple to guild sync", funct
         CreateFrame = function()
             return frame
         end,
-        DysgearMemoryDB = NIL,
+        TheGuildBookGearDB = NIL,
     }, function()
         local GGM = {}
         stubBackend(GGM)
@@ -362,8 +362,8 @@ T.test("chat msg addon routes the full addon-message tuple to guild sync", funct
             return "slot-applied", nil
         end
 
-        T.loadAddonFile("DysgearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "DysgearMemory")
+        T.loadAddonFile("The Guild Book gear/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book gear")
         onEvent(frame, "CHAT_MSG_ADDON", "DysGuildGear", "frame", "GUILD", "Alice-Silvermoon")
 
         T.assertTrue(received.sync == sync)
@@ -395,7 +395,7 @@ T.test("sync registration failure does not disable local stable tracking", funct
                 deferredStartup = callback
             end,
         },
-        DysgearMemoryDB = NIL,
+        TheGuildBookGearDB = NIL,
     }, function()
         local GGM = {
             DEFAULT_STABILITY_DELAY_SECONDS = 300,
@@ -418,8 +418,8 @@ T.test("sync registration failure does not disable local stable tracking", funct
             return "ignored", nil
         end
 
-        T.loadAddonFile("DysgearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "DysgearMemory")
+        T.loadAddonFile("The Guild Book gear/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book gear")
         onEvent(frame, "PLAYER_LOGIN")
         deferredStartup()
 

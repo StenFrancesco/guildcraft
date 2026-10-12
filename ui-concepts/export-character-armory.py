@@ -3,7 +3,7 @@
 from pathlib import Path
 from PIL import Image
 
-MEDIA = Path(__file__).resolve().parents[1] / "GuildGearMemory" / "Media" / "ArtisanJournal"
+MEDIA = Path(__file__).resolve().parents[1] / "The Guild Book" / "Media" / "ArtisanJournal"
 SOURCE = Path(__file__).resolve().parents[1] / "tests" / "Source"
 
 for name, size in (("character-armory", (1024, 1024)),

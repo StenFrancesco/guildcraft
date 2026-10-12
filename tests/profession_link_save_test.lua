@@ -2,9 +2,9 @@ local T = require("tests.testlib")
 
 local function loadModule()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionLinkSave.lua", GGM)
+    T.loadAddonFile("The Guild Book/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionLinkSave.lua", GGM)
     return GGM
 end
 
@@ -361,9 +361,9 @@ end)
 
 T.test("first player profession save activates and indexes the player after current roster confirms membership", function()
     local GGM = loadModule()
-    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionIndex.lua", GGM)
+    T.loadAddonFile("The Guild Book/Storage.lua", GGM)
     local db = assert(GGM.InitializeDatabase(nil))
     local api = {
         UnitFullName = function() return "Alice", "Silvermoon" end,
