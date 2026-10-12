@@ -1,7 +1,7 @@
 local _, GGM = ...
 
 -- This adapter exposes backend helpers to the existing presentation code.
--- Runtime state and all gear operations remain owned by DysgearMemory.
+-- Runtime state and all gear operations remain owned by The Guild Book gear.
 -- The empty browser still needs its paper-doll layout when the backend is
 -- disabled. These are presentation positions, never a capture/sync fallback.
 GGM.TRACKED_SLOTS = {

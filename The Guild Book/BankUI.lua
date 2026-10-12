@@ -195,9 +195,9 @@ local function detailEmptyText(entry, detail)
     if detail and detail.hasRecord then return detail.emptyStateText end
     if not entry then return "Select a bank snapshot." end
     if entry.companionState == "missing" then
-        return "Install DysbankMemory beside GuildGearMemory under _retail_/Interface/AddOns/DysbankMemory to browse saved bank snapshots."
+        return "Install The Guild Book Bank beside The Guild Book under _retail_/Interface/AddOns/The Guild Book Bank to browse saved bank snapshots."
     end
-    if entry.companionState == "unsupported" then return "DysbankMemory API schema is unsupported." end
+    if entry.companionState == "unsupported" then return "The Guild Book Bank API schema is unsupported." end
     if entry.databaseState == "unsupported" then return "Saved bank data has an unsupported schema." end
     if entry.kind == "guild" and not entry.guildKey then return "Current guild identity is unavailable." end
     if entry.kind == "guild" then return "No saved snapshot for this guild." end
@@ -458,7 +458,7 @@ local function updateDetail(page)
 
     setText(page.detailTitle, page.detailModel.name)
     local status = page.detailModel.completenessText .. " · Last observed " .. page.detailModel.capturedAtText
-    if entry.companionState == "missing" then status = status .. " · DysbankMemory not loaded" end
+    if entry.companionState == "missing" then status = status .. " · The Guild Book Bank not loaded" end
     if entry.companionState == "unsupported" then status = status .. " · companion API unsupported" end
     setText(page.detailStatus, status)
     local selected = getTab(page.detailModel, page.selectedTabID)
@@ -647,7 +647,7 @@ function GGM.CreateBankPage(api, frame)
     panel.background = panel:CreateTexture(nil, "BACKGROUND")
     panel.background:SetPoint("TOPLEFT", panel, "TOPLEFT", 9, -9)
     panel.background:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -9, 9)
-    panel.background:SetTexture("Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\bank-page.tga")
+    panel.background:SetTexture("Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\bank-page.tga")
     panel.backgroundMask = panel:CreateMaskTexture()
     panel.backgroundMask:SetTexture(GGM.UIJournalTextures.professionMask, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     panel.backgroundMask:SetAllPoints(panel.background)
