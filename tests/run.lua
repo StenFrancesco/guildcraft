@@ -21,6 +21,7 @@ local suites = {
     "tests.gear_sync_integration_test",
     "tests.profession_snapshot_test",
     "tests.profession_index_test",
+    "tests.guid_recipe_test",
     "tests.profession_link_save_test",
     "tests.main_test",
     "tests.saved_character_model_test",

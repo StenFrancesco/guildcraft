@@ -65,9 +65,7 @@ function GGM.InitializeDatabase(existing)
             schemaVersion = GGM.SCHEMA_VERSION,
             localCharacterGUIDs = {},
             professions = {},
-            nextLocalCharacterID = 1,
             professionCharacters = {},
-            localCharacterIDByGUID = {},
             professionRecipeIndex = {},
             professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION,
             professionIndexRepairCandidates = {},
@@ -90,6 +88,8 @@ function GGM.InitializeDatabase(existing)
         return nil, "database-professions-invalid"
     end
 
+    local migrated, migrationErr = GGM.MigrateProfessionGUIDIndex(existing)
+    if not migrated then return nil, migrationErr end
     local indexOk, indexErr = GGM.EnsureProfessionIndex(existing, true)
     if not indexOk then return nil, indexErr end
     return existing, nil
@@ -167,7 +167,7 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     local guildMembershipVerified = type(options) == "table"
         and options.guildMembershipVerified == true
 
-    local localID, characterErr = GGM.PrepareProfessionCharacterForSave(
+    local memberGUID, characterErr = GGM.PrepareProfessionCharacterForSave(
         db,
         identity,
         guildMembershipVerified
@@ -177,9 +177,9 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     local indexOk, indexErr = GGM.EnsureProfessionIndex(db, true)
     if not indexOk then return false, indexErr end
 
-    if localID == nil then
-        localID, characterErr = GGM.EnsureProfessionCharacter(db, identity)
-        if not localID then return false, characterErr end
+    if memberGUID == nil then
+        memberGUID, characterErr = GGM.EnsureProfessionCharacter(db, identity)
+        if not memberGUID then return false, characterErr end
     end
 
     local record = db.professions[identity.key]
@@ -199,7 +199,7 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
 
     local indexed, reconcileErr = GGM.ReconcileProfessionRecipeMembership(
         db,
-        localID,
+        memberGUID,
         snapshot
     )
     if not indexed then return false, reconcileErr end
@@ -208,7 +208,7 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     record.snapshots[snapshot.professionID] = copyProfessionSnapshot(snapshot)
     db.professions[identity.key] = record
 
-    local entry = db.professionCharacters[localID]
+    local entry = db.professionCharacters[memberGUID]
     if guildMembershipVerified and entry.active ~= true then entry.active = true end
     return true, nil
 end

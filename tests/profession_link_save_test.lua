@@ -382,7 +382,7 @@ T.test("first player profession save activates and indexes the player after curr
     }
     T.assertTrue(GGM.ReconcileProfessionGuildRoster(api, db))
     T.assertTrue(GGM.professionRosterMembershipCurrent)
-    T.assertNil(db.localCharacterIDByGUID["Player-1-ABC"])
+    T.assertNil((db.professionCharacters["Player-1-ABC"] and "Player-1-ABC"))
 
     local controller = GGM.CreateProfessionLinkSaveController(api, db)
     controller.activeIdentity = assert(GGM.BuildPlayerIdentity(api))
@@ -401,7 +401,7 @@ T.test("first player profession save activates and indexes the player after curr
 
     T.assertEqual(result, "saved")
     T.assertNil(err)
-    local localID = db.localCharacterIDByGUID["Player-1-ABC"]
+    local localID = (db.professionCharacters["Player-1-ABC"] and "Player-1-ABC")
     T.assertNotNil(localID)
     T.assertTrue(db.professionCharacters[localID].active)
     local matches = assert(GGM.GetProfessionRecipeCharacters(db, 164, 41234))
