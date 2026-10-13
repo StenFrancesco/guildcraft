@@ -1,6 +1,5 @@
 local _, GGM = ...
 local recipeIndexConsistent
-local MAX_SAFE_INTEGER = 9007199254740991
 
 local function nonEmptyString(value)
     return type(value) == "string" and value ~= ""
@@ -13,105 +12,8 @@ local function positiveInteger(value)
         and value == math.floor(value)
 end
 
-local function canAdvance(value)
-    local advanced = value + 1
-    return value < MAX_SAFE_INTEGER and positiveInteger(advanced) and advanced > value
-end
-
-local function highestReservedID(professionCharacters, localCharacterIDByGUID, repairCandidates)
-    local highest = 0
-    local malformed = false
-
-    local function reserve(localID)
-        if type(localID) == "number" then
-            if localID > highest then highest = localID end
-            if not positiveInteger(localID) then malformed = true end
-        else
-            malformed = true
-        end
-    end
-
-    if type(professionCharacters) == "table" then
-        for localID in pairs(professionCharacters) do
-            reserve(localID)
-        end
-    end
-
-    if type(localCharacterIDByGUID) == "table" then
-        for guid, localID in pairs(localCharacterIDByGUID) do
-            if not nonEmptyString(guid) then malformed = true end
-            reserve(localID)
-        end
-    end
-
-    if type(repairCandidates) == "table" then
-        for _, candidate in pairs(repairCandidates) do
-            if type(candidate) == "table" then
-                reserve(candidate.localID)
-            else
-                malformed = true
-            end
-        end
-    end
-
-    return highest, nil, malformed
-end
-
-function GGM.InitializeProfessionIndexState(db)
-    if type(db) ~= "table" or type(db.professions) ~= "table" then
-        return false, "database-professions-invalid"
-    end
-
-    local registryMissing = type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table"
-    local indexMissing = type(db.professionRecipeIndex) ~= "table"
-
-    local highestID, highestErr, registryMalformed = highestReservedID(
-        db.professionCharacters,
-        db.localCharacterIDByGUID,
-        db.professionIndexRepairCandidates
-    )
-    if highestID == nil then return false, highestErr end
-
-    local nextID = db.nextLocalCharacterID
-    if type(nextID) == "number" and nextID ~= nextID then
-        return false, "profession-character-id-exhausted"
-    end
-    if highestID == 0
-        and type(nextID) ~= "number"
-        and (nextID ~= nil or registryMalformed) then
-        return false, "profession-character-id-exhausted"
-    end
-
-    local highWater = highestID
-    if type(nextID) == "number" and nextID > highWater then highWater = nextID end
-    local minimumNextID = math.floor(highWater) + 1
-    if minimumNextID <= highestID or not positiveInteger(minimumNextID) then
-        return false, "profession-character-id-exhausted"
-    end
-
-    if not positiveInteger(nextID) or nextID <= highestID then
-        nextID = minimumNextID
-    end
-    if not canAdvance(nextID) then
-        return false, "profession-character-id-exhausted"
-    end
-
-    db.nextLocalCharacterID = nextID
-    db.professionCharacters = type(db.professionCharacters) == "table"
-        and db.professionCharacters or {}
-    db.localCharacterIDByGUID = type(db.localCharacterIDByGUID) == "table"
-        and db.localCharacterIDByGUID or {}
-    db.professionRecipeIndex = type(db.professionRecipeIndex) == "table"
-        and db.professionRecipeIndex or {}
-    db.professionRecipeIndexVersion = type(db.professionRecipeIndexVersion) == "number"
-        and db.professionRecipeIndexVersion or 0
-    db.professionIndexRepairCandidates = type(db.professionIndexRepairCandidates) == "table"
-        and db.professionIndexRepairCandidates or {}
-    if registryMissing or indexMissing or registryMalformed then db.professionRecipeIndexVersion = 0 end
-    db.professionIndexRepairNeeded = db.professionIndexRepairNeeded == true
-
-    return true, nil
+local function registeredGUID(db, guid)
+    if db.professionCharacters[guid] ~= nil then return guid end
 end
 
 function GGM.IsProfessionGUID(value)
@@ -122,32 +24,9 @@ local function copyRegistryIdentity(identity, active)
     return { guid = identity.guid, key = identity.key, active = active == true }
 end
 
-local function highestReservedRegistryID(db)
-    local highest = 0
-    for localID in pairs(db.professionCharacters) do
-        if positiveInteger(localID) and localID > highest then highest = localID end
-    end
-    local candidates = db.professionIndexRepairCandidates
-    if type(candidates) == "table" then
-        for _, candidate in pairs(candidates) do
-            local localID = type(candidate) == "table" and candidate.localID or nil
-            if positiveInteger(localID) and localID > highest then highest = localID end
-        end
-    end
-    return highest
-end
-
-local function normalizeNextLocalCharacterID(db)
-    local minimum = highestReservedRegistryID(db) + 1
-    if not positiveInteger(db.nextLocalCharacterID) or db.nextLocalCharacterID < minimum then
-        db.nextLocalCharacterID = minimum
-    end
-end
-
 function GGM.EnsureProfessionCharacter(db, identity)
     if type(db) ~= "table"
         or type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table"
         or type(db.professions) ~= "table" then
         return nil, "profession-registry-invalid"
     end
@@ -171,30 +50,25 @@ function GGM.EnsureProfessionCharacter(db, identity)
         return nil, "profession-identity-ambiguous"
     end
 
-    local existingID = db.localCharacterIDByGUID[identity.guid]
-    if existingID ~= nil then
-        if not positiveInteger(existingID) then return nil, "profession-registry-inconsistent" end
-        local entry = db.professionCharacters[existingID]
+    local existingGUID = registeredGUID(db, identity.guid)
+    if existingGUID ~= nil then
+        if not GGM.IsProfessionGUID(existingGUID) then return nil, "profession-registry-inconsistent" end
+        local entry = db.professionCharacters[existingGUID]
         if type(entry) ~= "table" or entry.guid ~= identity.guid then
             return nil, "profession-registry-inconsistent"
         end
         if entry.key ~= identity.key then return nil, "profession-registry-key-mismatch" end
-        return existingID, nil
+        return existingGUID, nil
     end
 
-    normalizeNextLocalCharacterID(db)
-    local localID = db.nextLocalCharacterID
-    if not canAdvance(localID) then return nil, "profession-character-id-exhausted" end
-    db.nextLocalCharacterID = localID + 1
-    db.professionCharacters[localID] = copyRegistryIdentity(identity, false)
-    db.localCharacterIDByGUID[identity.guid] = localID
-    return localID, nil
+    db.professionCharacters[identity.guid] = copyRegistryIdentity(identity, false)
+    return identity.guid, nil
 end
 
-function GGM.RekeyProfessionCharacter(db, localID, identity, validateOnly)
+function GGM.RekeyProfessionCharacter(db, memberGUID, identity, validateOnly)
     local entry = type(db) == "table"
         and type(db.professionCharacters) == "table"
-        and db.professionCharacters[localID] or nil
+        and db.professionCharacters[memberGUID] or nil
     if type(entry) ~= "table" or entry.guid ~= identity.guid then
         return false, "profession-registry-inconsistent"
     end
@@ -271,8 +145,8 @@ function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVeri
         return nil, "profession-identity-guid-invalid"
     end
 
-    local existingID = db.localCharacterIDByGUID[identity.guid]
-    if existingID == nil then
+    local existingGUID = registeredGUID(db, identity.guid)
+    if existingGUID == nil then
         local targetRecord = db.professions[identity.key]
         if targetRecord ~= nil then
             if type(targetRecord) ~= "table"
@@ -300,31 +174,30 @@ function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVeri
         if candidate ~= nil then
             if guildMembershipVerified ~= true
                 or not storedRepairCandidateIsValid(db, identity.guid, candidate, identity.key)
-                or db.professionCharacters[candidate.localID] ~= nil then
+                or db.professionCharacters[candidate.guid] ~= nil then
                 db.professionIndexRepairNeeded = true
                 return nil, "profession-identity-ambiguous"
             end
 
-            local localID = candidate.localID
-            db.professionCharacters[localID] = {
+            local memberGUID = candidate.guid
+            db.professionCharacters[memberGUID] = {
                 guid = identity.guid,
                 key = candidate.sourceKey,
                 active = candidate.active,
             }
-            db.localCharacterIDByGUID[identity.guid] = localID
 
-            local validated, validateErr = GGM.RekeyProfessionCharacter(db, localID, identity, true)
+            local validated, validateErr = GGM.RekeyProfessionCharacter(db, memberGUID, identity, true)
             if not validated then
-                db.professionCharacters[localID] = nil
-                db.localCharacterIDByGUID[identity.guid] = nil
+                db.professionCharacters[memberGUID] = nil
+
                 db.professionIndexRepairNeeded = true
                 return nil, validateErr
             end
 
-            local rekeyed, rekeyResult = GGM.RekeyProfessionCharacter(db, localID, identity)
+            local rekeyed, rekeyResult = GGM.RekeyProfessionCharacter(db, memberGUID, identity)
             if not rekeyed then
-                db.professionCharacters[localID] = nil
-                db.localCharacterIDByGUID[identity.guid] = nil
+                db.professionCharacters[memberGUID] = nil
+
                 db.professionIndexRepairNeeded = true
                 return nil, rekeyResult
             end
@@ -333,12 +206,12 @@ function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVeri
             local _, ambiguous, invalidCanonical = canonicalGUIDRecords(db)
             db.professionIndexRepairNeeded = next(ambiguous) ~= nil or invalidCanonical
                 or next(db.professionIndexRepairCandidates) ~= nil
-            return localID, nil, rekeyResult
+            return memberGUID, nil, rekeyResult
         end
         return nil, nil, false
     end
 
-    local entry = db.professionCharacters[existingID]
+    local entry = db.professionCharacters[existingGUID]
     if type(entry) ~= "table" or entry.guid ~= identity.guid then
         return nil, "profession-registry-inconsistent"
     end
@@ -366,13 +239,13 @@ function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVeri
             db.professionIndexRepairNeeded = true
             return nil, "profession-identity-ambiguous"
         end
-        local ok, rekeyResult = GGM.RekeyProfessionCharacter(db, existingID, identity)
+        local ok, rekeyResult = GGM.RekeyProfessionCharacter(db, existingGUID, identity)
         if not ok then return nil, rekeyResult end
         db.professionIndexRepairCandidates[identity.guid] = nil
         local _, ambiguous, invalidCanonical = canonicalGUIDRecords(db)
         db.professionIndexRepairNeeded = next(ambiguous) ~= nil or invalidCanonical
             or next(db.professionIndexRepairCandidates) ~= nil
-        return existingID, nil, rekeyResult
+        return existingGUID, nil, rekeyResult
     end
 
     local record = db.professions[identity.key]
@@ -396,17 +269,17 @@ function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVeri
         return nil, "profession-identity-ambiguous"
     end
 
-    return existingID, nil, false
+    return existingGUID, nil, false
 end
 
-function GGM.SetProfessionCharacterActive(db, localID, active)
+function GGM.SetProfessionCharacterActive(db, memberGUID, active)
     if type(db) ~= "table" or type(db.professionCharacters) ~= "table" then
         return false, "profession-character-state-invalid"
     end
-    if not positiveInteger(localID) or type(active) ~= "boolean" then
+    if not GGM.IsProfessionGUID(memberGUID) or type(active) ~= "boolean" then
         return false, "profession-character-state-invalid"
     end
-    local entry = db.professionCharacters[localID]
+    local entry = db.professionCharacters[memberGUID]
     if type(entry) ~= "table" or not GGM.IsProfessionGUID(entry.guid) then
         return false, "profession-character-missing"
     end
@@ -414,30 +287,30 @@ function GGM.SetProfessionCharacterActive(db, localID, active)
     return true, nil
 end
 
-local function insertCrafterID(crafters, localID)
-    for position, existingID in ipairs(crafters) do
-        if existingID == localID then return false end
-        if existingID > localID then
-            table.insert(crafters, position, localID)
+local function insertCrafterGUID(crafters, memberGUID)
+    for position, existingGUID in ipairs(crafters) do
+        if existingGUID == memberGUID then return false end
+        if existingGUID > memberGUID then
+            table.insert(crafters, position, memberGUID)
             return true
         end
     end
-    table.insert(crafters, localID)
+    table.insert(crafters, memberGUID)
     return true
 end
 
-local function removeCrafterID(crafters, localID)
-    for position, existingID in ipairs(crafters) do
-        if existingID == localID then
+local function removeCrafterGUID(crafters, memberGUID)
+    for position, existingGUID in ipairs(crafters) do
+        if existingGUID == memberGUID then
             table.remove(crafters, position)
             return true
         end
-        if existingID > localID then return false end
+        if existingGUID > memberGUID then return false end
     end
     return false
 end
 
-local function addRecipeMembership(index, professionID, recipe, localID)
+local function addRecipeMembership(index, professionID, recipe, memberGUID)
     local profession = index[professionID]
     if type(profession) ~= "table" then
         profession = {}
@@ -458,17 +331,17 @@ local function addRecipeMembership(index, professionID, recipe, localID)
         entry.outputIcon = recipe.outputIcon
     end
 
-    insertCrafterID(entry.crafters, localID)
+    insertCrafterGUID(entry.crafters, memberGUID)
 end
 
-local function removeMembershipFromProfession(index, professionID, localID)
+local function removeMembershipFromProfession(index, professionID, memberGUID)
     local profession = index[professionID]
     if type(profession) ~= "table" then return end
 
     for recipeID, entry in pairs(profession) do
         local crafters = type(entry) == "table" and entry.crafters or nil
         if type(crafters) == "table" then
-            removeCrafterID(crafters, localID)
+            removeCrafterGUID(crafters, memberGUID)
             if #crafters == 0 then
                 profession[recipeID] = nil
             end
@@ -499,7 +372,7 @@ local function hasUnresolvedLegacyLocalMarker(db, characterKey, guid)
         and GGM.HasUnresolvedLocalGearMarker(db, characterKey, guid)
 end
 
-local function removeCrafterFromAllProfessions(index, localID)
+local function removeCrafterFromAllProfessions(index, memberGUID)
     local professionIDs = {}
     for professionID in pairs(index) do
         professionIDs[#professionIDs + 1] = professionID
@@ -507,41 +380,40 @@ local function removeCrafterFromAllProfessions(index, localID)
     table.sort(professionIDs)
 
     for _, professionID in ipairs(professionIDs) do
-        removeMembershipFromProfession(index, professionID, localID)
+        removeMembershipFromProfession(index, professionID, memberGUID)
     end
 end
 
-local function purgeProfessionCharacter(db, localID)
-    local entry = db.professionCharacters[localID]
+local function purgeProfessionCharacter(db, memberGUID)
+    local entry = db.professionCharacters[memberGUID]
     if type(entry) ~= "table" then return end
     if hasUnresolvedLegacyLocalMarker(db, entry.key, entry.guid) then return end
 
-    removeCrafterFromAllProfessions(db.professionRecipeIndex, localID)
+    removeCrafterFromAllProfessions(db.professionRecipeIndex, memberGUID)
     db.professions[entry.key] = nil
-    db.localCharacterIDByGUID[entry.guid] = nil
-    db.professionCharacters[localID] = nil
+
+    db.professionCharacters[memberGUID] = nil
     if type(GGM.RemoveLocalGearMarker) == "function" then GGM.RemoveLocalGearMarker(db, entry.key) end
     if type(db.professionIndexRepairCandidates) == "table" then
         db.professionIndexRepairCandidates[entry.guid] = nil
     end
 end
 
-function GGM.ReconcileProfessionRecipeMembership(db, localID, capture)
-    if not positiveInteger(localID) then
-        return false, "profession-character-id-invalid"
+function GGM.ReconcileProfessionRecipeMembership(db, memberGUID, capture)
+    if not GGM.IsProfessionGUID(memberGUID) then
+        return false, "profession-character-guid-invalid"
     end
     local valid, err = GGM.ValidateProfessionCapture(capture)
     if not valid then return false, err end
     if type(db) ~= "table" or type(db.professionRecipeIndex) ~= "table"
-        or type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table" then
+        or type(db.professionCharacters) ~= "table" then
         return false, "profession-index-invalid"
     end
     if not recipeIndexConsistent(db) then
         return false, "profession-index-invalid"
     end
 
-    local character = db.professionCharacters[localID]
+    local character = db.professionCharacters[memberGUID]
     if type(character) ~= "table" or not GGM.IsProfessionGUID(character.guid) then
         return false, "profession-character-missing"
     end
@@ -549,7 +421,7 @@ function GGM.ReconcileProfessionRecipeMembership(db, localID, capture)
     removeMembershipFromProfession(
         db.professionRecipeIndex,
         capture.professionID,
-        localID
+        memberGUID
     )
 
     for _, recipe in ipairs(capture.recipes) do
@@ -557,34 +429,28 @@ function GGM.ReconcileProfessionRecipeMembership(db, localID, capture)
             db.professionRecipeIndex,
             capture.professionID,
             recipe,
-            localID
+            memberGUID
         )
     end
     db.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
     return true, nil
 end
 
-local function validRegistryPair(db, localID, entry)
-    return positiveInteger(localID)
+local function validRegistryPair(memberGUID, entry)
+    return GGM.IsProfessionGUID(memberGUID)
         and type(entry) == "table"
         and GGM.IsProfessionGUID(entry.guid)
         and nonEmptyString(entry.key)
         and type(entry.active) == "boolean"
-        and db.localCharacterIDByGUID[entry.guid] == localID
+        and entry.guid == memberGUID
 end
 
 local function registryConsistent(db)
-    if type(db.professionCharacters) ~= "table" or type(db.localCharacterIDByGUID) ~= "table" then
+    if type(db.professionCharacters) ~= "table" then
         return false
     end
-    for localID, entry in pairs(db.professionCharacters) do
-        if not validRegistryPair(db, localID, entry) then return false end
-    end
-    for guid, localID in pairs(db.localCharacterIDByGUID) do
-        local entry = db.professionCharacters[localID]
-        if not GGM.IsProfessionGUID(guid) or type(entry) ~= "table" or entry.guid ~= guid then
-            return false
-        end
+    for memberGUID, entry in pairs(db.professionCharacters) do
+        if not validRegistryPair(memberGUID, entry) then return false end
     end
     return true
 end
@@ -598,18 +464,18 @@ local function crafterListConsistent(db, crafters)
         count = count + 1
     end
 
-    local previousID = 0
+    local previousGUID = ""
     for position = 1, count do
-        local localID = rawget(crafters, position)
-        local entry = db.professionCharacters[localID]
-        if not positiveInteger(localID)
-            or localID <= previousID
+        local memberGUID = rawget(crafters, position)
+        local entry = db.professionCharacters[memberGUID]
+        if not GGM.IsProfessionGUID(memberGUID)
+            or memberGUID <= previousGUID
             or type(entry) ~= "table"
             or not GGM.IsProfessionGUID(entry.guid)
-            or db.localCharacterIDByGUID[entry.guid] ~= localID then
+            or entry.guid ~= memberGUID then
             return false
         end
-        previousID = localID
+        previousGUID = memberGUID
     end
 
     return true
@@ -618,8 +484,7 @@ end
 recipeIndexConsistent = function(db)
     if type(db) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
-        or type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table" then
+        or type(db.professionCharacters) ~= "table" then
         return false
     end
 
@@ -693,22 +558,22 @@ local function hasExactlyTwoCanonicalRecords(db, guid, sourceKey, destinationKey
 end
 
 local function trustedRepairCandidate(db, guid)
-    local localID = db.localCharacterIDByGUID[guid]
-    local entry = db.professionCharacters[localID]
-    if not validRegistryPair(db, localID, entry) then return nil end
+    local memberGUID = registeredGUID(db, guid)
+    local entry = db.professionCharacters[memberGUID]
+    if not validRegistryPair(memberGUID, entry) then return nil end
     if not hasExactlyTwoCanonicalRecords(db, guid, entry.key) then return nil end
-    return { localID = localID, sourceKey = entry.key, active = entry.active }
+    return { guid = memberGUID, sourceKey = entry.key, active = entry.active }
 end
 
 storedRepairCandidateIsValid = function(db, guid, candidate, destinationKey)
     return type(candidate) == "table"
-        and positiveInteger(candidate.localID)
+        and candidate.guid == guid
         and nonEmptyString(candidate.sourceKey)
         and type(candidate.active) == "boolean"
         and hasExactlyTwoCanonicalRecords(db, guid, candidate.sourceKey, destinationKey)
 end
 
-local function recipeCatalogAssociationsRemainStable(db, rebuiltEntries, rebuiltByGUID)
+local function recipeCatalogAssociationsRemainStable(db, rebuiltEntries)
     local catalog = db.professionRecipeIndex
     if type(catalog) ~= "table" or next(catalog) == nil then return true end
 
@@ -720,15 +585,14 @@ local function recipeCatalogAssociationsRemainStable(db, rebuiltEntries, rebuilt
                 or not crafterListConsistent(db, recipe.crafters) then
                 return false
             end
-            for _, localID in ipairs(recipe.crafters) do
-                local previous = db.professionCharacters[localID]
-                local rebuilt = rebuiltEntries[localID]
+            for _, memberGUID in ipairs(recipe.crafters) do
+                local previous = db.professionCharacters[memberGUID]
+                local rebuilt = rebuiltEntries[memberGUID]
                 if type(previous) ~= "table"
                     or not GGM.IsProfessionGUID(previous.guid)
-                    or db.localCharacterIDByGUID[previous.guid] ~= localID
+                    or previous.guid ~= memberGUID
                     or type(rebuilt) ~= "table"
-                    or rebuilt.guid ~= previous.guid
-                    or rebuiltByGUID[previous.guid] ~= localID then
+                    or rebuilt.guid ~= previous.guid then
                     return false
                 end
             end
@@ -741,48 +605,25 @@ local function registryMatchesCanonical(db)
     local canonicalByGUID, ambiguous, invalidRecord = canonicalGUIDRecords(db)
     if invalidRecord then return false end
     for guid in pairs(ambiguous) do
-        if db.localCharacterIDByGUID[guid] ~= nil or db.professionIndexRepairNeeded ~= true then return false end
+        if registeredGUID(db, guid) ~= nil or db.professionIndexRepairNeeded ~= true then return false end
     end
-    for guid, localID in pairs(db.localCharacterIDByGUID) do
-        local canonical, entry = canonicalByGUID[guid], db.professionCharacters[localID]
+    for guid in pairs(db.professionCharacters) do
+        local memberGUID = guid
+        local canonical, entry = canonicalByGUID[guid], db.professionCharacters[memberGUID]
         if ambiguous[guid] or type(canonical) ~= "table" or type(entry) ~= "table"
             or canonical.key ~= entry.key then return false end
     end
     for guid in pairs(canonicalByGUID) do
-        if not ambiguous[guid] and db.localCharacterIDByGUID[guid] == nil then return false end
+        if not ambiguous[guid] and registeredGUID(db, guid) == nil then return false end
     end
     if next(ambiguous) == nil then db.professionIndexRepairNeeded = false end
     return true
 end
 
 local function rebuildRegistryFromCanonical(db, oldRegistryConsistent)
-    local oldEntries, oldByGUID = db.professionCharacters, db.localCharacterIDByGUID
+    local oldEntries = db.professionCharacters
     local candidates = type(db.professionIndexRepairCandidates) == "table"
         and db.professionIndexRepairCandidates or {}
-    local highest = 0
-    for localID in pairs(oldEntries) do
-        if type(localID) == "number" and localID > highest then highest = localID end
-    end
-    for _, localID in pairs(oldByGUID) do
-        if type(localID) == "number" and localID > highest then highest = localID end
-    end
-    for _, candidate in pairs(candidates) do
-        local localID = type(candidate) == "table" and candidate.localID or nil
-        if type(localID) == "number" and localID > highest then highest = localID end
-    end
-    if type(db.nextLocalCharacterID) == "number" and db.nextLocalCharacterID > highest then
-        highest = db.nextLocalCharacterID
-    end
-    local minimumNext = math.floor(highest) + 1
-    if not positiveInteger(minimumNext) or minimumNext <= highest then
-        db.professionIndexRepairNeeded = true
-        return false, "profession-character-id-exhausted"
-    end
-    local nextID = db.nextLocalCharacterID
-    if not positiveInteger(nextID) or nextID < minimumNext then
-        nextID = minimumNext
-    end
-
     local canonicalByGUID, ambiguous = canonicalGUIDRecords(db)
     for guid, candidate in pairs(candidates) do
         if not ambiguous[guid] or not storedRepairCandidateIsValid(db, guid, candidate) then
@@ -796,36 +637,24 @@ local function rebuildRegistryFromCanonical(db, oldRegistryConsistent)
         end
     end
 
-    local rebuiltEntries, rebuiltByGUID = {}, {}
-    local proposedNextID = nextID
+    local rebuiltEntries = {}
     for guid, canonical in pairs(canonicalByGUID) do
         if not ambiguous[guid] then
-            local localID = oldByGUID[guid]
-            local previous = localID and oldEntries[localID] or nil
-            if not (positiveInteger(localID) and type(previous) == "table" and previous.guid == guid) then
-                localID = proposedNextID
-                if not canAdvance(proposedNextID) then
-                    db.professionIndexRepairNeeded = true
-                    db.professionIndexRepairCandidates = candidates
-                    return false, "profession-character-id-exhausted"
-                end
-                proposedNextID = proposedNextID + 1
-            end
-            rebuiltEntries[localID] = {
+            local memberGUID = guid
+            local previous = oldEntries[guid]
+            rebuiltEntries[memberGUID] = {
                 guid = guid,
                 key = canonical.key,
                 active = type(previous) == "table" and previous.active == true,
             }
-            rebuiltByGUID[guid] = localID
         end
     end
-    if not recipeCatalogAssociationsRemainStable(db, rebuiltEntries, rebuiltByGUID) then
+    if not recipeCatalogAssociationsRemainStable(db, rebuiltEntries) then
         db.professionIndexRepairCandidates = candidates
         db.professionIndexRepairNeeded = true
         return false, "profession-index-repair-needed"
     end
-    db.professionCharacters, db.localCharacterIDByGUID = rebuiltEntries, rebuiltByGUID
-    db.nextLocalCharacterID = proposedNextID
+    db.professionCharacters = rebuiltEntries
     db.professionIndexRepairCandidates = candidates
     db.professionIndexRepairNeeded = next(ambiguous) ~= nil or next(candidates) ~= nil
     return true
@@ -834,7 +663,6 @@ end
 function GGM.ReconcileProfessionRegistry(db)
     if type(db) ~= "table" or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table"
         or type(db.professionRecipeIndex) ~= "table" then
         return false, "profession-index-invalid"
     end
@@ -880,7 +708,6 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         or type(db) ~= "table"
         or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
         or type(db.localCharacterGUIDs) ~= "table" then
         return false, "profession-roster-unavailable"
@@ -930,9 +757,9 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
     end
 
     -- Check all canonical key changes before touching cached membership or index state.
-    for localID, entry in pairs(db.professionCharacters) do
+    for memberGUID, entry in pairs(db.professionCharacters) do
         if type(entry) ~= "table" or not GGM.IsProfessionGUID(entry.guid)
-            or db.localCharacterIDByGUID[entry.guid] ~= localID
+            or entry.guid ~= memberGUID
             or type(entry.key) ~= "string" or type(entry.active) ~= "boolean" then
             return false, "profession-roster-unavailable"
         end
@@ -942,7 +769,7 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
                 db.professionIndexRepairNeeded = true
                 return false, "profession-roster-rename-conflict"
             end
-            local rekeyOk = GGM.RekeyProfessionCharacter(db, localID, current, true)
+            local rekeyOk = GGM.RekeyProfessionCharacter(db, memberGUID, current, true)
             if not rekeyOk then
                 db.professionIndexRepairNeeded = true
                 return false, "profession-roster-rename-conflict"
@@ -950,11 +777,11 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         end
     end
 
-    for localID, entry in pairs(db.professionCharacters) do
+    for memberGUID, entry in pairs(db.professionCharacters) do
         local current = currentByGUID[entry.guid]
         if current then
             if entry.key ~= current.key then
-                local rekeyOk = GGM.RekeyProfessionCharacter(db, localID, current)
+                local rekeyOk = GGM.RekeyProfessionCharacter(db, memberGUID, current)
                 if not rekeyOk then
                     db.professionIndexRepairNeeded = true
                     return false, "profession-roster-rename-conflict"
@@ -971,22 +798,22 @@ function GGM.ReconcileProfessionGuildRoster(api, db)
         end
     end
 
-    local purgeLocalIDs = {}
-    for localID, entry in pairs(db.professionCharacters) do
+    local purgeGUIDs = {}
+    for memberGUID, entry in pairs(db.professionCharacters) do
         if currentByGUID[entry.guid] == nil
             and not isLocallyOwnedGUID(db, entry.guid)
             and not hasUnresolvedLegacyLocalMarker(db, entry.key, entry.guid) then
-            purgeLocalIDs[#purgeLocalIDs + 1] = localID
+            purgeGUIDs[#purgeGUIDs + 1] = memberGUID
         end
     end
-    table.sort(purgeLocalIDs)
+    table.sort(purgeGUIDs)
 
     for _, entry in pairs(db.professionCharacters) do
         entry.active = currentByGUID[entry.guid] ~= nil
     end
 
-    for _, localID in ipairs(purgeLocalIDs) do
-        purgeProfessionCharacter(db, localID)
+    for _, memberGUID in ipairs(purgeGUIDs) do
+        purgeProfessionCharacter(db, memberGUID)
     end
 
     if type(GGM.PurgeDepartedGearRecords) == "function" then GGM.PurgeDepartedGearRecords(db, currentByGUID) end
@@ -1006,11 +833,9 @@ function GGM.EnsureProfessionIndex(db, validateFully, expectedSchemaVersion)
     end
 
     if type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
         or type(db.professionIndexRepairCandidates) ~= "table"
         or type(db.professionIndexRepairNeeded) ~= "boolean"
-        or not positiveInteger(db.nextLocalCharacterID)
         or db.professionRecipeIndexVersion ~= GGM.PROFESSION_RECIPE_INDEX_VERSION then
         return false, "profession-index-invalid"
     end
@@ -1038,12 +863,11 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
     local results = {}
     local membershipCurrent = GGM.professionRosterMembershipCurrent == true
     if type(recipe) == "table" and type(recipe.crafters) == "table" then
-        for _, localID in ipairs(recipe.crafters) do
-            local entry = db.professionCharacters[localID]
+        for _, memberGUID in ipairs(recipe.crafters) do
+            local entry = db.professionCharacters[memberGUID]
             if type(entry) == "table" then
                 table.insert(results, {
-                    localCharacterID = localID,
-                    guid = entry.guid,
+                    guid = memberGUID,
                     key = entry.key,
                     active = entry.active == true,
                     membershipCurrent = membershipCurrent,
@@ -1052,7 +876,7 @@ function GGM.GetProfessionRecipeCharacters(db, professionID, recipeID)
         end
     end
     table.sort(results, function(left, right)
-        return left.localCharacterID < right.localCharacterID
+        return left.guid < right.guid
     end)
     return results, nil, membershipCurrent
 end
@@ -1061,29 +885,18 @@ local function catalogMemberOwnershipIsTrusted(db)
     if type(db) ~= "table"
         or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
-        or type(db.localCharacterIDByGUID) ~= "table"
         or not localOwnershipSetIsTrusted(db)
         or db.professionIndexRepairNeeded == true then
         return false
     end
 
-    for localID, entry in pairs(db.professionCharacters) do
-        if not positiveInteger(localID)
+    for memberGUID, entry in pairs(db.professionCharacters) do
+        if not GGM.IsProfessionGUID(memberGUID)
             or type(entry) ~= "table"
             or not GGM.IsProfessionGUID(entry.guid)
             or not nonEmptyString(entry.key)
             or type(entry.active) ~= "boolean"
-            or db.localCharacterIDByGUID[entry.guid] ~= localID then
-            return false
-        end
-    end
-
-    for guid, localID in pairs(db.localCharacterIDByGUID) do
-        local entry = db.professionCharacters[localID]
-        if not GGM.IsProfessionGUID(guid)
-            or not positiveInteger(localID)
-            or type(entry) ~= "table"
-            or entry.guid ~= guid then
+            or entry.guid ~= memberGUID then
             return false
         end
     end
@@ -1108,14 +921,15 @@ local function catalogMemberOwnershipIsTrusted(db)
         end
     end
 
-    for guid, localID in pairs(db.localCharacterIDByGUID) do
+    for guid in pairs(db.professionCharacters) do
+        local memberGUID = guid
         local canonical = canonicalByGUID[guid]
-        local entry = db.professionCharacters[localID]
+        local entry = db.professionCharacters[memberGUID]
         if not canonical or canonical.key ~= entry.key then return false end
     end
     for guid, canonical in pairs(canonicalByGUID) do
-        local localID = db.localCharacterIDByGUID[guid]
-        local entry = db.professionCharacters[localID]
+        local memberGUID = registeredGUID(db, guid)
+        local entry = db.professionCharacters[memberGUID]
         if not entry or entry.key ~= canonical.key then return false end
     end
 
@@ -1182,9 +996,9 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
     end
     local hasSnapshot, incomplete = false, false
     local validSelectedSnapshot = false
-    local validSnapshotsByLocalID = {}
+    local validSnapshotsByGUID = {}
 
-    for localID, member in pairs(db.professionCharacters) do
+    for memberGUID, member in pairs(db.professionCharacters) do
         if catalogCharacterEligible(db, member, membershipCurrent) then
             local canonical = db.professions[member.key]
             local snapshots = canonical.snapshots
@@ -1208,7 +1022,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                         incomplete = true
                     else
                         validSelectedSnapshot = true
-                        validSnapshotsByLocalID[localID] = snapshot
+                        validSnapshotsByGUID[memberGUID] = snapshot
                     end
                 end
             end
@@ -1233,10 +1047,10 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                 outputIcon = indexedRecipe.outputIcon,
                 knownBy = {},
             }
-            for _, localID in ipairs(indexedRecipe.crafters) do
-                local member = db.professionCharacters[localID]
+            for _, memberGUID in ipairs(indexedRecipe.crafters) do
+                local member = db.professionCharacters[memberGUID]
                 if catalogCharacterEligible(db, member, membershipCurrent) then
-                    local snapshot = validSnapshotsByLocalID[localID]
+                    local snapshot = validSnapshotsByGUID[memberGUID]
                     if not snapshot then
                         incomplete = true
                     else
@@ -1318,4 +1132,89 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         recipes = recipes,
         message = rosterWarning,
     }
+end
+
+-- Stage the old numeric registry and catalog before replacing any saved tables.
+-- A missing or conflicting mapping cannot safely identify a recipe owner.
+function GGM.MigrateProfessionGUIDIndex(db)
+    if db.professionRecipeIndexVersion == GGM.PROFESSION_RECIPE_INDEX_VERSION then
+        return true, nil
+    end
+    if db.professionRecipeIndexVersion ~= 3
+        or type(db.professionCharacters) ~= "table"
+        or type(db.localCharacterIDByGUID) ~= "table"
+        or type(db.professionRecipeIndex) ~= "table"
+        or type(db.professionIndexRepairCandidates) ~= "table" then
+        return false, "profession-index-invalid"
+    end
+    local staged = {}
+    for key, value in pairs(db) do staged[key] = value end
+    staged.professionCharacters, staged.professionRecipeIndex, staged.professionIndexRepairCandidates = {}, {}, {}
+    for oldID, entry in pairs(db.professionCharacters) do
+        if not positiveInteger(oldID) or type(entry) ~= "table"
+            or not GGM.IsProfessionGUID(entry.guid)
+            or db.localCharacterIDByGUID[entry.guid] ~= oldID
+            or staged.professionCharacters[entry.guid] ~= nil then
+            return false, "profession-index-repair-needed"
+        end
+        staged.professionCharacters[entry.guid] = { guid = entry.guid, key = entry.key, active = entry.active }
+    end
+    for guid, oldID in pairs(db.localCharacterIDByGUID) do
+        local entry = db.professionCharacters[oldID]
+        if not positiveInteger(oldID) or type(entry) ~= "table" or entry.guid ~= guid then
+            return false, "profession-index-repair-needed"
+        end
+    end
+    for guid, candidate in pairs(db.professionIndexRepairCandidates) do
+        if not GGM.IsProfessionGUID(guid) or type(candidate) ~= "table"
+            or not positiveInteger(candidate.localID)
+            or not nonEmptyString(candidate.sourceKey) or type(candidate.active) ~= "boolean" then
+            return false, "profession-index-repair-needed"
+        end
+        staged.professionIndexRepairCandidates[guid] = { guid = guid, sourceKey = candidate.sourceKey, active = candidate.active }
+    end
+    for professionID, recipes in pairs(db.professionRecipeIndex) do
+        if not positiveInteger(professionID) or type(recipes) ~= "table" then
+            return false, "profession-index-invalid"
+        end
+        local converted = {}
+        staged.professionRecipeIndex[professionID] = converted
+        for recipeID, recipe in pairs(recipes) do
+            if type(recipe) ~= "table" or type(recipe.crafters) ~= "table" then
+                return false, "profession-index-invalid"
+            end
+            local crafters, count, previous = {}, 0, 0
+            for position in pairs(recipe.crafters) do
+                if not positiveInteger(position) then return false, "profession-index-invalid" end
+                count = count + 1
+            end
+            for position = 1, count do
+                local oldID = rawget(recipe.crafters, position)
+                if not positiveInteger(oldID) or oldID <= previous then
+                    return false, "profession-index-invalid"
+                end
+                local entry = db.professionCharacters[oldID]
+                if type(entry) ~= "table" or not staged.professionCharacters[entry.guid] then
+                    return false, "profession-index-repair-needed"
+                end
+                crafters[position], previous = entry.guid, oldID
+            end
+            table.sort(crafters)
+            local convertedRecipe = {}
+            for key, value in pairs(recipe) do convertedRecipe[key] = value end
+            convertedRecipe.crafters = crafters
+            converted[recipeID] = convertedRecipe
+        end
+    end
+    staged.professionRecipeIndexVersion = GGM.PROFESSION_RECIPE_INDEX_VERSION
+    staged.localCharacterIDByGUID, staged.nextLocalCharacterID = nil, nil
+    local valid, err = GGM.EnsureProfessionIndex(staged, true)
+    if not valid then return false, err end
+    db.professionCharacters = staged.professionCharacters
+    db.professionRecipeIndex = staged.professionRecipeIndex
+    db.professionIndexRepairCandidates = staged.professionIndexRepairCandidates
+    db.professionIndexRepairNeeded = staged.professionIndexRepairNeeded
+    db.professionRecipeIndexVersion = staged.professionRecipeIndexVersion
+    db.localCharacterIDByGUID, db.nextLocalCharacterID = nil, nil
+    return true, nil
 end
