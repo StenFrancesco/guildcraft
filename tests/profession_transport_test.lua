@@ -129,7 +129,7 @@ T.test("profession transport registers GC_PROF3 and reports API registration fai
     T.assertEqual(failedErr, "profession-prefix-register-failed:DuplicatePrefix")
 end)
 
-T.test("profession transport sends bounded targeted WHISPER frames at least 0.5 seconds apart", function()
+T.test("profession transport yields bounded ordered WHISPER frames without a fixed delay", function()
     local GGM = loadModules()
     local api, c = makeApi()
     local transport = assert(GGM.CreateProfessionTransport(api, function() end))
@@ -142,7 +142,7 @@ T.test("profession transport sends bounded targeted WHISPER frames at least 0.5 
     T.assertTrue(#c.timers > 0)
 
     for _, timer in ipairs(c.timers) do
-        T.assertTrue(timer.delay >= 0.5)
+        T.assertEqual(timer.delay, 0)
         timer:Fire()
     end
 
@@ -152,7 +152,8 @@ T.test("profession transport sends bounded targeted WHISPER frames at least 0.5 
         T.assertEqual(call.channel, "WHISPER")
         T.assertEqual(call.target, "Bob-Silvermoon")
         T.assertTrue(#call.frame <= 240)
-        if index > 1 then T.assertTrue(call.at - c.sent[index - 1].at >= 0.5) end
+        T.assertEqual(call.at, 10)
+        T.assertEqual(tonumber(call.frame:match("^F1|%d+|(%d+)|")), index)
     end
 end)
 
@@ -292,7 +293,7 @@ T.test("profession transport cancellation clears work and makes stale timers gen
     T.assertEqual(#c.sent, sentAtCancel + 1)
 end)
 
-T.test("profession transport preserves pacing across cancellation", function()
+T.test("profession transport reuse after cancellation has no leftover fixed delay", function()
     local GGM = loadModules()
     local api, c = makeApi()
     local transport = assert(GGM.CreateProfessionTransport(api, function() end))
@@ -304,9 +305,8 @@ T.test("profession transport preserves pacing across cancellation", function()
 
     T.assertTrue(ok)
     T.assertNil(err)
-    T.assertEqual(#c.sent, sentAtCancel)
-    T.assertEqual(#c.timers, 1)
-    T.assertTrue(c.timers[1].delay >= 0.5)
+    T.assertEqual(#c.sent, sentAtCancel + 1)
+    T.assertEqual(#c.timers, 0)
 end)
 
 T.test("profession transport does not schedule overlapping timers from completion callbacks", function()
@@ -323,6 +323,59 @@ T.test("profession transport does not schedule overlapping timers from completio
     T.assertTrue(ok)
     T.assertTrue(followupQueued)
     T.assertEqual(#c.timers, 1)
+    T.assertEqual(#c.sent, 1)
+    T.assertEqual(c.timers[1].delay, 0)
+end)
+
+T.test("profession completion can cancel and reuse without losing the new continuation", function()
+    local G = loadModules()
+    local api, c = makeApi()
+    local transport = assert(G.CreateProfessionTransport(api, function() end))
+    local completed, reused = 0, false
+    T.assertTrue(G.SendProfessionPayload(transport, "first", nil, function(sent)
+        T.assertTrue(sent)
+        G.CancelProfessionTransport(transport)
+        reused = G.SendProfessionPayload(transport, string.rep("r", 500), nil, function(success)
+            T.assertTrue(success)
+            completed = completed + 1
+        end)
+    end))
+    T.assertTrue(reused)
+    T.assertEqual(#c.sent, 2)
+    T.assertEqual(#c.timers, 1)
+    T.assertEqual(transport.sendTimer, c.timers[1])
+    for _, timer in ipairs(c.timers) do timer:Fire() end
+    T.assertEqual(completed, 1)
+    T.assertEqual(#c.sent, 4)
+    T.assertNil(transport.sendTimer)
+    T.assertNil(transport.inFlight)
+end)
+
+T.test("duplicate successful CTL callbacks do not consume the next profession frame", function()
+    local G = loadModules()
+    local api, c = makeApi()
+    local pending, completed = {}, 0
+    api.ChatThrottleLib.SendAddonMessage = function(_, priority, prefix, frame, channel, target, queue, fn, arg)
+        pending[#pending + 1] = function() fn(arg, true, 0) end
+    end
+    local transport = assert(G.CreateProfessionTransport(api, function() end))
+    T.assertTrue(G.SendProfessionPayload(transport, string.rep("x", 300), nil, function(sent)
+        T.assertTrue(sent)
+        completed = completed + 1
+    end))
+    pending[1]()
+    T.assertEqual(#c.timers, 1)
+    c.timers[1]:Fire()
+    T.assertEqual(#pending, 2)
+    local secondFrame = transport.inFlight
+    pending[1]()
+    T.assertEqual(transport.inFlight, secondFrame)
+    T.assertEqual(completed, 0)
+    pending[2]()
+    pending[2]()
+    T.assertEqual(completed, 1)
+    T.assertEqual(#transport.outboundFrames, 0)
+    T.assertNil(transport.sendTimer)
 end)
 
 T.test("profession transport aborts queued frames and reports API send failures without retry", function()
@@ -369,7 +422,7 @@ T.test("profession transport accepts boolean and enum API success values", funct
     T.assertNil(sendErr)
 end)
 
-T.test("profession transport fails the active group if pacing timer creation fails", function()
+T.test("profession transport fails the active group if continuation timer creation fails", function()
     local GGM = loadModules()
     local api, c = makeApi()
     api.C_Timer.NewTimer = function() return nil end

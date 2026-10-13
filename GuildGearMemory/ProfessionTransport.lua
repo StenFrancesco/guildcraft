@@ -8,7 +8,6 @@ local MAX_FRAME_COUNT = 320
 local MAX_OUTBOUND_FRAMES = 640
 local MAX_INBOUND_ASSEMBLIES = 4
 local REASSEMBLY_TTL_SECONDS = 300
-local SEND_INTERVAL_SECONDS = 0.5
 local MAX_SENDER_BYTES = 80
 
 local SEND_RESULT_NAMES = {
@@ -112,9 +111,10 @@ end
 
 local pumpOutbound
 
-local function schedulePump(transport, delay)
+local function schedulePump(transport)
     local generation = transport.generation
-    local timerOk, timerOrError = pcall(transport.api.C_Timer.NewTimer, delay, function()
+    -- Yield to the next update; CTL owns bandwidth and prefix-throttle waits.
+    local timerOk, timerOrError = pcall(transport.api.C_Timer.NewTimer, 0, function()
         if generation ~= transport.generation then return end
         transport.sendTimer = nil
         local _, pumpErr = pumpOutbound(transport)
@@ -141,16 +141,6 @@ pumpOutbound = function(transport)
         local err = "profession-time-unavailable"
         abortOutbound(transport, err, queued.group)
         return false, err
-    end
-
-    local delay = transport.nextSendAt and (transport.nextSendAt - now) or 0
-    if delay > 0 then
-        local scheduled, scheduleErr = schedulePump(transport, delay)
-        if not scheduled then
-            abortOutbound(transport, scheduleErr, queued.group)
-            return false, scheduleErr
-        end
-        return true, nil
     end
 
     if queued.group.target ~= nil and transport.canSendTarget ~= nil then
@@ -190,24 +180,22 @@ pumpOutbound = function(transport)
         end
         if transport.outboundFrames[1] == queued then table.remove(transport.outboundFrames, 1) end
         transport.lastSendError = nil
-        local timeOk, sentAt = pcall(transport.api.GetTime)
-        if not timeOk or type(sentAt) ~= "number" then
-            completionError = "profession-time-unavailable"
-            abortOutbound(transport, completionError, queued.group)
-            return
-        end
-        transport.nextSendAt = sentAt + SEND_INTERVAL_SECONDS
+        -- Reserve the pump while completion callbacks enqueue more work.
+        -- CTL can complete synchronously, so advancing inline would recurse.
+        transport.sendTimer = true
         if not queued.group.cancelled and not queued.group.finished then
             queued.group.remaining = queued.group.remaining - 1
             if queued.group.remaining == 0 then finishGroup(queued.group, true, nil) end
         end
         if generation ~= transport.generation or transport.closed then return end
-        if #transport.outboundFrames > 0 and transport.sendTimer == nil then
-            local scheduled, err = schedulePump(transport, SEND_INTERVAL_SECONDS)
+        if #transport.outboundFrames > 0 then
+            local scheduled, err = schedulePump(transport)
             if not scheduled then
                 completionError = err
                 abortOutbound(transport, err, queued.group)
             end
+        else
+            transport.sendTimer = nil
         end
     end
     local ok = pcall(transport.api.ChatThrottleLib.SendAddonMessage, transport.api.ChatThrottleLib,
@@ -278,7 +266,6 @@ function GGM.CreateProfessionTransport(api, onPayload, onFailure)
         onPayload = onPayload,
         onFailure = onFailure,
         nextMessageID = 0,
-        nextSendAt = nil,
         outboundFrames = {},
         sendTimer = nil,
         inboundAssemblies = {},

@@ -351,9 +351,21 @@ T.test("maximum complete profession membership fits bounded frames and is stored
     local recipes = {}
     for index = 1, 4096 do recipes[index] = index end
     a:save(a.identity, recipes); a:ready(); b:ready()
-    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(35)
-    T.assertNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
-    bus:advance(230)
+    local receive = b.G.ReceiveProfessionFrame
+    local dataID, partialFrames, savedEarly = nil, 0, false
+    b.G.ReceiveProfessionFrame = function(transport, prefix, text, channel, sender)
+        local id, index, total = text:match("^F1|(%d+)|(%d+)|(%d+)|")
+        if text:find("|P3|D|", 1, true) then dataID = id end
+        local state, err = receive(transport, prefix, text, channel, sender)
+        if id == dataID and tonumber(index) < tonumber(total) then
+            partialFrames = partialFrames + 1
+            if b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164) then savedEarly = true end
+        end
+        return state, err
+    end
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(45)
+    T.assertTrue(partialFrames > 0)
+    T.assertFalse(savedEarly)
     T.assertEqual(#b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164).recipes, 4096)
     for _, frame in ipairs(bus.frames) do T.assertTrue(#frame.text <= 240) end
 end)
@@ -754,11 +766,19 @@ T.test("an active multi-frame transfer stops when its selected peer goes offline
     local recipes = {}
     for index = 1, 4096 do recipes[index] = index end
     a:save(a.identity, recipes); a:ready(); b:ready()
-    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(34)
-    T.assertTrue(bus:count("D") > 0)
-    local framesAtTransition = #bus.frames
-    b.identity.online = false
-    assert(a.G.RefreshProfessionSyncRoster(a.sync))
+    local receive = b.G.ReceiveProfessionFrame
+    local framesAtTransition
+    b.G.ReceiveProfessionFrame = function(transport, prefix, text, channel, sender)
+        local state, err = receive(transport, prefix, text, channel, sender)
+        if not framesAtTransition and text:find("|P3|D|", 1, true) then
+            framesAtTransition = #bus.frames
+            b.identity.online = false
+            assert(a.G.RefreshProfessionSyncRoster(a.sync))
+        end
+        return state, err
+    end
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(45)
+    T.assertNotNil(framesAtTransition)
     bus:advance(100)
     T.assertEqual(#bus.frames, framesAtTransition)
     T.assertNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
