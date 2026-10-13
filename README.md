@@ -49,21 +49,34 @@ The **Sync profession** button compares the selected profession again, subject
 to a 60-second cooldown. Nearby updates coalesce into paced notices.
 
 GUILD carries compact hashes and responder-selection notices. Only one selected
-pair exchanges timestamp manifests and missing/newer character records through
-WHISPER. Each manifest contains character GUID and original capture timestamp;
-profession ID is in the exchange header. New observations use WoW server time.
-The newest complete observation wins, including newer observations with identical
-recipes. Receiving or forwarding data preserves its original timestamp.
+pair exchanges manifests and missing/newer character records through
+WHISPER. Each manifest contains character GUID, original capture timestamp and
+recipe content hash. Profession ID is in the exchange header. New observations
+use WoW server time.
+The newest complete observation wins. When the recipes match, a small freshness
+message updates the observation metadata without transferring the recipes again.
+Receiving or forwarding data preserves its original timestamp.
 Known recipes retain their local labels. Unfamiliar shared recipes use the
-sender's label when available, otherwise an explicit recipe ID.
+sender's label when available, otherwise an explicit recipe ID. Recipe requests
+include a bounded hint about labels already in the recipient's catalog, so the
+sender can omit redundant names and icons. This hint can occasionally suppress
+an unfamiliar label; the UI then shows the recipe ID. It never determines which
+recipes belong to a character or whether a snapshot is complete.
 
 Exchanges transfer at most four character-profession records and use bounded
 chunks, queues and timeouts. Records are requested sequentially in each direction;
 large transfers can defer remaining records to the next exchange. The recipient
 acknowledges a record only after validating the complete transfer. Partial or
-failed transfers preserve the previous cache. Deferred comparisons and background
-checks gradually catch up larger caches; the old eight-record login ceiling is
-removed. Throttling cancels queued work without accelerating retry frequency.
+failed transfers preserve the previous cache. Visible catalog refreshes are batched
+during receive bursts; records are saved and acknowledged as soon as they validate.
+Deferred comparisons and background checks gradually catch up larger caches;
+the old eight-record login ceiling is removed. Throttling cancels queued work
+without accelerating retry frequency.
+
+Queued whisper frames check recipient availability before sending. Confirmed
+offline recipients cancel the current work while preserving cached records.
+Recent valid protocol messages can provide temporary presence evidence when the
+guild roster is stale. Unknown presence without that evidence stops the transfer.
 
 Whisper records reach only their selected recipient. Other missing clients take
 their own deferred turn; up-to-date records are not downloaded again. Equal-time
@@ -71,10 +84,10 @@ conflicts retain existing data and require a fresh observation. Shared informati
 remains last-known/cached, including offline crafters; agreement does not prove
 their current recipes. Profession sync is independent of the gear companion.
 
-This version uses protocol P2 and prefix GC_PROF2; it does not synchronize with
-the previous profession protocol. On 2026-10-13 the user retired the older
-AGENTS.md synchronization restrictions and approved this bounded background
-design. All traffic remains within supported in-game addon communication and
+This version uses protocol P3 and prefix GC_PROF3; all participating copies must
+use this version. Existing SavedVariables do not need migration. On 2026-10-13
+the user retired the older AGENTS.md synchronization restrictions and approved
+this bounded background design. All traffic remains within supported in-game addon communication and
 respects unavailable APIs, combat restrictions and throttling.
 
 Run the regression suite with Lua 5.1 using `lua tests/run.lua`. In this

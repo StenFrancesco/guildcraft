@@ -67,7 +67,7 @@ local function makeFrame(messageID, index, total, chunk)
 end
 
 local function receive(GGM, transport, frame, sender, prefix, channel)
-    return GGM.ReceiveProfessionFrame(transport, prefix or "GC_PROF2", frame, channel or "GUILD", sender or "Alice-Silvermoon")
+    return GGM.ReceiveProfessionFrame(transport, prefix or "GC_PROF3", frame, channel or "GUILD", sender or "Alice-Silvermoon")
 end
 
 T.test("profession fragment identity includes the delivery channel", function()
@@ -85,7 +85,7 @@ T.test("profession fragment identity includes the delivery channel", function()
     T.assertEqual(received[1].channel, "WHISPER")
 end)
 
-T.test("profession transport registers GC_PROF2 and reports API registration failures", function()
+T.test("profession transport registers GC_PROF3 and reports API registration failures", function()
     local GGM = loadModules()
     local api, c = makeApi()
     local transport = assert(GGM.CreateProfessionTransport(api, function() end))
@@ -94,7 +94,7 @@ T.test("profession transport registers GC_PROF2 and reports API registration fai
 
     T.assertTrue(ok)
     T.assertNil(err)
-    T.assertEqual(c.registered[1], "GC_PROF2")
+    T.assertEqual(c.registered[1], "GC_PROF3")
 
     c.registerResult = 1
     local failed, failedErr = GGM.RegisterProfessionTransport(transport)
@@ -121,7 +121,7 @@ T.test("profession transport sends bounded targeted WHISPER frames at least 0.5 
 
     T.assertTrue(#c.sent > 1)
     for index, call in ipairs(c.sent) do
-        T.assertEqual(call.prefix, "GC_PROF2")
+        T.assertEqual(call.prefix, "GC_PROF3")
         T.assertEqual(call.channel, "WHISPER")
         T.assertEqual(call.target, "Bob-Silvermoon")
         T.assertTrue(#call.frame <= 240)
@@ -358,6 +358,139 @@ T.test("profession transport fails the active group if pacing timer creation fai
     T.assertEqual(#transport.outboundFrames, 0)
     T.assertEqual(#failures, 1)
     T.assertEqual(failures[1], err)
+end)
+
+T.test("profession transport aborts a whisper when the target goes offline between frames", function()
+    local GGM = loadModules()
+    local api, c = makeApi()
+    local online = true
+    local presenceChecks, failures, completionCalls = 0, {}, 0
+    local transport = assert(GGM.CreateProfessionTransport(api, function() end, function(err)
+        failures[#failures + 1] = err
+    end))
+    transport.canSendTarget = function(target)
+        presenceChecks = presenceChecks + 1
+        T.assertEqual(target, "Bob-Silvermoon")
+        return online
+    end
+
+    local ok, err = GGM.SendProfessionPayload(transport, string.rep("offline-aware", 50), "Bob-Silvermoon", function(sent, finishErr)
+        completionCalls = completionCalls + 1
+        T.assertFalse(sent)
+        T.assertEqual(finishErr, "profession-target-unavailable")
+    end)
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertEqual(#c.sent, 1)
+    T.assertEqual(presenceChecks, 1)
+    T.assertEqual(#c.timers, 1)
+
+    online = false
+    c.timers[1]:Fire()
+
+    T.assertEqual(#c.sent, 1)
+    T.assertEqual(presenceChecks, 2)
+    T.assertEqual(#transport.outboundFrames, 0)
+    T.assertNil(transport.sendTimer)
+    T.assertEqual(#c.timers, 1)
+    T.assertEqual(transport.lastSendError, "profession-target-unavailable")
+    T.assertEqual(#failures, 1)
+    T.assertEqual(failures[1], "profession-target-unavailable")
+    T.assertEqual(completionCalls, 1)
+
+    online = true
+    c.timers[1]:FireEvenIfCancelled()
+    T.assertEqual(#c.sent, 1)
+    T.assertEqual(#failures, 1)
+    T.assertEqual(completionCalls, 1)
+end)
+
+T.test("profession transport fails closed for unknown or throwing target presence", function()
+    local callbacks = {
+        function() return nil end,
+        function() error("presence API unavailable") end,
+    }
+
+    for _, canSendTarget in ipairs(callbacks) do
+        local GGM = loadModules()
+        local api, c = makeApi()
+        local failures, completionCalls, presenceChecks = {}, 0, 0
+        local transport = assert(GGM.CreateProfessionTransport(api, function() end, function(err)
+            failures[#failures + 1] = err
+        end))
+        transport.canSendTarget = function(target)
+            presenceChecks = presenceChecks + 1
+            T.assertEqual(target, "Bob-Silvermoon")
+            return canSendTarget()
+        end
+
+        local ok, err = GGM.SendProfessionPayload(transport, "private update", "Bob-Silvermoon", function(sent, finishErr)
+            completionCalls = completionCalls + 1
+            T.assertFalse(sent)
+            T.assertEqual(finishErr, "profession-target-unavailable")
+        end)
+
+        T.assertFalse(ok)
+        T.assertEqual(err, "profession-target-unavailable")
+        T.assertEqual(presenceChecks, 1)
+        T.assertEqual(#c.sent, 0)
+        T.assertEqual(#c.timers, 0)
+        T.assertEqual(#transport.outboundFrames, 0)
+        T.assertEqual(#failures, 1)
+        T.assertEqual(failures[1], "profession-target-unavailable")
+        T.assertEqual(completionCalls, 1)
+    end
+end)
+
+T.test("profession transport leaves guild sends independent of target presence", function()
+    local GGM = loadModules()
+    local api, c = makeApi()
+    local presenceChecks = 0
+    local transport = assert(GGM.CreateProfessionTransport(api, function() end))
+    transport.canSendTarget = function()
+        presenceChecks = presenceChecks + 1
+        return false
+    end
+
+    local ok, err = GGM.SendProfessionPayload(transport, string.rep("guild update", 50))
+    T.assertTrue(ok)
+    T.assertNil(err)
+    for _, timer in ipairs(c.timers) do timer:Fire() end
+
+    T.assertTrue(#c.sent > 1)
+    T.assertEqual(presenceChecks, 0)
+    for _, call in ipairs(c.sent) do
+        T.assertEqual(call.prefix, "GC_PROF3")
+        T.assertEqual(call.channel, "GUILD")
+        T.assertNil(call.target)
+    end
+end)
+
+T.test("profession transport does not send after target-presence callback cancels the group", function()
+    local GGM = loadModules()
+    local api, c = makeApi()
+    local failures, completions = {}, 0
+    local transport = assert(GGM.CreateProfessionTransport(api, function() end, function(err)
+        failures[#failures + 1] = err
+    end))
+    transport.canSendTarget = function()
+        GGM.CancelProfessionTransport(transport)
+        return true
+    end
+
+    local ok, err = GGM.SendProfessionPayload(transport, "cancel during presence check", "Bob-Silvermoon", function(sent, finishErr)
+        completions = completions + 1
+        T.assertFalse(sent)
+        T.assertEqual(finishErr, "profession-send-cancelled")
+    end)
+
+    T.assertTrue(ok)
+    T.assertNil(err)
+    T.assertEqual(#c.sent, 0)
+    T.assertEqual(#transport.outboundFrames, 0)
+    T.assertNil(transport.sendTimer)
+    T.assertEqual(#failures, 0)
+    T.assertEqual(completions, 1)
 end)
 
 return T

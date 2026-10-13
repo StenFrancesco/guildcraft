@@ -1,6 +1,6 @@
 local _, GGM = ...
 
-local PREFIX = "GC_PROF2"
+local PREFIX = "GC_PROF3"
 local MAX_MESSAGE_BYTES = 240
 local MAX_LOGICAL_BYTES = 65536
 local MAX_CHUNK_BYTES = 222 -- 240 minus the 18-byte F1 header.
@@ -138,7 +138,7 @@ local function schedulePump(transport, delay)
 end
 
 pumpOutbound = function(transport)
-    if transport.closed or transport.cancelling or transport.sendTimer ~= nil then return true, nil end
+    if transport.closed or transport.cancelling or transport.checkingTarget or transport.sendTimer ~= nil then return true, nil end
 
     while transport.outboundFrames[1] and transport.outboundFrames[1].group.cancelled do
         table.remove(transport.outboundFrames, 1)
@@ -161,6 +161,29 @@ pumpOutbound = function(transport)
             return false, scheduleErr
         end
         return true, nil
+    end
+
+    if queued.group.target ~= nil and transport.canSendTarget ~= nil then
+        local canSendTarget = transport.canSendTarget
+        if type(canSendTarget) ~= "function" then
+            local err = "profession-target-unavailable"
+            abortOutbound(transport, err, queued.group)
+            return false, err
+        end
+
+        transport.checkingTarget = true
+        local presenceCallOk, canSend = pcall(canSendTarget, queued.group.target)
+        transport.checkingTarget = false
+        if not presenceCallOk or canSend ~= true then
+            local err = "profession-target-unavailable"
+            abortOutbound(transport, err, queued.group)
+            return false, err
+        end
+
+        if transport.closed or transport.cancelling or queued.group.finished or queued.group.cancelled
+            or transport.outboundFrames[1] ~= queued then
+            return pumpOutbound(transport)
+        end
     end
 
     table.remove(transport.outboundFrames, 1)
