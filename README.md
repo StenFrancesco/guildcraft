@@ -40,28 +40,42 @@ capture and synchronization are unavailable; profession and bank features remain
 usable. `/ggm status` reports storage errors. Back up SavedVariables with WoW
 closed before manually resetting any database.
 
-The Professions tab shares complete last-known recipe snapshots with other
-guild members using the same addon version. It compares profession hashes once
-after login and guild roster readiness, when changed snapshots are saved, and
-when a profession is first selected. Identical recipe memberships send no
-recipe data. The **Sync profession** button compares the selected profession
-again, subject to a 60-second cooldown.
-Rapid changed saves coalesce into one paced notice containing the latest hash;
-reverting to the last announced contents cancels that notice.
+The Professions tab shares complete last-known recipe snapshots with guild
+members using the same protocol version. It compares profession hashes after
+login and guild roster readiness, when snapshots change, when a profession is
+first selected, and through randomized background checks every 5–7 minutes.
+Matching hashes heard recently suppress redundant background announcements.
+The **Sync profession** button compares the selected profession again, subject
+to a 60-second cooldown. Nearby updates coalesce into paced notices.
+
+GUILD carries compact hashes and responder-selection notices. Only one selected
+pair exchanges timestamp manifests and missing/newer character records through
+WHISPER. Each manifest contains character GUID and original capture timestamp;
+profession ID is in the exchange header. New observations use WoW server time.
+The newest complete observation wins, including newer observations with identical
+recipes. Receiving or forwarding data preserves its original timestamp.
 Known recipes retain their local labels. Unfamiliar shared recipes use the
 sender's label when available, otherwise an explicit recipe ID.
 
-One selected exchange supplies cached records to the participating clients;
-there are no recurring polls or automatic retries. Exchanges transfer at most
-four character-profession records, with at most eight across login catch-up.
-Large caches may show **Catch-up needed** and require another manual comparison.
-Conflicting observations preserve the previous cache. Shared data remains
-last-known information, including for offline crafters; agreement does not prove
+Exchanges transfer at most four character-profession records and use bounded
+chunks, queues and timeouts. Records are requested sequentially in each direction;
+large transfers can defer remaining records to the next exchange. The recipient
+acknowledges a record only after validating the complete transfer. Partial or
+failed transfers preserve the previous cache. Deferred comparisons and background
+checks gradually catch up larger caches; the old eight-record login ceiling is
+removed. Throttling cancels queued work without accelerating retry frequency.
+
+Whisper records reach only their selected recipient. Other missing clients take
+their own deferred turn; up-to-date records are not downloaded again. Equal-time
+conflicts retain existing data and require a fresh observation. Shared information
+remains last-known/cached, including offline crafters; agreement does not prove
 their current recipes. Profession sync is independent of the gear companion.
 
-The login hash announcement is a narrow exception to the project's default
-no-login-broadcast rule, explicitly reviewed and approved by the user for this
-feature on 2026-10-13. It does not authorize recurring or full-database sync.
+This version uses protocol P2 and prefix GC_PROF2; it does not synchronize with
+the previous profession protocol. On 2026-10-13 the user retired the older
+AGENTS.md synchronization restrictions and approved this bounded background
+design. All traffic remains within supported in-game addon communication and
+respects unavailable APIs, combat restrictions and throttling.
 
 Run the regression suite with Lua 5.1 using `lua tests/run.lua`. In this
 workspace, the local Lua 5.1 runtime can be used with

@@ -21,16 +21,18 @@ local function save(G, db, guid, ids, time)
     }, { guildMembershipVerified = true }))
 end
 
-T.test("profession digest ignores local character IDs capture times and localized names", function()
+T.test("profession digest includes capture times but ignores local IDs and localized names", function()
     local G = load()
     T.assertEqual(type(G.GetProfessionSyncDigest), "function")
     local a, b = G.InitializeDatabase(nil), G.InitializeDatabase(nil)
     save(G, a, "Player-1-AAA", { 3, 8 }, 100)
     save(G, b, "Player-1-BBB", { 9 })
-    save(G, b, "Player-1-AAA", { 3, 8 }, 200)
+    save(G, b, "Player-1-AAA", { 3, 8 }, 100)
     save(G, a, "Player-1-BBB", { 9 })
     b.professionRecipeIndex[164][3].name = "Localized label"
     T.assertEqual(G.GetProfessionSyncDigest(a, 164), G.GetProfessionSyncDigest(b, 164))
+    save(G, b, "Player-1-AAA", { 3, 8 }, 200)
+    T.assertFalse(G.GetProfessionSyncDigest(a, 164) == G.GetProfessionSyncDigest(b, 164))
     save(G, b, "Player-1-AAA", { 3, 10 }, 201)
     T.assertFalse(G.GetProfessionSyncDigest(a, 164) == G.GetProfessionSyncDigest(b, 164))
 end)
@@ -72,4 +74,13 @@ T.test("profession manifests exclude inactive or corrupt snapshots", function()
     db.professionCharacters[1].active = true
     db.professions["Player-1-AAA-Realm"].snapshots[164].complete = false
     T.assertNil(G.GetProfessionSyncManifest(db, 164))
+end)
+
+T.test("profession digests can be scoped to the current verified guild membership", function()
+    local G = load()
+    local a, b = G.InitializeDatabase(nil), G.InitializeDatabase(nil)
+    save(G, a, "Player-1-AAA", { 3 }); save(G, b, "Player-1-AAA", { 3 })
+    save(G, a, "Player-1-BBB", { 8 })
+    local members = { ["Player-1-AAA"] = true }
+    T.assertEqual(G.GetProfessionSyncDigest(a, 164, members), G.GetProfessionSyncDigest(b, 164, members))
 end)

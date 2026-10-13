@@ -113,10 +113,16 @@ function GGM.GetProfessionSyncManifest(db, professionID)
     return rows, nil
 end
 
-function GGM.GetProfessionSyncDigest(db, professionID)
+function GGM.GetProfessionSyncDigest(db, professionID, members)
     local rows, err = GGM.GetProfessionSyncManifest(db, professionID)
     if not rows then return nil, err end
-    local parts = { "D1:", tostring(professionID), ":" }
-    for _, row in ipairs(rows) do parts[#parts + 1] = row.guid .. ":" .. row.hash .. ";" end
-    return hashText(table.concat(parts)), nil, #rows
+    local parts = { "D2:", tostring(professionID), ":" }
+    local count = 0
+    for _, row in ipairs(rows) do
+        if not members or members[row.guid] then
+            parts[#parts + 1] = row.guid .. ":" .. row.hash .. ":" .. row.capturedAt .. ";"
+            count = count + 1
+        end
+    end
+    return hashText(table.concat(parts)), nil, count
 end

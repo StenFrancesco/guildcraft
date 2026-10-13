@@ -67,10 +67,25 @@ local function makeFrame(messageID, index, total, chunk)
 end
 
 local function receive(GGM, transport, frame, sender, prefix, channel)
-    return GGM.ReceiveProfessionFrame(transport, prefix or "GC_PROF", frame, channel or "GUILD", sender or "Alice-Silvermoon")
+    return GGM.ReceiveProfessionFrame(transport, prefix or "GC_PROF2", frame, channel or "GUILD", sender or "Alice-Silvermoon")
 end
 
-T.test("profession transport registers GC_PROF and reports API registration failures", function()
+T.test("profession fragment identity includes the delivery channel", function()
+    local G = loadModules()
+    local received = {}
+    local transport = assert(G.CreateProfessionTransport(makeApi(), function(payload, sender, channel)
+        received[#received + 1] = { payload = payload, channel = channel }
+        return "complete"
+    end))
+    receive(G, transport, makeFrame(1, 1, 2, "guild"))
+    receive(G, transport, makeFrame(1, 2, 2, "whisper"), nil, nil, "WHISPER")
+    T.assertEqual(#received, 0)
+    receive(G, transport, makeFrame(1, 1, 2, "private"), nil, nil, "WHISPER")
+    T.assertEqual(received[1].payload, "privatewhisper")
+    T.assertEqual(received[1].channel, "WHISPER")
+end)
+
+T.test("profession transport registers GC_PROF2 and reports API registration failures", function()
     local GGM = loadModules()
     local api, c = makeApi()
     local transport = assert(GGM.CreateProfessionTransport(api, function() end))
@@ -79,7 +94,7 @@ T.test("profession transport registers GC_PROF and reports API registration fail
 
     T.assertTrue(ok)
     T.assertNil(err)
-    T.assertEqual(c.registered[1], "GC_PROF")
+    T.assertEqual(c.registered[1], "GC_PROF2")
 
     c.registerResult = 1
     local failed, failedErr = GGM.RegisterProfessionTransport(transport)
@@ -87,7 +102,7 @@ T.test("profession transport registers GC_PROF and reports API registration fail
     T.assertEqual(failedErr, "profession-prefix-register-failed:DuplicatePrefix")
 end)
 
-T.test("profession transport sends bounded GUILD frames at least 0.5 seconds apart", function()
+T.test("profession transport sends bounded targeted WHISPER frames at least 0.5 seconds apart", function()
     local GGM = loadModules()
     local api, c = makeApi()
     local transport = assert(GGM.CreateProfessionTransport(api, function() end))
@@ -106,9 +121,9 @@ T.test("profession transport sends bounded GUILD frames at least 0.5 seconds apa
 
     T.assertTrue(#c.sent > 1)
     for index, call in ipairs(c.sent) do
-        T.assertEqual(call.prefix, "GC_PROF")
-        T.assertEqual(call.channel, "GUILD")
-        T.assertNil(call.target)
+        T.assertEqual(call.prefix, "GC_PROF2")
+        T.assertEqual(call.channel, "WHISPER")
+        T.assertEqual(call.target, "Bob-Silvermoon")
         T.assertTrue(#call.frame <= 240)
         if index > 1 then T.assertTrue(call.at - c.sent[index - 1].at >= 0.5) end
     end
@@ -169,7 +184,7 @@ T.test("profession transport ignores identical duplicate chunks and rejects conf
     local first = makeFrame(8, 1, 2, "first")
     T.assertEqual(receive(GGM, transport, first), "partial")
     T.assertEqual(receive(GGM, transport, first), "partial")
-    T.assertEqual(transport.inboundAssemblies["Alice-Silvermoon"]["000008"].received, 1)
+    T.assertEqual(transport.inboundAssemblies["Alice-Silvermoon"]["GUILD:000008"].received, 1)
 
     local state, err = receive(GGM, transport, makeFrame(8, 1, 2, "other"))
     T.assertNil(state)
@@ -208,8 +223,8 @@ T.test("profession transport expires incomplete assemblies after five minutes", 
     T.assertEqual(receive(GGM, transport, makeFrame(9, 1, 2, "old")), "partial")
     c.now = c.now + 301
     T.assertEqual(receive(GGM, transport, makeFrame(10, 1, 2, "new")), "partial")
-    T.assertNil(transport.inboundAssemblies["Alice-Silvermoon"]["000009"])
-    T.assertNotNil(transport.inboundAssemblies["Alice-Silvermoon"]["000010"])
+    T.assertNil(transport.inboundAssemblies["Alice-Silvermoon"]["GUILD:000009"])
+    T.assertNotNil(transport.inboundAssemblies["Alice-Silvermoon"]["GUILD:000010"])
 end)
 
 T.test("profession transport caps simultaneous reassemblies at four", function()

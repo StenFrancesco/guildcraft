@@ -1,7 +1,6 @@
 local _, GGM = ...
 
-local PREFIX = "GC_PROF"
-local CHAT_TYPE = "GUILD"
+local PREFIX = "GC_PROF2"
 local MAX_MESSAGE_BYTES = 240
 local MAX_LOGICAL_BYTES = 65536
 local MAX_CHUNK_BYTES = 222 -- 240 minus the 18-byte F1 header.
@@ -110,9 +109,9 @@ local function buildFrames(transport, payload)
     return frames, nil
 end
 
-local function sendFrame(transport, frame)
+local function sendFrame(transport, frame, target)
     local callOk, result = pcall(function()
-        return select(-1, transport.api.C_ChatInfo.SendAddonMessage(PREFIX, frame, CHAT_TYPE))
+        return select(-1, transport.api.C_ChatInfo.SendAddonMessage(PREFIX, frame, target and "WHISPER" or "GUILD", target))
     end)
     if not callOk then return false, "profession-send-addon-message-threw" end
     if not isSuccess(transport.api, result, SEND_ENUMS) then
@@ -165,7 +164,7 @@ pumpOutbound = function(transport)
     end
 
     table.remove(transport.outboundFrames, 1)
-    local sent, sendErr = sendFrame(transport, queued.frame)
+    local sent, sendErr = sendFrame(transport, queued.frame, queued.group.target)
     if not sent then
         abortOutbound(transport, sendErr, queued.group)
         return false, sendErr
@@ -274,6 +273,8 @@ end
 function GGM.SendProfessionPayload(transport, payload, target, onFinished)
     if type(transport) ~= "table" or transport.closed then return false, "profession-transport-unavailable" end
     if transport.cancelling then return false, "profession-transport-cancelling" end
+    if target ~= nil and (type(target) ~= "string" or #target == 0 or #target > MAX_SENDER_BYTES
+        or target:find("[%z\1-\31\127]")) then return false, "profession-target-invalid" end
 
     local frames, frameErr = buildFrames(transport, payload)
     if not frames then return false, frameErr end
@@ -292,7 +293,7 @@ function GGM.SendProfessionPayload(transport, payload, target, onFinished)
 end
 
 function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sender)
-    if prefix ~= PREFIX or channel ~= CHAT_TYPE then return "ignored", nil end
+    if prefix ~= PREFIX or (channel ~= "GUILD" and channel ~= "WHISPER") then return "ignored", nil end
     if type(transport) ~= "table" or transport.closed then return nil, "profession-transport-unavailable" end
     if type(sender) ~= "string" or #sender == 0 or #sender > MAX_SENDER_BYTES or sender:find("[%z\1-\31\127]") then
         local err = "profession-sender-invalid"
@@ -311,8 +312,9 @@ function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sende
     end
     cleanupAssemblies(transport, now)
 
+    local assemblyID = channel .. ":" .. frame.messageID
     local byMessageID = transport.inboundAssemblies[sender]
-    local assembly = byMessageID and byMessageID[frame.messageID] or nil
+    local assembly = byMessageID and byMessageID[assemblyID] or nil
     if not assembly then
         if activeAssemblyCount(transport) >= MAX_INBOUND_ASSEMBLIES then
             local err = "profession-inbound-assembly-limit"
@@ -321,9 +323,9 @@ function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sende
         end
         if not byMessageID then byMessageID = {}; transport.inboundAssemblies[sender] = byMessageID end
         assembly = { total = frame.total, chunks = {}, received = 0, bytes = 0, updatedAt = now }
-        byMessageID[frame.messageID] = assembly
+        byMessageID[assemblyID] = assembly
     elseif frame.total ~= assembly.total then
-        byMessageID[frame.messageID] = nil
+        byMessageID[assemblyID] = nil
         if next(byMessageID) == nil then transport.inboundAssemblies[sender] = nil end
         local err = "profession-frame-total-mismatch"
         transport.lastReceiveError = err
@@ -333,7 +335,7 @@ function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sende
     local previous = assembly.chunks[frame.index]
     if previous ~= nil then
         if previous == frame.chunk then transport.lastReceiveError = nil; return "partial", nil end
-        byMessageID[frame.messageID] = nil
+        byMessageID[assemblyID] = nil
         if next(byMessageID) == nil then transport.inboundAssemblies[sender] = nil end
         local err = "profession-frame-conflict"
         transport.lastReceiveError = err
@@ -345,7 +347,7 @@ function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sende
     assembly.bytes = assembly.bytes + #frame.chunk
     assembly.updatedAt = now
     if assembly.bytes > MAX_LOGICAL_BYTES then
-        byMessageID[frame.messageID] = nil
+        byMessageID[assemblyID] = nil
         if next(byMessageID) == nil then transport.inboundAssemblies[sender] = nil end
         local err = "profession-payload-too-large"
         transport.lastReceiveError = err
@@ -360,7 +362,7 @@ function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sende
     end
 
     local payload = table.concat(chunks)
-    byMessageID[frame.messageID] = nil
+    byMessageID[assemblyID] = nil
     if next(byMessageID) == nil then transport.inboundAssemblies[sender] = nil end
     if #payload > MAX_LOGICAL_BYTES then
         local err = "profession-payload-too-large"
@@ -368,7 +370,7 @@ function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sende
         return nil, err
     end
 
-    local handlerOk, state, handlerErr = pcall(transport.onPayload, payload, sender)
+    local handlerOk, state, handlerErr = pcall(transport.onPayload, payload, sender, channel)
     if not handlerOk then
         local err = "profession-payload-handler-threw"
         transport.lastReceiveError = err

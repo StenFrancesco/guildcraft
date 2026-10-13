@@ -31,7 +31,9 @@ local function guild()
         T.assertEqual(type(client.G.CreateProfessionSync), "function")
         client.db = client.G.InitializeDatabase(nil)
         client.api = {
-            GetTime = function() return self.now end, time = function() return 1700000000 + math.floor(self.now) end,
+            GetTime = function() return self.now end, time = function() return 999 end,
+            GetServerTime = function() return 1700000000 + math.floor(self.now) end,
+            random = function(low) return low end,
             IsInGuild = function() return not client.left end, GetGuildInfo = function() return "Guild", nil, nil, "Realm" end,
             UnitGUID = function() return client.identity.guid end,
             UnitFullName = function() return name, "Realm" end, GetRealmName = function() return "Realm" end,
@@ -49,14 +51,16 @@ local function guild()
             end },
             C_ChatInfo = {
                 RegisterAddonMessagePrefix = function(prefix) client.prefix = prefix; return 0 end,
-                SendAddonMessage = function(prefix, text, channel)
-                    self.frames[#self.frames + 1] = { sender = client.identity.key, text = text, prefix = prefix, channel = channel, at = self.now }
+                SendAddonMessage = function(prefix, text, channel, target)
+                    self.frames[#self.frames + 1] = { sender = client.identity.key, text = text, prefix = prefix, channel = channel, target = target, at = self.now }
                     if client.throttled then return 3 end
                     -- Blizzard delivers addon messages as later events, never
                     -- reentrantly inside the sender's SendAddonMessage call.
                     self.timers[#self.timers + 1] = { at = self.now, order = #self.frames, fn = function()
                         for _, peer in ipairs(self.clients) do
-                            if not peer.drop then peer.G.HandleProfessionSyncAddonMessage(peer.sync, prefix, text, channel, client.identity.key) end
+                            if not peer.drop and (channel == "GUILD" or target == peer.identity.key) then
+                                peer.G.HandleProfessionSyncAddonMessage(peer.sync, prefix, text, channel, client.identity.key)
+                            end
                         end
                     end }
                     return 0
@@ -79,15 +83,17 @@ local function guild()
         function client:ready() assert(self.G.RefreshProfessionSyncRoster(self.sync)) end
         return client
     end
-    function bus:count(kind)
+    function bus:count(kind, sender)
         local n = 0
-        for _, frame in ipairs(self.frames) do if frame.text:find("P1|" .. kind .. "|", 1, true) then n = n + 1 end end
+        for _, frame in ipairs(self.frames) do
+            if (not sender or frame.sender == sender) and frame.text:find("P2|" .. kind .. "|", 1, true) then n = n + 1 end
+        end
         return n
     end
     return bus
 end
 
-T.test("profession login announces once only after roster readiness and never polls", function()
+T.test("profession login announces only after roster readiness and schedules bounded background checks", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     T.assertEqual(#bus.frames, 0)
@@ -96,9 +102,10 @@ T.test("profession login announces once only after roster readiness and never po
     T.assertTrue(a.G.LoginProfessionSync(a.sync))
     bus:advance(20)
     T.assertEqual(bus:count("A"), 1)
+    T.assertEqual(bus:count("D"), 0)
     a.G.LoginProfessionSync(a.sync); a:ready(); bus:advance(600)
-    T.assertEqual(bus:count("A"), 1)
-    T.assertEqual(a.prefix, "GC_PROF")
+    T.assertEqual(bus:count("A"), 3)
+    T.assertEqual(a.prefix, "GC_PROF2")
 end)
 
 T.test("profession comparison transfers one complete cached snapshot from one responder", function()
@@ -130,23 +137,22 @@ T.test("equal profession hashes send no recipe data and manual sync obeys cooldo
     T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Cache hashes match")
 end)
 
-T.test("changed save converges online observers without duplicate downloads", function()
+T.test("changed save converges observers through separate selected whispers without repeating current records", function()
     local bus = guild()
     local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     a:ready(); b:ready(); c:ready()
     local before = a.G.GetProfessionSyncDigest(a.db, 164)
     a:save(a.identity, { 3, 8 })
     T.assertTrue(a.G.PublishProfessionSyncSave(a.sync, 164, before))
-    bus:advance(60)
+    bus:advance(180)
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
     T.assertNotNil(c.G.GetProfessionSyncRecord(c.db, a.identity.guid, 164))
-    T.assertEqual(bus:count("D"), 1)
-    local count = #bus.frames
+    T.assertEqual(bus:count("D"), 2)
     before = a.G.GetProfessionSyncDigest(a.db, 164)
-    a:save(a.identity, { 3, 8 }, 1700000100)
+    a:save(a.identity, { 3, 8 })
     a.G.PublishProfessionSyncSave(a.sync, 164, before)
     bus:advance(600)
-    T.assertEqual(#bus.frames, count)
+    T.assertEqual(bus:count("D"), 2)
 end)
 
 T.test("profession sync refuses older conflicting or locally owned replacements", function()
@@ -178,7 +184,7 @@ T.test("profession sync rejects strangers combat and throttling without retries"
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:save(a.identity, { 3 }); a:ready(); b:ready()
-    local result = b.G.HandleProfessionSyncAddonMessage(b.sync, "GC_PROF", "garbage", "GUILD", "Stranger-Realm")
+    local result = b.G.HandleProfessionSyncAddonMessage(b.sync, "GC_PROF2", "garbage", "GUILD", "Stranger-Realm")
     T.assertEqual(result, "ignored")
     b.api.InCombatLockdown = function() return true end
     T.assertFalse(b.G.RequestProfessionSync(b.sync, 164, "manual"))
@@ -233,9 +239,9 @@ T.test("dropped profession response preserves prior membership and expires witho
     a:save(a.identity, { 3, 8 }, 1700000001); b:save(a.identity, { 3 }, 1700000000)
     a:ready(); b:ready()
     local send = a.api.C_ChatInfo.SendAddonMessage
-    a.api.C_ChatInfo.SendAddonMessage = function(prefix, frame, channel)
-        if frame:find("P1|D|", 1, true) then b.drop = true end
-        local result = send(prefix, frame, channel)
+    a.api.C_ChatInfo.SendAddonMessage = function(prefix, frame, channel, target)
+        if frame:find("P2|D|", 1, true) then b.drop = true end
+        local result = send(prefix, frame, channel, target)
         return result
     end
     assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(400)
@@ -248,11 +254,11 @@ T.test("unsolicited or wrong-recipient profession payloads do not modify caches"
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:ready(); b:ready()
-    local payload = "P1|D|bob-realm|1-1|164|alice-realm;" .. a.identity.guid .. ";0123456789abcdef;1700000000;player;Blacksmithing;3:Recipe 3:"
+    local payload = "P2|D|bob-realm|1-1|164|alice-realm;" .. a.identity.guid .. ";0123456789abcdef;1700000000;player;Blacksmithing;3:Recipe 3:"
     a.G.SendProfessionPayload(a.sync.transport, payload)
     bus:advance(10)
     T.assertNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
-    a.G.SendProfessionPayload(a.sync.transport, "P1|Q|stranger-realm|1-2|164|0123456789abcdef;manual")
+    a.G.SendProfessionPayload(a.sync.transport, "P2|Q|stranger-realm|1-2|164|0123456789abcdef;manual")
     bus:advance(10)
     T.assertEqual(bus:count("C"), 0)
 end)
@@ -282,7 +288,7 @@ T.test("real profession event startup does not require the gear companion", func
     bus:advance(80)
     T.assertNotNil(G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
     onEvent(nil, "GUILD_ROSTER_UPDATE"); onEvent(nil, "PLAYER_ENTERING_WORLD"); bus:advance(600)
-    T.assertEqual(bus:count("A"), 1)
+    T.assertTrue(bus:count("A") >= 2)
 end)
 
 T.test("one login comparison catches up more than one profession within its finite budget", function()
@@ -329,7 +335,7 @@ T.test("profession sync refuses secret input and unavailable secret checks", fun
     a:ready(); b:ready()
     b.api.issecretvalue = nil
     T.assertFalse(b.G.RequestProfessionSync(b.sync, 164, "manual"))
-    b.api.issecretvalue = function(value) return value == "GC_PROF" end
+    b.api.issecretvalue = function(value) return value == "GC_PROF2" end
     assert(a.G.RequestProfessionSync(a.sync, 164, "manual")); bus:advance(60)
     T.assertEqual(bus:count("C"), 0)
 end)
@@ -347,7 +353,7 @@ T.test("maximum complete profession membership fits bounded frames and is stored
     for _, frame in ipairs(bus.frames) do T.assertTrue(#frame.text <= 240) end
 end)
 
-T.test("login repair stops at eight records across professions without automatic retries", function()
+T.test("login repair gradually catches up more than eight records across professions", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     for index = 1, 5 do
@@ -358,9 +364,9 @@ T.test("login repair stops at eight records across professions without automatic
             source = "guild-profession-link", status = "cached", recipes = { { recipeID = index + 10, name = "Potion" } },
         }, { guildMembershipVerified = true }))
     end
-    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); bus:advance(400)
-    T.assertEqual(bus:count("D"), 8)
-    local frames = #bus.frames; bus:advance(600); T.assertEqual(#bus.frames, frames)
+    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); bus:advance(1000)
+    T.assertEqual(bus:count("D"), 10)
+    bus:advance(600); T.assertEqual(bus:count("D"), 10)
 end)
 
 T.test("same-realm addon senders without a realm suffix resolve through the verified roster", function()
@@ -383,13 +389,13 @@ T.test("changed announcement compares its source even when another peer has the 
     a:ready(); b:ready(); c:ready()
     local before = c.G.GetProfessionSyncDigest(c.db, 164)
     c:save(offline, { 3, 8 }, 1700000001)
-    assert(c.G.PublishProfessionSyncSave(c.sync, 164, before)); bus:advance(65)
+    assert(c.G.PublishProfessionSyncSave(c.sync, 164, before)); bus:advance(180)
     T.assertEqual(#a.G.GetProfessionSyncRecord(a.db, offline.guid, 164).recipes, 2)
     T.assertEqual(#b.G.GetProfessionSyncRecord(b.db, offline.guid, 164).recipes, 2)
-    T.assertEqual(bus:count("D"), 1)
+    T.assertEqual(bus:count("D"), 2)
 end)
 
-T.test("changed saves during cooldown coalesce into one paced announcement and cancelled reverts stay silent", function()
+T.test("changed saves coalesce while newer reobservations of reverted contents retain their timestamp", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:ready(); b:ready()
@@ -401,14 +407,15 @@ T.test("changed saves during cooldown coalesce into one paced announcement and c
     before = a.G.GetProfessionSyncDigest(a.db, 164)
     a:save(a.identity, { 3, 8, 9 }, 1700000036); assert(a.G.PublishProfessionSyncSave(a.sync, 164, before))
     bus:advance(65)
-    T.assertEqual(bus:count("A"), 2)
+    T.assertEqual(bus:count("A", a.identity.key), 2)
     T.assertEqual(#b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164).recipes, 3)
     before = a.G.GetProfessionSyncDigest(a.db, 164)
     a:save(a.identity, { 3 }, 1700000100); assert(a.G.PublishProfessionSyncSave(a.sync, 164, before))
     before = a.G.GetProfessionSyncDigest(a.db, 164)
     a:save(a.identity, { 3, 8, 9 }, 1700000101); assert(a.G.PublishProfessionSyncSave(a.sync, 164, before))
     bus:advance(200)
-    T.assertEqual(bus:count("A"), 2)
+    T.assertTrue(bus:count("A", a.identity.key) >= 3)
+    T.assertEqual(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164).capturedAt, 1700000101)
 end)
 
 T.test("guild invalidation cancels a paced changed-save announcement", function()
@@ -424,7 +431,7 @@ T.test("guild invalidation cancels a paced changed-save announcement", function(
     a.sync.rosterReady = false
     a.G.CancelProfessionSync(a.sync)
     bus:advance(400)
-    T.assertEqual(bus:count("A"), 1)
+    T.assertEqual(bus:count("A", a.identity.key), 1)
     T.assertNil(next(a.sync.pendingSaves))
 end)
 
@@ -457,7 +464,7 @@ T.test("combat at a paced save deadline surfaces catch-up and creates no retries
     T.assertEqual(a.G.GetProfessionSyncStatus(a.sync, 164), "Catch-up needed")
     a.api.InCombatLockdown = function() return false end
     bus:advance(400)
-    T.assertEqual(bus:count("A"), 1)
+    T.assertEqual(bus:count("A", a.identity.key), 1)
 end)
 
 T.test("received recipe labels prefer local metadata and retain unfamiliar peer labels", function()
@@ -474,7 +481,7 @@ T.test("received recipe labels prefer local metadata and retain unfamiliar peer 
     T.assertEqual(record.recipes[2].name, "Foreign unfamiliar")
 end)
 
-T.test("an expired observed exchange releases the next independent queued source without retry", function()
+T.test("a deferred observer tries each independent queued source within cooldown bounds", function()
     local bus = guild()
     local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     a:save(a.identity, { 3 }); a:ready(); b:ready(); c:ready()
@@ -483,12 +490,12 @@ T.test("an expired observed exchange releases the next independent queued source
     b.drop = true
     local digest = a.G.GetProfessionSyncDigest(a.db, 164)
     assert(a.G.SendProfessionPayload(a.sync.transport,
-        "P1|Q|*|1-9|164|" .. digest .. ";save;;bob-realm"))
-    bus:advance(290)
+        "P2|Q|*|1-9|164|" .. digest .. ";save;;bob-realm"))
+    bus:advance(59)
     T.assertNil(c.G.GetProfessionSyncRecord(c.db, a.identity.guid, 164))
-    bus:advance(100)
+    bus:advance(331)
     T.assertNotNil(c.G.GetProfessionSyncRecord(c.db, a.identity.guid, 164))
-    T.assertEqual(bus:count("Q"), 2)
+    T.assertEqual(bus:count("Q"), 3)
     local frames = #bus.frames; bus:advance(600); T.assertEqual(#bus.frames, frames)
 end)
 
@@ -501,10 +508,176 @@ T.test("a departed queued source does not strand the next valid announcement", f
     b.drop = true
     local digest = a.G.GetProfessionSyncDigest(a.db, 164)
     assert(a.G.SendProfessionPayload(a.sync.transport,
-        "P1|Q|*|1-9|164|" .. digest .. ";save;;bob-realm"))
+        "P2|Q|*|1-9|164|" .. digest .. ";save;;bob-realm"))
     bus:advance(390)
     T.assertNotNil(c.G.GetProfessionSyncRecord(c.db, a.identity.guid, 164))
     T.assertEqual(bus:count("Q"), 2)
+end)
+
+T.test("profession details and timestamp-only manifests are delivered only to the selected peer", function()
+    local bus = guild()
+    local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    a:save(a.identity, { 3 }); a:ready(); b:ready(); c:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(65)
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+    T.assertNil(c.G.GetProfessionSyncRecord(c.db, a.identity.guid, 164))
+    T.assertEqual(bus:count("K"), 1)
+    for _, frame in ipairs(bus.frames) do
+        local kind = frame.text:match("P2|(%a)|")
+        if kind == "M" or kind == "R" or kind == "D" or kind == "K" then
+            T.assertEqual(frame.channel, "WHISPER"); T.assertNotNil(frame.target)
+        end
+        if kind == "M" then
+            T.assertNil(frame.text:match("Player[^;]+,%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x,"))
+        end
+    end
+end)
+
+T.test("newer timestamp replaces identical recipe contents and is preserved on relay", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    local offline = bus:member("Offline")
+    a:save(offline, { 3 }, 1700000001); b:save(offline, { 3 }, 1700000000)
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(65)
+    T.assertEqual(b.G.GetProfessionSyncRecord(b.db, offline.guid, 164).capturedAt, 1700000001)
+    T.assertEqual(a.G.GetProfessionSyncDigest(a.db, 164), b.G.GetProfessionSyncDigest(b.db, 164))
+end)
+
+T.test("background catch-up continues beyond eight cached records and suppresses equal digests", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    local identities = {}
+    for index = 1, 13 do identities[index] = bus:member("Offline" .. index); a:save(identities[index], { index }) end
+    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); assert(b.G.LoginProfessionSync(b.sync))
+    bus:advance(1800)
+    for _, identity in ipairs(identities) do T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, identity.guid, 164)) end
+    T.assertEqual(bus:count("D"), 13)
+    local transfers, announcements = bus:count("D"), bus:count("A")
+    bus:advance(1800)
+    T.assertEqual(bus:count("D"), transfers)
+    T.assertTrue(bus:count("A") > announcements)
+    T.assertTrue(bus:count("A") - announcements <= 12)
+end)
+
+T.test("dropped storage acknowledgement cannot report a completed transfer", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }); a:ready(); b:ready()
+    local send = b.api.C_ChatInfo.SendAddonMessage
+    b.api.C_ChatInfo.SendAddonMessage = function(prefix, frame, channel, target)
+        if frame:find("P2|K|", 1, true) then return 0 end
+        return send(prefix, frame, channel, target)
+    end
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(65)
+    T.assertNotNil(a.sync.active)
+    bus:advance(300)
+    T.assertEqual(a.G.GetProfessionSyncStatus(a.sync, 164), "Catch-up needed")
+end)
+
+T.test("wrong-channel detail frames cannot modify a selected profession exchange", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }); a:ready(); b:ready()
+    local send = a.api.C_ChatInfo.SendAddonMessage
+    a.api.C_ChatInfo.SendAddonMessage = function(prefix, frame, channel, target)
+        if frame:find("P2|D|", 1, true) then channel, target = "GUILD", nil end
+        return send(prefix, frame, channel, target)
+    end
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(400)
+    T.assertNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+end)
+
+T.test("twenty participants catch up through serialized whispers with no duplicate records", function()
+    local bus = guild()
+    local clients = {}
+    for index = 1, 20 do clients[index] = bus:client(string.format("Member%02d", index)) end
+    local offline = bus:member("Offline")
+    clients[1]:save(offline, { 3, 8 })
+    for _, client in ipairs(clients) do client:ready(); assert(client.G.LoginProfessionSync(client.sync)) end
+    bus:advance(3600)
+    for _, client in ipairs(clients) do
+        T.assertNotNil(client.G.GetProfessionSyncRecord(client.db, offline.guid, 164))
+        T.assertTrue(#client.sync.transport.outboundFrames <= 640)
+    end
+    T.assertEqual(bus:count("D"), 19)
+    local count = bus:count("D")
+    bus:advance(1800)
+    T.assertEqual(bus:count("D"), count)
+    T.assertTrue(bus:count("A") < 120)
+end)
+
+T.test("an unselected observer is not labelled synchronized by another pair's exchange", function()
+    local bus = guild()
+    local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    a:save(a.identity, { 3 }); a:ready(); b:ready(); c:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(40)
+    T.assertNil(c.G.GetProfessionSyncRecord(c.db, a.identity.guid, 164))
+    T.assertFalse(c.G.GetProfessionSyncStatus(c.sync, 164) == "Compared cached data")
+end)
+
+T.test("whisper sync rejects old protocol clients and future timestamp manifests", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }, 1700009999); a:ready(); b:ready()
+    T.assertEqual(b.G.HandleProfessionSyncAddonMessage(b.sync, "GC_PROF", "garbage", "GUILD", a.identity.key), "ignored")
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(400)
+    T.assertNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+end)
+
+T.test("guild departure cancels periodic announcements and rejoining restores background checks", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); bus:advance(20)
+    a.left = true; T.assertFalse(a.G.RefreshProfessionSyncRoster(a.sync))
+    local count = bus:count("A", a.identity.key)
+    bus:advance(1000); T.assertEqual(bus:count("A", a.identity.key), count)
+    a.left = false; a:ready(); bus:advance(420)
+    T.assertTrue(bus:count("A", a.identity.key) > count)
+end)
+
+T.test("multiple maximum-size profession records catch up without overflowing the outbound queue", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    local recipes, identities = {}, {}
+    for index = 1, 4096 do recipes[index] = index end
+    for index = 1, 4 do identities[index] = bus:member("Offline" .. index); a:save(identities[index], recipes) end
+    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); assert(b.G.LoginProfessionSync(b.sync))
+    bus:advance(1600)
+    for _, identity in ipairs(identities) do
+        T.assertEqual(#assert(b.G.GetProfessionSyncRecord(b.db, identity.guid, 164)).recipes, 4096)
+    end
+    T.assertEqual(bus:count("D"), 4)
+    T.assertNil(a.sync.transport.lastSendError)
+end)
+
+T.test("a newer local observation during transfer is retained and reconciled back to its peer", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    local offline = bus:member("Offline")
+    a:save(offline, { 3 }, 1700000001); a:ready(); b:ready()
+    local send, changed = a.api.C_ChatInfo.SendAddonMessage, false
+    a.api.C_ChatInfo.SendAddonMessage = function(prefix, frame, channel, target)
+        if not changed and frame:find("P2|D|", 1, true) then
+            changed = true; b:save(offline, { 8 }, 1700000002)
+        end
+        return send(prefix, frame, channel, target)
+    end
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(200)
+    T.assertEqual(b.G.GetProfessionSyncRecord(b.db, offline.guid, 164).recipes[1].recipeID, 8)
+    T.assertEqual(a.G.GetProfessionSyncRecord(a.db, offline.guid, 164).capturedAt, 1700000002)
+end)
+
+T.test("a new installation automatically catches up one hundred cached guild crafters", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    local identities = {}
+    for index = 1, 100 do identities[index] = bus:member("Offline" .. index); a:save(identities[index], { index }) end
+    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); assert(b.G.LoginProfessionSync(b.sync))
+    bus:advance(7200)
+    for _, identity in ipairs(identities) do T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, identity.guid, 164)) end
+    T.assertEqual(bus:count("D"), 100)
+    local transfers = bus:count("D"); bus:advance(1800); T.assertEqual(bus:count("D"), transfers)
 end)
 
 return { guild = guild }
