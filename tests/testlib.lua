@@ -44,6 +44,16 @@ function TestLib.loadAddonFile(path, namespace)
     chunk(path:match("^([^/]+)/"), namespace)
 end
 
+-- Immediate CTL completion for legacy fixtures; dedicated tests delay it.
+function TestLib.mockChatThrottle(api)
+    api.ChatThrottleLib = {
+        SendAddonMessage = function(_, priority, prefix, text, channel, target, queue, callback, arg)
+            local result = select(-1, api.C_ChatInfo.SendAddonMessage(prefix, text, channel, target))
+            callback(arg, result == 0 or result == true, result)
+        end,
+    }
+end
+
 -- Legacy unit fixtures exercise both domains in one namespace. Manifest tests
 -- separately verify actual addon load order and independent namespaces.
 function TestLib.loadUnitModule(name, namespace)

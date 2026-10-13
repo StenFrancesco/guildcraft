@@ -70,10 +70,12 @@ acknowledges a record only after validating the complete transfer. Partial or
 failed transfers preserve the previous cache. Visible catalog refreshes are batched
 during receive bursts; records are saved and acknowledged as soon as they validate.
 Deferred comparisons and background checks gradually catch up larger caches;
-the old eight-record login ceiling is removed. Throttling cancels queued work
-without accelerating retry frequency.
+the old eight-record login ceiling is removed. ChatThrottleLib defers throttled
+submissions using its shared traffic queue; terminal send failures cancel the
+remaining transport work.
 
-Queued whisper frames check recipient availability before sending. Confirmed
+Queued whisper frames check recipient availability before submitting each frame
+to ChatThrottleLib. Confirmed
 offline recipients cancel the current work while preserving cached records.
 Recent valid protocol messages can provide temporary presence evidence when the
 guild roster is stale. Unknown presence without that evidence stops the transfer.
@@ -89,6 +91,19 @@ use this version. Existing SavedVariables do not need migration. On 2026-10-13
 the user retired the older AGENTS.md synchronization restrictions and approved
 this bounded background design. All traffic remains within supported in-game addon communication and
 respects unavailable APIs, combat restrictions and throttling.
+
+ChatThrottleLib version 29 is embedded, unchanged, under `Libs/ChatThrottleLib`
+in both GuildGearMemory and DysgearMemory. The first loaded copy initializes the
+shared library; the second reuses it. No fourth addon folder is needed. Gear and
+profession frames use BULK priority and retain their existing pacing and queue
+limits. A frame counts as submitted only when the library calls back successfully;
+this does not guarantee delivery to the recipient. Missing library support disables
+synchronization rather than falling back to unthrottled sends.
+
+Cancellation stops frames still held by the addon and ignores late completion
+callbacks. ChatThrottleLib has no public cancellation API, so the single frame
+already handed to it by a transport may still be sent after cancellation. The
+addon does not modify the library's queues or start the remaining cancelled frames.
 
 Run the regression suite with Lua 5.1 using `lua tests/run.lua`. In this
 workspace, the local Lua 5.1 runtime can be used with

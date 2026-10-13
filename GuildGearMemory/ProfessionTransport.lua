@@ -83,6 +83,7 @@ local function abortOutbound(transport, err, activeGroup)
 
     local timer = transport.sendTimer
     transport.outboundFrames = {}
+    transport.inFlight = nil
     transport.sendTimer = nil
     transport.lastSendError = err
     cancelTimer(timer)
@@ -109,17 +110,6 @@ local function buildFrames(transport, payload)
     return frames, nil
 end
 
-local function sendFrame(transport, frame, target)
-    local callOk, result = pcall(function()
-        return select(-1, transport.api.C_ChatInfo.SendAddonMessage(PREFIX, frame, target and "WHISPER" or "GUILD", target))
-    end)
-    if not callOk then return false, "profession-send-addon-message-threw" end
-    if not isSuccess(transport.api, result, SEND_ENUMS) then
-        return false, "profession-send-addon-message-failed:" .. resultName(transport.api, result, SEND_ENUMS, SEND_RESULT_NAMES)
-    end
-    return true, nil
-end
-
 local pumpOutbound
 
 local function schedulePump(transport, delay)
@@ -138,7 +128,7 @@ local function schedulePump(transport, delay)
 end
 
 pumpOutbound = function(transport)
-    if transport.closed or transport.cancelling or transport.checkingTarget or transport.sendTimer ~= nil then return true, nil end
+    if transport.closed or transport.cancelling or transport.checkingTarget or transport.inFlight or transport.sendTimer ~= nil then return true, nil end
 
     while transport.outboundFrames[1] and transport.outboundFrames[1].group.cancelled do
         table.remove(transport.outboundFrames, 1)
@@ -186,27 +176,49 @@ pumpOutbound = function(transport)
         end
     end
 
-    table.remove(transport.outboundFrames, 1)
-    local sent, sendErr = sendFrame(transport, queued.frame, queued.group.target)
-    if not sent then
-        abortOutbound(transport, sendErr, queued.group)
-        return false, sendErr
-    end
-
-    transport.lastSendError = nil
-    transport.nextSendAt = now + SEND_INTERVAL_SECONDS
-    queued.group.remaining = queued.group.remaining - 1
-    if queued.group.remaining == 0 then finishGroup(queued.group, true, nil) end
-
-    if #transport.outboundFrames > 0 and transport.sendTimer == nil then
-        local scheduled, scheduleErr = schedulePump(transport, SEND_INTERVAL_SECONDS)
-        if not scheduled then
-            abortOutbound(transport, scheduleErr, queued.group)
-            return false, scheduleErr
+    local generation = transport.generation
+    transport.inFlight = queued
+    local completed, completionError = false, nil
+    local function onSent(_, didSend, result)
+        if completed or generation ~= transport.generation or transport.inFlight ~= queued then return end
+        completed = true
+        transport.inFlight = nil
+        if not isSuccess(transport.api, result, SEND_ENUMS) then
+            completionError = "profession-send-addon-message-failed:" .. resultName(transport.api, result, SEND_ENUMS, SEND_RESULT_NAMES)
+            abortOutbound(transport, completionError, queued.group)
+            return
         end
-        return true, nil
+        if transport.outboundFrames[1] == queued then table.remove(transport.outboundFrames, 1) end
+        transport.lastSendError = nil
+        local timeOk, sentAt = pcall(transport.api.GetTime)
+        if not timeOk or type(sentAt) ~= "number" then
+            completionError = "profession-time-unavailable"
+            abortOutbound(transport, completionError, queued.group)
+            return
+        end
+        transport.nextSendAt = sentAt + SEND_INTERVAL_SECONDS
+        if not queued.group.cancelled and not queued.group.finished then
+            queued.group.remaining = queued.group.remaining - 1
+            if queued.group.remaining == 0 then finishGroup(queued.group, true, nil) end
+        end
+        if generation ~= transport.generation or transport.closed then return end
+        if #transport.outboundFrames > 0 and transport.sendTimer == nil then
+            local scheduled, err = schedulePump(transport, SEND_INTERVAL_SECONDS)
+            if not scheduled then
+                completionError = err
+                abortOutbound(transport, err, queued.group)
+            end
+        end
     end
-    return true, nil
+    local ok = pcall(transport.api.ChatThrottleLib.SendAddonMessage, transport.api.ChatThrottleLib,
+        "BULK", PREFIX, queued.frame, queued.group.target and "WHISPER" or "GUILD",
+        queued.group.target, PREFIX, onSent)
+    if not ok and not completed then
+        transport.inFlight = nil
+        completionError = "profession-send-addon-message-threw"
+        abortOutbound(transport, completionError, queued.group)
+    end
+    return completionError == nil, completionError
 end
 
 local function activeAssemblyCount(transport)
@@ -250,6 +262,9 @@ function GGM.CreateProfessionTransport(api, onPayload, onFailure)
         or type(api.C_ChatInfo.RegisterAddonMessagePrefix) ~= "function"
         or type(api.C_ChatInfo.SendAddonMessage) ~= "function" then
         return nil, "profession-chat-info-api-unavailable"
+    end
+    if type(api.ChatThrottleLib) ~= "table" or type(api.ChatThrottleLib.SendAddonMessage) ~= "function" then
+        return nil, "profession-chat-throttle-lib-unavailable"
     end
     if type(api.C_Timer) ~= "table" or type(api.C_Timer.NewTimer) ~= "function" then
         return nil, "profession-timer-api-unavailable"
@@ -414,6 +429,7 @@ function GGM.CancelProfessionTransport(transport)
         if queued.group then groups[queued.group] = true end
     end
     transport.outboundFrames = {}
+    transport.inFlight = nil
     transport.sendTimer = nil
     transport.inboundAssemblies = {}
     cancelTimer(timer)

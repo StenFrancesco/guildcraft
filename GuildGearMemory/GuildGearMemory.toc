@@ -7,6 +7,8 @@
 ## OptionalDeps: DysbankMemory, DysgearMemory
 ## SavedVariables: GuildGearMemoryDB
 
+Libs/ChatThrottleLib/ChatThrottleLib.lua
+
 Constants.lua
 CharacterIdentity.lua
 GearBackend.lua

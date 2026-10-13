@@ -68,6 +68,7 @@ local function guild()
                 end,
             },
         }
+        T.mockChatThrottle(client.api)
         client.G.RefreshVisibleProfessionCatalog = function()
             client.refreshes = client.refreshes + 1
             client.visibleCatalog = client.G.GetProfessionSyncManifest(client.db, 164) or {}

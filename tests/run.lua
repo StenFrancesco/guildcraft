@@ -1,6 +1,7 @@
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local suites = {
+    "tests.chat_throttle_test",
     "tests.gear_backend_test",
     "tests.gear_backend_events_test",
     "tests.constants_test",

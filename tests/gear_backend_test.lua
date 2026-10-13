@@ -49,6 +49,7 @@ local function client(saved)
         RegisterAddonMessagePrefix = function() c.registered = (c.registered or 0) + 1; return 0 end,
         SendAddonMessage = function(...) c.sent[#c.sent + 1] = { ... }; return 0 end,
     }
+    T.mockChatThrottle(api)
     function c:event(event, ...)
         for _, frame in ipairs(self.frames) do
             if frame.events[event] then frame.handler(frame, event, ...) end

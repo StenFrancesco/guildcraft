@@ -59,8 +59,35 @@ local function makeApi(options)
         return timer
     end
 
+    T.mockChatThrottle(api)
     return api, c
 end
+
+T.test("profession completion waits for throttle callback and ignores cancelled work", function()
+    local G = loadModules()
+    local api, c = makeApi()
+    local callback
+    api.ChatThrottleLib.SendAddonMessage = function(_, priority, prefix, frame, channel, target, queue, fn, arg)
+        T.assertEqual(priority, "BULK")
+        T.assertEqual(channel, "WHISPER")
+        T.assertEqual(target, "Alice-Silvermoon")
+        callback = function() fn(arg, true, 0) end
+    end
+    local finished = {}
+    local transport = assert(G.CreateProfessionTransport(api, function() end))
+    T.assertTrue(G.SendProfessionPayload(transport, string.rep("x", 500), "Alice-Silvermoon", function(sent)
+        finished[#finished + 1] = sent
+    end))
+    T.assertEqual(#c.sent, 0)
+    T.assertEqual(#c.timers, 0)
+    T.assertEqual(#finished, 0)
+    G.CancelProfessionTransport(transport)
+    T.assertEqual(#finished, 1)
+    T.assertFalse(finished[1])
+    callback()
+    T.assertEqual(#c.timers, 0)
+    T.assertEqual(#finished, 1)
+end)
 
 local function makeFrame(messageID, index, total, chunk)
     return string.format("F1|%06d|%03d|%03d|%s", messageID, index, total, chunk)
