@@ -842,7 +842,41 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, selectedProfession.professionID, selectedProfession.key, frame.api)
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
     end
+    if frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
     return true
+end
+
+function GGM.SyncSelectedProfession(frame, manual)
+    if not frame or frame.activeTab ~= "Professions" then return false end
+    local professionID
+    for _, profession in ipairs(PROFESSIONS) do
+        if profession.key == frame.selectedProfession then professionID = profession.professionID; break end
+    end
+    if not professionID then return false end
+    frame.professionSyncSelections = frame.professionSyncSelections or {}
+    if not manual and frame.professionSyncSelections[professionID] then return false end
+    local ok, err = false, "profession-sync-unavailable"
+    if GGM.professionSync and type(GGM.RequestProfessionSync) == "function" then
+        ok, err = GGM.RequestProfessionSync(GGM.professionSync, professionID, manual and "manual" or "selection")
+    end
+    if ok and not manual then frame.professionSyncSelections[professionID] = true end
+    if frame.professionSyncStatus then
+        local status = GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, professionID) or "Sync unavailable"
+        if manual and not ok and (err == "profession-sync-cooldown" or err == "profession-sync-busy") then status = "Comparison pending or on cooldown" end
+        frame.professionSyncStatus:SetText(status)
+    end
+    return ok, err
+end
+
+function GGM.RefreshVisibleProfessionSyncStatus()
+    local frame = GGM.guildGearBrowserFrame
+    if not frame or frame.activeTab ~= "Professions" or not frame.professionSyncStatus then return end
+    for _, profession in ipairs(PROFESSIONS) do
+        if profession.key == frame.selectedProfession then
+            frame.professionSyncStatus:SetText(GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, profession.professionID) or "Sync unavailable")
+            return
+        end
+    end
 end
 
 local function createProfessionButton(api, sidebar, profession, offset)
@@ -966,7 +1000,7 @@ local function createProfessionsPage(api, frame)
     setTextColor(searchLabel, THEME.text)
     searchLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -156)
     frame.professionSearchBox = api.CreateFrame("EditBox", nil, panel)
-    frame.professionSearchBox:SetSize(400, 27)
+    frame.professionSearchBox:SetSize(310, 27)
     frame.professionSearchBox:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -177)
     frame.professionSearchBox:SetAutoFocus(false)
     frame.professionSearchBox:SetTextInsets(31, 8, 0, 0)
@@ -985,6 +1019,7 @@ local function createProfessionsPage(api, frame)
 
     frame.professionCount = createText(panel, "OVERLAY", "GameFontDisableSmall")
     frame.professionCount:SetPoint("LEFT", frame.professionSearchBox, "RIGHT", 14, 0)
+    frame.professionCount:SetWidth(130)
     setTextColor(frame.professionCount, THEME.textSoft)
     frame.professionStatus = createText(panel, "OVERLAY", "GameFontHighlight")
     GGM.ApplyJournalFont(frame.professionStatus, 13)
@@ -992,6 +1027,16 @@ local function createProfessionsPage(api, frame)
     frame.professionStatus:SetPoint("RIGHT", panel, "RIGHT", -18, 0)
     frame.professionStatus:SetJustifyH("LEFT")
     setTextColor(frame.professionStatus, THEME.textSoft)
+
+    frame.professionSyncButton = GGM.CreateFlatButton(api, panel, "Sync profession", 140, 27, "secondary")
+    frame.professionSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
+    frame.professionSyncButton:SetScript("OnClick", function() GGM.SyncSelectedProfession(frame, true) end)
+    frame.professionSyncStatus = createText(panel, "OVERLAY", "GameFontHighlightSmall")
+    GGM.ApplyJournalFont(frame.professionSyncStatus, 13)
+    frame.professionSyncStatus:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -151)
+    frame.professionSyncStatus:SetWidth(360)
+    frame.professionSyncStatus:SetJustifyH("RIGHT")
+    setTextColor(frame.professionSyncStatus, THEME.textSoft)
 
     frame.professionRecipeHeading = createText(panel, "OVERLAY", "GameFontNormal")
     GGM.ApplyJournalFont(frame.professionRecipeHeading, 17, "bold")
@@ -1156,6 +1201,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     local showCharacter = selectedKey == "Character"
     if selectedKey == "Professions" then
         frame.professionsPage:Show()
+        GGM.SyncSelectedProfession(frame, false)
         if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
             local profession
             for _, item in ipairs(PROFESSIONS) do if item.key == frame.selectedProfession then profession = item; break end end

@@ -10,6 +10,7 @@ GGM.RegisterSnapshotTestSlashCommand(_G)
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("CHAT_MSG_GUILD")
 frame:RegisterEvent("TRADE_SKILL_SHOW")
 frame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
@@ -21,6 +22,20 @@ frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 local function refreshVisibleProfessionCatalog()
     if type(GGM.RefreshVisibleProfessionCatalog) == "function" then
         GGM.RefreshVisibleProfessionCatalog()
+    end
+end
+
+local function refreshProfessionSyncRoster()
+    if not GGM.professionSync then return end
+    if not GGM.professionRosterMembershipCurrent then
+        GGM.professionSync.rosterReady = false
+        GGM.CancelProfessionSync(GGM.professionSync)
+        return
+    end
+    local ready, err = GGM.RefreshProfessionSyncRoster(GGM.professionSync)
+    GGM.lastProfessionSyncError = err
+    if ready and GGM.professionPlayerLoggedIn and not GGM.professionLoginSyncIssued then
+        if GGM.LoginProfessionSync(GGM.professionSync) then GGM.professionLoginSyncIssued = true end
     end
 end
 
@@ -50,6 +65,15 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GGM.gearStartupError = gearErr
         GGM.startupError = nil
 
+        if type(GGM.CreateProfessionSync) == "function" then
+            local sync, syncErr = GGM.CreateProfessionSync(_G, db)
+            if sync then
+                local registered, registerErr = GGM.RegisterProfessionSync(sync)
+                if registered then GGM.professionSync = sync else syncErr = registerErr end
+            end
+            GGM.lastProfessionSyncError = syncErr
+        end
+
         local professionLinkSave, professionControllerErr = GGM.CreateProfessionLinkSaveController(_G, db)
         if professionLinkSave then
             local professionRegistered, professionRegisterErr = GGM.RegisterProfessionLinkSaveController(professionLinkSave)
@@ -74,6 +98,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
+        GGM.professionPlayerLoggedIn = true
+        refreshProfessionSyncRoster()
+
         local ownershipRecorded, ownershipErr = GGM.RecordLocalPlayerOwnership(
             _G,
             GGM.db
@@ -84,6 +111,14 @@ frame:SetScript("OnEvent", function(_, event, ...)
             GGM.lastLocalOwnershipError = ownershipErr
         end
 
+        return
+    end
+
+    if event == "CHAT_MSG_ADDON" then
+        if GGM.professionSync and not GGM.startupError then
+            local _, err = GGM.HandleProfessionSyncAddonMessage(GGM.professionSync, ...)
+            GGM.lastProfessionSyncError = err
+        end
         return
     end
 
@@ -111,10 +146,20 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" then
         if not GGM.db or GGM.startupError then return end
+        if event == "PLAYER_GUILD_UPDATE" then
+            GGM.professionRosterRefreshIssued = false
+            GGM.professionRosterRefreshSucceeded = false
+            GGM.professionRosterMembershipCurrent = false
+            if GGM.professionSync then
+                GGM.professionSync.rosterReady = false
+                GGM.CancelProfessionSync(GGM.professionSync)
+            end
+        end
         local guildOk, inGuild = pcall(_G.IsInGuild)
         if not guildOk or type(inGuild) ~= "boolean" then
             GGM.professionRosterMembershipCurrent = false
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
+            refreshProfessionSyncRoster()
             refreshVisibleProfessionCatalog()
             return
         end
@@ -124,6 +169,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             GGM.professionRosterRefreshSucceeded = false
             local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
             if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
+            refreshProfessionSyncRoster()
             refreshVisibleProfessionCatalog()
             return
         end
@@ -154,6 +200,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GGM.professionRosterRefreshPending = false
         local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
         if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
+        refreshProfessionSyncRoster()
         refreshVisibleProfessionCatalog()
         return
     end
