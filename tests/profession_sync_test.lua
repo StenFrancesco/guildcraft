@@ -214,8 +214,7 @@ T.test("a page cursor from Alice cannot hide Bob's newer earlier record", functi
     T.assertTrue(alice.G.GetProfessionSyncDigest(alice.db, 164, alice.sync.members)
         ~= requester.G.GetProfessionSyncDigest(requester.db, 164, requester.sync.members), "Alice's late record should make her digest differ")
     local startCursor = identities[2].guid
-    requester.sync.cursor[164] = startCursor
-    requester.sync.cursorPeer[164] = alice.identity.key:lower()
+    requester.sync.cursor[164] = { [alice.identity.key:lower()] = startCursor }
 
     T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
     bus:advance(1200)
@@ -639,14 +638,56 @@ T.test("large profession manifests compare shared GUID windows without duplicate
     local last = identities[130]
     a:save(last, { 500 }, 1700000002)
     a:ready(); b:ready()
-    b.sync.cursor[164] = identities[128].guid
-    b.sync.cursorPeer[164] = a.identity.key:lower()
-    a.sync.cursor[164] = identities[32].guid
+    b.sync.cursor[164] = { [a.identity.key:lower()] = identities[128].guid }
+    a.sync.cursor[164] = { [b.identity.key:lower()] = identities[32].guid }
     assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(80)
     T.assertEqual(bus:count("D"), 1)
     assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(80)
     T.assertEqual(bus:count("D"), 1)
     T.assertEqual(b.G.GetProfessionSyncRecord(b.db, last.guid, 164).recipes[1].recipeID, 500)
+end)
+
+T.test("manual sync resumes each peer after the first 128 character entries", function()
+    local bus = guild()
+    local alice, bob, requester = bus:client("Alice"), bus:client("Bob"), bus:client("Requester")
+    local identities, baseRecipeID = {}, {}
+    for index = 1, 150 do
+        local identity = bus:member("Offline" .. index)
+        identities[#identities + 1] = identity
+        baseRecipeID[identity.guid] = index
+        alice:save(identity, { index }, 1700000001)
+        bob:save(identity, { index }, 1700000001)
+        requester:save(identity, { index }, 1700000001)
+    end
+    table.sort(identities, function(left, right) return left.guid < right.guid end)
+    local aliceLate, bobLate = identities[149], identities[150]
+    alice:save(aliceLate, { 999 }, 1700000002)
+    bob:save(bobLate, { 1000 }, 1700000002)
+    alice:ready(); bob:ready(); requester:ready()
+
+    T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(150)
+    T.assertEqual(requester.G.GetProfessionSyncRecord(requester.db, aliceLate.guid, 164).recipes[1].recipeID, baseRecipeID[aliceLate.guid],
+        "the first 128-entry window should not include Alice's late change")
+    T.assertEqual(requester.G.GetProfessionSyncRecord(requester.db, bobLate.guid, 164).recipes[1].recipeID, baseRecipeID[bobLate.guid],
+        "the first 128-entry window should not include Bob's late change")
+
+    T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(150)
+
+    T.assertEqual(requester.G.GetProfessionSyncRecord(requester.db, aliceLate.guid, 164).recipes[1].recipeID, 999,
+        "Alice's per-peer cursor should reach her entry beyond the first window")
+    T.assertEqual(requester.G.GetProfessionSyncRecord(requester.db, bobLate.guid, 164).recipes[1].recipeID, 1000,
+        "Bob's per-peer cursor should reach his entry beyond the first window")
+    local queried = {}
+    for _, frame in ipairs(bus.frames) do
+        if frame.sender == requester.identity.key then
+            local peer = frame.text:match("P3|Q|%*|[^|]+|164|[^;]+;manual;[^;]*;([^|]*)")
+            if peer and peer ~= "" then queried[peer] = (queried[peer] or 0) + 1 end
+        end
+    end
+    T.assertTrue((queried[alice.identity.key:lower()] or 0) >= 2, "Alice should be selected in both manual syncs")
+    T.assertTrue((queried[bob.identity.key:lower()] or 0) >= 2, "Bob should be selected in both manual syncs")
 end)
 
 T.test("profession sync refuses secret input and unavailable secret checks", function()

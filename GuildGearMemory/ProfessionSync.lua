@@ -318,7 +318,7 @@ function GGM.RefreshProfessionSyncRoster(sync)
     end
     if sync.guild and sync.guild ~= rows.guild then
         GGM.CancelProfessionSync(sync)
-        sync.peers, sync.heard, sync.cursor, sync.cursorPeer, sync.manualCursor, sync.presenceEvidence = {}, {}, {}, {}, {}, {}
+        sync.peers, sync.heard, sync.cursor, sync.manualCursor, sync.presenceEvidence = {}, {}, {}, {}, {}
     end
     sync.members, sync.senders, sync.selfKey, sync.selfGUID, sync.guild = rows.byGUID, rows.bySender, rows.selfKey, rows.selfGUID, rows.guild
     sync.presenceRevision = rows.presenceRevision
@@ -462,8 +462,8 @@ local function finish(sync, session, message)
     session.finished = true
     if sync.active == session then sync.active = nil end
     if sync.selfKey == session.initiator and session.nextCursor ~= nil then
-        sync.cursor[session.professionID] = session.nextCursor
-        sync.cursorPeer[session.professionID] = session.selected
+        sync.cursor[session.professionID] = sync.cursor[session.professionID] or {}
+        sync.cursor[session.professionID][session.selected] = session.nextCursor
     end
     local operation = session.operation
     if operation and sync.manualOperation == operation and sync.selfKey == session.initiator then
@@ -932,7 +932,7 @@ function GGM.CreateProfessionSync(api, db)
     if type(api) ~= "table" or type(db) ~= "table" then return nil, "profession-sync-unavailable" end
     local sync = { api = api, db = db, generation = 0, sequence = 0, sessions = {}, pending = {}, status = {},
         cooldowns = {}, peerCooldowns = {}, pendingSaves = {}, lastAnnouncedDigests = {}, saveCooldowns = {},
-        selectedOnce = {}, cursor = {}, cursorPeer = {}, manualCursor = {}, peers = {}, heard = {}, presenceEvidence = {}, presenceRevision = 0,
+        selectedOnce = {}, cursor = {}, manualCursor = {}, peers = {}, heard = {}, presenceEvidence = {}, presenceRevision = 0,
         registered = false, rosterReady = false }
     local transport, err = GGM.CreateProfessionTransport(api, function(payload, sender, channel) return logical(sync, payload, sender, channel) end,
         function(failure) failed(sync, failure) end)
@@ -1020,9 +1020,9 @@ local function startProfessionComparison(sync, professionID, reason, preferredPe
     local digest, err = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
     if not digest then return false, err end
     local id = nextID(sync)
-    local startGUID = sync.cursor[professionID]
-    if type(startGUID) ~= "string" or not GGM.IsProfessionGUID(startGUID)
-        or not preferredPeer or sync.cursorPeer[professionID] ~= preferredPeer then startGUID = "" end
+    local professionCursors = sync.cursor[professionID]
+    local startGUID = preferredPeer and type(professionCursors) == "table" and professionCursors[preferredPeer]
+    if type(startGUID) ~= "string" or not GGM.IsProfessionGUID(startGUID) then startGUID = "" end
     local session = createSession(sync, sync.selfKey, id, professionID, digest, reason, startGUID, preferredPeer)
     if not session then return false, "profession-sync-busy" end
     session.operation = operation
