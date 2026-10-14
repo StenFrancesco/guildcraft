@@ -60,6 +60,7 @@ local function clientApi(who, results)
         local index = 1
         while index <= #timers do timers[index]:Fire(); index = index + 1 end
     end
+    T.mockChatThrottle(api)
     return api, sends, drain, function(value) now = value end, timers
 end
 

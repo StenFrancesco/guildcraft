@@ -7,6 +7,8 @@
 ## OptionalDeps: DysbankMemory, DysgearMemory
 ## SavedVariables: GuildGearMemoryDB
 
+Libs/ChatThrottleLib/ChatThrottleLib.lua
+
 Constants.lua
 CharacterIdentity.lua
 GearBackend.lua
@@ -14,6 +16,9 @@ LocalCharacterOwnership.lua
 ProfessionSnapshot.lua
 ProfessionIndex.lua
 Storage.lua
+ProfessionSyncData.lua
+ProfessionTransport.lua
+ProfessionSync.lua
 SavedDatabases.lua
 SavedCharacterModel.lua
 RecipeDetails.lua

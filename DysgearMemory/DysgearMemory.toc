@@ -5,6 +5,8 @@
 ## Version: 1.1.0
 ## SavedVariables: DysgearMemoryDB
 
+Libs/ChatThrottleLib/ChatThrottleLib.lua
+
 Constants.lua
 CharacterIdentity.lua
 GearData.lua
