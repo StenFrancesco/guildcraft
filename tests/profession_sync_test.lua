@@ -17,12 +17,13 @@ local function guild()
         self.now = limit
     end
     function bus:member(name)
-        local identity = { key = name .. "-Realm", name = name, realm = "Realm", guid = "Player-1-" .. string.format("%X", #self.members + 1), online = true }
+        local identity = { key = name .. "-Realm", name = name, realm = "Realm", guid = "Player-1-" .. string.format("%X", #self.members + 1), online = false }
         self.members[#self.members + 1] = identity
         return identity
     end
     function bus:client(name)
         local client = { identity = self:member(name), G = {}, refreshes = 0 }
+        client.identity.online = true
         client.visibleCatalog = {}
         for _, file in ipairs({ "Constants", "ProfessionSnapshot", "ProfessionIndex", "Storage", "CharacterIdentity", "ProfessionSyncData", "ProfessionTransport", "ProfessionSync" }) do
             local path = "GuildGearMemory/" .. file .. ".lua"
@@ -98,18 +99,20 @@ local function guild()
     return bus
 end
 
-T.test("profession login announces only after roster readiness and schedules bounded background checks", function()
+local function receiveLegacyAnnouncement(sender, receiver, reason)
+    local digest = assert(sender.G.GetProfessionSyncDigest(sender.db, 164, sender.sync.members))
+    local payload = "P3|A|*|123-1|0|164," .. digest .. "," .. reason
+    return receiver.sync.transport.onPayload(payload, sender.identity.key, "GUILD")
+end
+
+T.test("profession login and idle time create no traffic", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     T.assertEqual(#bus.frames, 0)
     T.assertFalse(a.G.LoginProfessionSync(a.sync))
     a:ready(); b:ready()
-    T.assertTrue(a.G.LoginProfessionSync(a.sync))
-    bus:advance(20)
-    T.assertEqual(bus:count("A"), 1)
-    T.assertEqual(bus:count("D"), 0)
-    a.G.LoginProfessionSync(a.sync); a:ready(); bus:advance(600)
-    T.assertEqual(bus:count("A"), 3)
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, 0)
     T.assertEqual(a.prefix, "GC_PROF3")
 end)
 
@@ -125,8 +128,9 @@ T.test("profession comparison transfers one complete cached snapshot from one re
     T.assertEqual(received.capturedAt, 1700000000)
     T.assertEqual(bus:count("D"), 1)
     T.assertTrue(b.refreshes > 0)
-    local count = #bus.frames
     bus:advance(600)
+    local count = #bus.frames
+    bus:advance(3600)
     T.assertEqual(#bus.frames, count)
 end)
 
@@ -139,7 +143,310 @@ T.test("equal profession hashes send no recipe data and manual sync obeys cooldo
     T.assertFalse(b.G.RequestProfessionSync(b.sync, 164, "manual"))
     bus:advance(30)
     T.assertEqual(bus:count("D"), 0)
-    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Cache hashes match")
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Matched 1 peer cache")
+end)
+
+T.test("manual sync reaches a newer Bob after a matching Alice without voluntary publishing", function()
+    local bus = guild()
+    local alice, requester, bob = bus:client("Alice"), bus:client("Requester"), bus:client("Bob")
+    local offline = bus:member("OfflineCrafter")
+    alice:save(offline, { 3, 8 }, 1700000001)
+    requester:save(offline, { 3, 8 }, 1700000001)
+    bob:save(offline, { 3, 8, 9 }, 1700000002)
+    alice:ready(); requester:ready(); bob:ready()
+    T.assertEqual(bus:count("A"), 0, "the test peers should not announce before the manual request")
+
+    T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(1200)
+
+    local received = assert(requester.G.GetProfessionSyncRecord(requester.db, offline.guid, 164))
+    T.assertEqual(received.capturedAt, 1700000002)
+    T.assertEqual(#received.recipes, 3)
+    T.assertEqual(received.recipes[1].recipeID, 3)
+    T.assertEqual(received.recipes[2].recipeID, 8)
+    T.assertEqual(received.recipes[3].recipeID, 9)
+    T.assertTrue(bus:count("D", bob.identity.key) > 0, "Bob should provide the newer cached record")
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames, "manual traffic should stop after its finite peer list")
+end)
+
+T.test("manual request compares a newer peer directly after an older peer", function()
+    local bus = guild()
+    local alice, requester, bob = bus:client("Alice"), bus:client("Requester"), bus:client("Bob")
+    local offline = bus:member("OfflineCrafter")
+    alice:save(offline, { 3 }, 1700000000)
+    requester:save(offline, { 3, 8 }, 1700000001)
+    bob:save(offline, { 3, 8, 9 }, 1700000002)
+    alice:ready(); requester:ready(); bob:ready()
+    T.assertEqual(bus:count("A"), 0)
+
+    T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(1200)
+
+    local received = assert(requester.G.GetProfessionSyncRecord(requester.db, offline.guid, 164))
+    T.assertEqual(received.capturedAt, 1700000002)
+    T.assertEqual(#received.recipes, 3)
+    local bobToRequester = 0
+    for _, frame in ipairs(bus.frames) do
+        if frame.sender == bob.identity.key and frame.text:find("P3|D|requester%-realm|", 1, false) then
+            bobToRequester = bobToRequester + 1
+        end
+    end
+    T.assertTrue(bobToRequester > 0, "the requester must ask Bob directly instead of depending on relayed announcements")
+end)
+
+T.test("a page cursor from Alice cannot hide Bob's newer earlier record", function()
+    local bus = guild()
+    local alice, requester, bob = bus:client("Alice"), bus:client("Requester"), bus:client("Bob")
+    local identities = {}
+    for index = 1, 131 do
+        local identity = bus:member("Offline" .. index)
+        identities[#identities + 1] = identity
+        alice:save(identity, { index }, 1700000000)
+        requester:save(identity, { index }, 1700000000)
+    end
+    table.sort(identities, function(left, right) return left.guid < right.guid end)
+    local early, late = identities[1], identities[#identities]
+    alice:save(late, { 999 }, 1700000001)
+    bob:save(early, { 888 }, 1700000002)
+    alice:ready(); requester:ready(); bob:ready()
+    T.assertTrue(alice.G.GetProfessionSyncDigest(alice.db, 164, alice.sync.members)
+        ~= requester.G.GetProfessionSyncDigest(requester.db, 164, requester.sync.members), "Alice's late record should make her digest differ")
+    local startCursor = identities[2].guid
+    requester.sync.cursor[164] = startCursor
+    requester.sync.cursorPeer[164] = alice.identity.key:lower()
+
+    T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(1200)
+
+    local cursors = {}
+    for _, frame in ipairs(bus.frames) do
+        if frame.sender == requester.identity.key then
+            local cursor, peer = frame.text:match("P3|Q|%*|[^|]+|164|[^;]+;manual;([^;]*);([^|]*)")
+            if peer and peer ~= "" then cursors[peer] = cursor end
+        end
+    end
+    T.assertEqual(cursors[alice.identity.key:lower()], startCursor, "same-peer page progress should be retained")
+    T.assertEqual(cursors[bob.identity.key:lower()], "", "Bob's comparison must restart at the beginning of his manifest")
+    local received = assert(requester.G.GetProfessionSyncRecord(requester.db, early.guid, 164))
+    T.assertEqual(received.capturedAt, 1700000002)
+    T.assertEqual(received.recipes[1].recipeID, 888)
+    T.assertTrue(bus:count("D", bob.identity.key) > 0, "Bob must be compared from the start of his own manifest")
+end)
+
+T.test("manual peer comparisons stop at four candidates and create no idle traffic", function()
+    local bus = guild()
+    local requester = bus:client("Requester")
+    local offline = bus:member("OfflineCrafter")
+    local peers = {}
+    for index = 1, 6 do peers[index] = bus:client("Peer" .. index) end
+    for _, client in ipairs({ requester, peers[1], peers[2], peers[3], peers[4], peers[5], peers[6] }) do
+        client:save(offline, { 3, 8 }, 1700000001)
+        client:ready()
+    end
+    T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(1800)
+
+    local preferred = {}
+    for _, frame in ipairs(bus.frames) do
+        if frame.sender == requester.identity.key then
+            local peer = frame.text:match("P3|Q|%*|[^|]+|164|[^;]+;manual;[^;]*;([^|]+)")
+            if peer and peer ~= "" then preferred[peer] = true end
+        end
+    end
+    local compared = 0
+    for _ in pairs(preferred) do compared = compared + 1 end
+    T.assertEqual(compared, 4)
+    for _, client in ipairs(peers) do T.assertEqual(bus:count("Q", client.identity.key), 0) end
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Catch-up needed")
+    local frameCount = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frameCount, "elapsed time alone must not restart peer comparisons")
+end)
+
+T.test("directed profession queries do not occupy bystander session slots", function()
+    local bus = guild()
+    local requester = bus:client("Requester")
+    local peers = {}
+    for _, name in ipairs({ "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot" }) do
+        peers[#peers + 1] = bus:client(name)
+    end
+    for index = 1, 4 do peers[index].drop = true end
+    for _, client in ipairs({ requester, unpack(peers) }) do client:ready() end
+
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(245)
+
+    local bystander = peers[5]
+    local unfinished = 0
+    for _, session in pairs(bystander.sync.sessions) do
+        if not session.finished then unfinished = unfinished + 1 end
+    end
+    T.assertEqual(unfinished, 0, "preferred queries for other peers must not leave observer sessions behind")
+    T.assertTrue(bystander.G.RequestProfessionSync(bystander.sync, 164, "manual"),
+        "one other user's four-peer operation must not prevent this peer from starting its own request")
+end)
+
+T.test("directed query observers still defer pending meaningful-save comparisons", function()
+    local bus = guild()
+    local requester, alice, bob = bus:client("Requester"), bus:client("Alice"), bus:client("Bob")
+    requester:ready(); alice:ready(); bob:ready()
+    local pending = { reason = "save", preferredPeer = alice.identity.key:lower(), ready = true }
+    requester.sync.pending[164] = pending
+    local digest = assert(requester.G.GetProfessionSyncDigest(requester.db, 164, requester.sync.members))
+    local query = "P3|Q|*|900000001-1|164|" .. digest .. ";manual;;" .. bob.identity.key:lower()
+
+    T.assertEqual(requester.sync.transport.onPayload(query, alice.identity.key, "GUILD"), "observing")
+
+    T.assertFalse(pending.ready, "an observed directed query must continue to back off save-created work")
+    T.assertNil(requester.sync.sessions[alice.identity.key:lower() .. ":900000001-1"],
+        "the bystander should not retain an unrelated transaction session")
+end)
+
+T.test("an active preferred responder updates presence and defers saves without retaining a query", function()
+    local bus = guild()
+    local requester, target, alice = bus:client("Requester"), bus:client("Target"), bus:client("Alice")
+    requester:ready(); target:ready(); alice:ready()
+    target.sync.active = { otherExchange = true }
+    local pending = { reason = "save", preferredPeer = alice.identity.key:lower(), ready = true }
+    target.sync.pending[164] = pending
+    local digest = assert(target.G.GetProfessionSyncDigest(target.db, 164, target.sync.members))
+    local query = "P3|Q|*|900000004-1|164|" .. digest .. ";manual;;" .. target.identity.key:lower()
+
+    T.assertEqual(target.sync.transport.onPayload(query, requester.identity.key, "GUILD"), "observing")
+    T.assertFalse(pending.ready)
+    T.assertNil(target.sync.sessions[requester.identity.key:lower() .. ":900000004-1"],
+        "a responder already in another exchange must not keep an unclaimable session")
+    bus:advance(3)
+    T.assertEqual(bus:count("C", target.identity.key), 0, "a busy target must not claim the request")
+    T.assertTrue(target.sync.presenceEvidence[requester.identity.key:lower()] ~= nil,
+        "the ignored work must still refresh sender presence evidence")
+end)
+
+T.test("a manual operation between peers cannot allocate a targeted response session", function()
+    local bus = guild()
+    local alice, target, bob = bus:client("Alpha"), bus:client("Target"), bus:client("Zulu")
+    alice:ready(); target:ready(); bob:ready()
+    assert(target.G.RequestProfessionSync(target.sync, 164, "manual"))
+    bus:advance(27)
+    T.assertNotNil(target.sync.manualOperation)
+    T.assertNil(target.sync.active, "the target should be in its cooldown between peer comparisons")
+    T.assertNil(target.sync.manualOperation.currentSession)
+
+    local pending = { reason = "save", preferredPeer = alice.identity.key:lower(), ready = true }
+    target.sync.pending[164] = pending
+    local digest = assert(target.G.GetProfessionSyncDigest(target.db, 164, target.sync.members))
+    local query = "P3|Q|*|900000005-1|164|" .. digest .. ";manual;;" .. target.identity.key:lower()
+    local responsesBefore = bus:count("C", target.identity.key)
+
+    T.assertEqual(target.sync.transport.onPayload(query, bob.identity.key, "GUILD"), "observing")
+    T.assertFalse(pending.ready, "meaningful-save work must remain deferred during a manual operation")
+    T.assertNil(target.sync.sessions[bob.identity.key:lower() .. ":900000005-1"],
+        "the target cannot respond while its own manual operation is between peers")
+    bus:advance(3)
+    T.assertEqual(bus:count("C", target.identity.key), responsesBefore,
+        "a manual-operation cooldown target must not claim another request")
+end)
+
+T.test("a busy continuation leaves catch-up needed instead of claiming a partial match", function()
+    local bus = guild()
+    local alice, requester, bob = bus:client("Alice"), bus:client("Requester"), bus:client("Bob")
+    alice:ready(); requester:ready(); bob:ready()
+
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(27)
+    T.assertEqual(requester.sync.manualOperation.matches, 1)
+
+    -- Exercise the bounded-session admission failure on the next candidate.
+    for index = 1, 4 do requester.sync.sessions["busy:" .. index] = { finished = false } end
+    bus:advance(100)
+
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Catch-up needed",
+        "a failed attempt to start the next selected peer is incomplete evidence")
+end)
+
+T.test("separate manual requests rotate the four-peer window to a newer fifth peer", function()
+    local bus = guild()
+    local requester = bus:client("Requester")
+    local peers = {}
+    for _, name in ipairs({ "Alpha", "Bravo", "Charlie", "Delta", "Echo", "ZedBob" }) do
+        peers[#peers + 1] = bus:client(name)
+    end
+    local offline = bus:member("OfflineCrafter")
+    for _, client in ipairs({ requester, unpack(peers) }) do
+        client:save(offline, { 3, 8 }, 1700000001)
+        client:ready()
+    end
+    peers[6]:save(offline, { 3, 8, 9 }, 1700000002)
+    T.assertEqual(bus:count("A"), 0, "the peers must not announce the newer snapshot voluntarily")
+
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(245)
+    local beforeRotation = assert(requester.G.GetProfessionSyncRecord(requester.db, offline.guid, 164))
+    T.assertEqual(beforeRotation.capturedAt, 1700000001)
+    T.assertEqual(#beforeRotation.recipes, 2)
+    T.assertTrue(requester.G.GetProfessionSyncStatus(requester.sync, 164):find("Catch%-up") ~= nil)
+
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(240)
+
+    local received = assert(requester.G.GetProfessionSyncRecord(requester.db, offline.guid, 164))
+    T.assertEqual(received.capturedAt, 1700000002)
+    T.assertEqual(#received.recipes, 3)
+    T.assertTrue(bus:count("D", peers[6].identity.key) > 0, "the rotated window must query the fifth eligible peer")
+    local frameCount = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frameCount, "rotation advances only on a later manual request")
+end)
+
+T.test("login and idle roster readiness create no profession network traffic", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    T.assertFalse(a.G.LoginProfessionSync(a.sync))
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, 0)
+end)
+
+T.test("legacy login and background announcements are hints and their queries are ignored", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    local digest = assert(a.G.GetProfessionSyncDigest(a.db, 164, a.sync.members))
+    for _, reason in ipairs({ "login", "background" }) do
+        local announcement = "P3|A|*|123-1|0|164," .. digest .. "," .. reason
+        T.assertEqual(b.sync.transport.onPayload(announcement, a.identity.key, "GUILD"), "announced")
+        local query = "P3|Q|*|123-2|164|" .. digest .. ";" .. reason .. ";;"
+        T.assertEqual(b.sync.transport.onPayload(query, a.identity.key, "GUILD"), "ignored")
+    end
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, 0, "legacy periodic traffic must not trigger local responses")
+    T.assertEqual(b.sync.peers[a.identity.key:lower()][164], digest)
+end)
+
+T.test("manual session timeout cancels queued frames and ignores a late CTL completion", function()
+    local bus = guild()
+    local peer, requester = bus:client("Alice"), bus:client("Bob")
+    peer:ready(); requester:ready()
+    local submissions, held = 0, nil
+    requester.api.ChatThrottleLib.SendAddonMessage = function(_, _, _, _, _, _, _, callback, arg)
+        submissions = submissions + 1
+        held = { callback = callback, arg = arg }
+    end
+
+    T.assertTrue(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    T.assertEqual(submissions, 1)
+    bus:advance(301)
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Catch-up needed")
+    T.assertNil(requester.sync.manualOperation)
+    assert(held)
+    held.callback(held.arg, true, 0)
+    bus:advance(1200)
+
+    T.assertEqual(submissions, 1, "late CTL completion must not submit remaining operation frames")
+    T.assertEqual(#bus.frames, 0)
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Catch-up needed")
 end)
 
 T.test("changed save converges observers through separate selected whispers without repeating current records", function()
@@ -217,11 +524,11 @@ T.test("profession sync is bounded and guild departure cancels pending traffic",
     for index = count + 1, #bus.frames do T.assertFalse(bus.frames[index].sender == b.identity.key) end
 end)
 
-T.test("login hash exchange automatically repairs missing cached profession data", function()
+T.test("manual hash comparison repairs missing cached profession data", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:save(a.identity, { 3, 8 }); a:ready(); b:ready()
-    assert(b.G.LoginProfessionSync(b.sync))
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual"))
     bus:advance(80)
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
     T.assertEqual(bus:count("D"), 1)
@@ -291,12 +598,17 @@ T.test("real profession event startup does not require the gear companion", func
     onEvent(nil, "PLAYER_ENTERING_WORLD")
     onEvent(nil, "GUILD_ROSTER_UPDATE")
     bus:advance(80)
+    T.assertNil(G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+    T.assertEqual(#bus.frames, 0, "startup events alone must not create network traffic")
+    assert(G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(80)
     T.assertNotNil(G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
-    onEvent(nil, "GUILD_ROSTER_UPDATE"); onEvent(nil, "PLAYER_ENTERING_WORLD"); bus:advance(600)
-    T.assertTrue(bus:count("A") >= 2)
+    onEvent(nil, "GUILD_ROSTER_UPDATE"); onEvent(nil, "PLAYER_ENTERING_WORLD")
+    local count = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, count)
 end)
 
-T.test("one login comparison catches up more than one profession within its finite budget", function()
+T.test("manual comparisons cover selected professions independently", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:save(a.identity, { 3 })
@@ -305,8 +617,10 @@ T.test("one login comparison catches up more than one profession within its fini
         source = "player", status = "cached", recipes = { { recipeID = 9, name = "Potion" } },
     }, { guildMembershipVerified = true }))
     a:ready(); b:ready()
-    assert(b.G.LoginProfessionSync(b.sync)); bus:advance(150)
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(100)
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+    T.assertNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 171))
+    assert(b.G.RequestProfessionSync(b.sync, 171, "manual")); bus:advance(100)
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 171))
     T.assertEqual(bus:count("D"), 2)
 end)
@@ -326,6 +640,7 @@ T.test("large profession manifests compare shared GUID windows without duplicate
     a:save(last, { 500 }, 1700000002)
     a:ready(); b:ready()
     b.sync.cursor[164] = identities[128].guid
+    b.sync.cursorPeer[164] = a.identity.key:lower()
     a.sync.cursor[164] = identities[32].guid
     assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(80)
     T.assertEqual(bus:count("D"), 1)
@@ -370,7 +685,7 @@ T.test("maximum complete profession membership fits bounded frames and is stored
     for _, frame in ipairs(bus.frames) do T.assertTrue(#frame.text <= 240) end
 end)
 
-T.test("login repair gradually catches up more than eight records across professions", function()
+T.test("manual comparisons retain the four-record limit across professions", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     for index = 1, 5 do
@@ -381,9 +696,13 @@ T.test("login repair gradually catches up more than eight records across profess
             source = "guild-profession-link", status = "cached", recipes = { { recipeID = index + 10, name = "Potion" } },
         }, { guildMembershipVerified = true }))
     end
-    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); bus:advance(1000)
-    T.assertEqual(bus:count("D"), 10)
-    bus:advance(600); T.assertEqual(bus:count("D"), 10)
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(1000)
+    assert(b.G.RequestProfessionSync(b.sync, 171, "manual")); bus:advance(1000)
+    T.assertEqual(bus:count("D"), 8)
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Catch-up needed")
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 171), "Catch-up needed")
+    bus:advance(3600); T.assertEqual(bus:count("D"), 8)
 end)
 
 T.test("same-realm addon senders without a realm suffix resolve through the verified roster", function()
@@ -662,13 +981,86 @@ T.test("equal-time content conflicts remain visible when another record transfer
     T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Conflict: fresh observation needed")
 end)
 
+T.test("a second-peer timeout preserves a conflict found by the first peer", function()
+    local bus = guild()
+    local alice, requester, bob = bus:client("Alice"), bus:client("Requester"), bus:client("Bob")
+    local conflict = bus:member("Conflict")
+    alice:save(conflict, { 3 }, 1700000000)
+    requester:save(conflict, { 8 }, 1700000000)
+    bob:save(conflict, { 8 }, 1700000000)
+    alice:ready(); requester:ready(); bob:ready()
+
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(55)
+    T.assertTrue(requester.sync.manualOperation.conflict, "the first comparison should have recorded its conflict")
+
+    local original = requester.api.ChatThrottleLib.SendAddonMessage
+    local held
+    requester.api.ChatThrottleLib.SendAddonMessage = function(lib, priority, prefix, text, channel, target, queue, callback, arg)
+        if text:find("P3|Q|", 1, true) then
+            held = { callback = callback, arg = arg }
+            return
+        end
+        return original(lib, priority, prefix, text, channel, target, queue, callback, arg)
+    end
+    bus:advance(10)
+    T.assertNotNil(held, "the next preferred-peer query should be held before its callback")
+    bus:advance(301)
+
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Conflict: fresh observation needed",
+        "a later session timeout must not erase an earlier conflict")
+    held.callback(held.arg, true, 0)
+    bus:advance(1200)
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Conflict: fresh observation needed")
+end)
+
+T.test("cancellation during a planned transfer preserves its conflict and committed record", function()
+    local bus = guild()
+    local alice, requester = bus:client("Alice"), bus:client("Bob")
+    local conflict, changedOne, changedTwo = bus:member("Conflict"), bus:member("ChangedOne"), bus:member("ChangedTwo")
+    alice:save(conflict, { 3 }, 1700000000)
+    requester:save(conflict, { 8 }, 1700000000)
+    alice:save(changedOne, { 9 }, 1700000002)
+    requester:save(changedOne, { 8 }, 1700000001)
+    alice:save(changedTwo, { 10 }, 1700000002)
+    requester:save(changedTwo, { 8 }, 1700000001)
+    alice:ready(); requester:ready()
+    local receive, cancelled, plannedConflict, retainedGUID = requester.sync.transport.onPayload, false, false, nil
+    requester.sync.transport.onPayload = function(payload, sender, channel)
+        local result, err = receive(payload, sender, channel)
+        if not cancelled and payload:find("P3|D|", 1, true) then
+            local session = requester.sync.manualOperation and requester.sync.manualOperation.currentSession
+            for _, identity in ipairs({ changedOne, changedTwo }) do
+                local record = requester.G.GetProfessionSyncRecord(requester.db, identity.guid, 164)
+                if record and record.capturedAt == 1700000002 then retainedGUID = identity.guid end
+            end
+            if retainedGUID then
+                plannedConflict = session and session.conflict == true
+                cancelled = true
+                requester.G.CancelProfessionSync(requester.sync)
+            end
+        end
+        return result, err
+    end
+
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual"))
+    bus:advance(90)
+
+    T.assertTrue(cancelled, "the test must cancel after one newer record has been committed")
+    T.assertTrue(plannedConflict, "the active session must already know about the equal-time conflict")
+    T.assertNotNil(requester.G.GetProfessionSyncRecord(requester.db, retainedGUID, 164),
+        "cancellation must retain already committed cached data")
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Conflict: fresh observation needed",
+        "a conflict held on the unfinished session must survive cancellation")
+end)
+
 T.test("unknown roster presence fails closed until a valid recent protocol message arrives", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a.identity.online = "unknown"
     a:ready(); b:ready()
     T.assertFalse(b.sync.transport.canSendTarget("alice-realm"))
-    assert(a.G.LoginProfessionSync(a.sync)); bus:advance(5)
+    T.assertEqual(receiveLegacyAnnouncement(a, b, "login"), "announced")
     T.assertTrue(b.sync.transport.canSendTarget("alice-realm"))
 end)
 
@@ -676,7 +1068,7 @@ T.test("a same-time roster refresh supersedes a valid message received earlier i
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:ready(); b:ready()
-    assert(a.G.LoginProfessionSync(a.sync)); bus:advance(0)
+    T.assertEqual(receiveLegacyAnnouncement(a, b, "background"), "announced")
     T.assertTrue(b.sync.transport.canSendTarget("alice-realm"))
     a.identity.online = false
     assert(b.G.RefreshProfessionSyncRoster(b.sync))
@@ -687,7 +1079,7 @@ T.test("a valid message older than the latest roster observation does not overri
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:ready(); b:ready()
-    assert(a.G.LoginProfessionSync(a.sync)); bus:advance(5)
+    T.assertEqual(receiveLegacyAnnouncement(a, b, "login"), "announced")
     a.identity.online = false
     bus:advance(1); assert(b.G.RefreshProfessionSyncRoster(b.sync))
     T.assertFalse(b.sync.transport.canSendTarget("alice-realm"))
@@ -938,20 +1330,24 @@ T.test("timestamp-only freshness never replaces the local player's owned snapsho
     T.assertEqual(bus:count("T"), 0)
 end)
 
-T.test("background catch-up continues beyond eight cached records and suppresses equal digests", function()
+T.test("manual sync transfers one bounded page without background catch-up", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     local identities = {}
     for index = 1, 13 do identities[index] = bus:member("Offline" .. index); a:save(identities[index], { index }) end
-    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); assert(b.G.LoginProfessionSync(b.sync))
+    a:ready(); b:ready(); assert(b.G.RequestProfessionSync(b.sync, 164, "manual"))
     bus:advance(1800)
-    for _, identity in ipairs(identities) do T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, identity.guid, 164)) end
-    T.assertEqual(bus:count("D"), 13)
+    local received = 0
+    for _, identity in ipairs(identities) do
+        if b.G.GetProfessionSyncRecord(b.db, identity.guid, 164) then received = received + 1 end
+    end
+    T.assertEqual(received, 4)
+    T.assertEqual(bus:count("D"), 4)
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Catch-up needed")
     local transfers, announcements = bus:count("D"), bus:count("A")
     bus:advance(1800)
     T.assertEqual(bus:count("D"), transfers)
-    T.assertTrue(bus:count("A") > announcements)
-    T.assertTrue(bus:count("A") - announcements <= 12)
+    T.assertEqual(bus:count("A"), announcements)
 end)
 
 T.test("dropped storage acknowledgement cannot report a completed transfer", function()
@@ -987,8 +1383,10 @@ T.test("twenty participants catch up through serialized whispers with no duplica
     local clients = {}
     for index = 1, 20 do clients[index] = bus:client(string.format("Member%02d", index)) end
     local offline = bus:member("Offline")
+    for _, client in ipairs(clients) do client:ready() end
+    local before = clients[1].G.GetProfessionSyncDigest(clients[1].db, 164, clients[1].sync.members)
     clients[1]:save(offline, { 3, 8 })
-    for _, client in ipairs(clients) do client:ready(); assert(client.G.LoginProfessionSync(client.sync)) end
+    assert(clients[1].G.PublishProfessionSyncSave(clients[1].sync, 164, before))
     bus:advance(3600)
     for _, client in ipairs(clients) do
         T.assertNotNil(client.G.GetProfessionSyncRecord(client.db, offline.guid, 164))
@@ -998,7 +1396,7 @@ T.test("twenty participants catch up through serialized whispers with no duplica
     local count = bus:count("D")
     bus:advance(1800)
     T.assertEqual(bus:count("D"), count)
-    T.assertTrue(bus:count("A") < 120)
+    T.assertEqual(bus:count("A"), 1)
 end)
 
 T.test("an unselected observer is not labelled synchronized by another pair's exchange", function()
@@ -1019,15 +1417,14 @@ T.test("whisper sync rejects old protocol clients and future timestamp manifests
     T.assertNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
 end)
 
-T.test("guild departure cancels periodic announcements and rejoining restores background checks", function()
+T.test("guild departure and rejoining do not create periodic announcements", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
-    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); bus:advance(20)
+    a:ready(); b:ready(); bus:advance(20)
     a.left = true; T.assertFalse(a.G.RefreshProfessionSyncRoster(a.sync))
-    local count = bus:count("A", a.identity.key)
-    bus:advance(1000); T.assertEqual(bus:count("A", a.identity.key), count)
+    bus:advance(1000); T.assertEqual(#bus.frames, 0)
     a.left = false; a:ready(); bus:advance(420)
-    T.assertTrue(bus:count("A", a.identity.key) > count)
+    T.assertEqual(#bus.frames, 0)
 end)
 
 T.test("multiple maximum-size profession records catch up without overflowing the outbound queue", function()
@@ -1036,7 +1433,7 @@ T.test("multiple maximum-size profession records catch up without overflowing th
     local recipes, identities = {}, {}
     for index = 1, 4096 do recipes[index] = index end
     for index = 1, 4 do identities[index] = bus:member("Offline" .. index); a:save(identities[index], recipes) end
-    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); assert(b.G.LoginProfessionSync(b.sync))
+    a:ready(); b:ready(); assert(b.G.RequestProfessionSync(b.sync, 164, "manual"))
     bus:advance(1600)
     for _, identity in ipairs(identities) do
         T.assertEqual(#assert(b.G.GetProfessionSyncRecord(b.db, identity.guid, 164)).recipes, 4096)
@@ -1045,7 +1442,7 @@ T.test("multiple maximum-size profession records catch up without overflowing th
     T.assertNil(a.sync.transport.lastSendError)
 end)
 
-T.test("a newer local observation during transfer is retained and reconciled back to its peer", function()
+T.test("a newer local observation is retained until a separate manual repair", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     local offline = bus:member("Offline")
@@ -1059,19 +1456,27 @@ T.test("a newer local observation during transfer is retained and reconciled bac
     end
     assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(200)
     T.assertEqual(b.G.GetProfessionSyncRecord(b.db, offline.guid, 164).recipes[1].recipeID, 8)
+    T.assertEqual(a.G.GetProfessionSyncRecord(a.db, offline.guid, 164).capturedAt, 1700000001)
+    assert(a.G.RequestProfessionSync(a.sync, 164, "manual")); bus:advance(200)
     T.assertEqual(a.G.GetProfessionSyncRecord(a.db, offline.guid, 164).capturedAt, 1700000002)
 end)
 
-T.test("a new installation automatically catches up one hundred cached guild crafters", function()
+T.test("a new installation stays idle until manual repair and then syncs one bounded page", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     local identities = {}
     for index = 1, 100 do identities[index] = bus:member("Offline" .. index); a:save(identities[index], { index }) end
-    a:ready(); b:ready(); assert(a.G.LoginProfessionSync(a.sync)); assert(b.G.LoginProfessionSync(b.sync))
-    bus:advance(7200)
-    for _, identity in ipairs(identities) do T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, identity.guid, 164)) end
-    T.assertEqual(bus:count("D"), 100)
-    local transfers = bus:count("D"); bus:advance(1800); T.assertEqual(bus:count("D"), transfers)
+    a:ready(); b:ready(); bus:advance(7200)
+    T.assertEqual(#bus.frames, 0)
+    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(1800)
+    local received = 0
+    for _, identity in ipairs(identities) do
+        if b.G.GetProfessionSyncRecord(b.db, identity.guid, 164) then received = received + 1 end
+    end
+    T.assertEqual(received, 4)
+    T.assertEqual(bus:count("D"), 4)
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Catch-up needed")
+    local transfers = bus:count("D"); bus:advance(3600); T.assertEqual(bus:count("D"), transfers)
 end)
 
 return { guild = guild }

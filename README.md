@@ -41,12 +41,17 @@ usable. `/ggm status` reports storage errors. Back up SavedVariables with WoW
 closed before manually resetting any database.
 
 The Professions tab shares complete last-known recipe snapshots with guild
-members using the same protocol version. It compares profession hashes after
-login and guild roster readiness, when snapshots change, when a profession is
-first selected, and through randomized background checks every 5–7 minutes.
-Matching hashes heard recently suppress redundant background announcements.
-The **Sync profession** button compares the selected profession again, subject
-to a 60-second cooldown. Nearby updates coalesce into paced notices.
+members using the same protocol version. A first profession selection can start
+a comparison, and a meaningful local snapshot save can announce that change.
+Login, roster readiness, and elapsed time alone create no profession traffic.
+The **Sync profession** button starts a bounded operation that checks up to four
+eligible guild peers one at a time, with the existing 60-second cooldown. A
+status reports how many peer caches matched or were compared; it does not claim
+agreement across the guild. If more than four peers are eligible, a later manual
+request rotates to another bounded candidate window. Unavailable peers, a
+reached limit, or incomplete evidence leave the status at **Catch-up needed**.
+Legacy login and background hashes are cached as hints, while legacy periodic
+queries receive no response.
 
 GUILD carries compact hashes and responder-selection notices. Only one selected
 pair exchanges manifests and missing/newer character records through
@@ -55,7 +60,8 @@ recipe content hash. Profession ID is in the exchange header. New observations
 use WoW server time.
 The newest complete observation wins. When the recipes match, a small freshness
 message updates the observation metadata without transferring the recipes again.
-Receiving or forwarding data preserves its original timestamp.
+Receiving data preserves its original timestamp. Data received during a
+comparison is not rebroadcast to wake other guild members.
 Known recipes retain their local labels. Unfamiliar shared recipes use the
 sender's label when available, otherwise an explicit recipe ID. Recipe requests
 include a bounded hint about labels already in the recipient's catalog, so the
@@ -63,16 +69,15 @@ sender can omit redundant names and icons. This hint can occasionally suppress
 an unfamiliar label; the UI then shows the recipe ID. It never determines which
 recipes belong to a character or whether a snapshot is complete.
 
-Exchanges transfer at most four character-profession records and use bounded
-chunks, queues and timeouts. Records are requested sequentially in each direction;
-large transfers can defer remaining records to the next exchange. The recipient
-acknowledges a record only after validating the complete transfer. Partial or
-failed transfers preserve the previous cache. Visible catalog refreshes are batched
-during receive bursts; records are saved and acknowledged as soon as they validate.
-Deferred comparisons and background checks gradually catch up larger caches;
-the old eight-record login ceiling is removed. ChatThrottleLib defers throttled
-submissions using its shared traffic queue; terminal send failures cancel the
-remaining transport work.
+Each exchange transfers at most four character-profession records and uses
+bounded chunks, queues and timeouts. Records are requested sequentially in each
+direction; larger caches may remain incomplete and require another explicit
+request after the cooldown. The recipient acknowledges a record only after
+validating the complete transfer. Partial or failed transfers preserve the
+previous cache. Visible catalog refreshes are batched during receive bursts;
+records are saved and acknowledged as soon as they validate. ChatThrottleLib
+defers throttled submissions using its shared traffic queue; terminal send
+failures cancel the remaining transport work.
 
 Queued whisper frames check recipient availability before submitting each frame
 to ChatThrottleLib. Confirmed
@@ -80,17 +85,15 @@ offline recipients cancel the current work while preserving cached records.
 Recent valid protocol messages can provide temporary presence evidence when the
 guild roster is stale. Unknown presence without that evidence stops the transfer.
 
-Whisper records reach only their selected recipient. Other missing clients take
-their own deferred turn; up-to-date records are not downloaded again. Equal-time
-conflicts retain existing data and require a fresh observation. Shared information
-remains last-known/cached, including offline crafters; agreement does not prove
-their current recipes. Profession sync is independent of the gear companion.
+Whisper records reach only their selected recipient. Equal-time conflicts retain
+existing data and require a fresh observation. Shared information remains
+last-known/cached, including offline crafters; a peer match does not prove their
+current recipes. Profession sync is independent of the gear companion.
 
 This version uses protocol P3 and prefix GC_PROF3; all participating copies must
-use this version. Existing SavedVariables do not need migration. On 2026-10-13
-the user retired the older AGENTS.md synchronization restrictions and approved
-this bounded background design. All traffic remains within supported in-game addon communication and
-respects unavailable APIs, combat restrictions and throttling.
+use this version. Existing SavedVariables do not need migration. Profession
+traffic remains within supported in-game addon communication and respects
+unavailable APIs, combat restrictions and throttling.
 
 ChatThrottleLib version 29 is embedded, unchanged, under `Libs/ChatThrottleLib`
 in both GuildGearMemory and DysgearMemory. The first loaded copy initializes the

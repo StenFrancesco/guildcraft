@@ -5,14 +5,15 @@ local PROFESSIONS = { 164, 165, 171, 197, 202, 333 }
 local SUPPORTED = {}
 for _, professionID in ipairs(PROFESSIONS) do SUPPORTED[professionID] = true end
 local MAX_RECORDS, MAX_PAGES, PAGE_SIZE = 4, 4, 32
-local COOLDOWN, TTL = 60, 300
+local COOLDOWN, TTL, MAX_MANUAL_PEERS = 60, 300, 4
+-- Leave one session TTL and cooldown for each of the four allowed peers.
+local MANUAL_OPERATION_SECONDS = MAX_MANUAL_PEERS * (TTL + COOLDOWN)
 local CLAIM_SLOT_SECONDS, ELECTION_SECONDS = 0.025, 27
-local BACKGROUND_MIN, BACKGROUND_MAX, SUPPRESS_SECONDS = 300, 420, 300
 local PRESENCE_EVIDENCE_SECONDS, CATALOG_REFRESH_DELAY = 60, 5
 local MAX_KNOWN_RECIPE_IDS, BLOOM_BITS_PER_ID = 2048, 8
 local BLOOM_MAX_BITS, BLOOM_PROBES = MAX_KNOWN_RECIPE_IDS * BLOOM_BITS_PER_ID, 5
 local BLOOM_MULTIPLIERS, BLOOM_OFFSETS = { 17, 31, 47, 61, 73 }, { 1, 3, 5, 7, 9 }
-local startBackground
+local continueManualOperation, finishManualOperation, cancelManualOperation
 local function integer(value, low, high) return GGM.IsProfessionSyncInteger(value, low, high) end
 local function split(text, separator)
     local result, start = {}, 1
@@ -52,6 +53,9 @@ local function notify(sync, professionID, message)
     sync.status[professionID] = message
     if type(GGM.RefreshVisibleProfessionSyncStatus) == "function" then GGM.RefreshVisibleProfessionSyncStatus() end
 end
+local function manualOperationHasConflict(operation)
+    return operation and (operation.conflict or (operation.currentSession and operation.currentSession.conflict)) or false
+end
 local function safe(sync)
     if not sync.registered or not sync.rosterReady then return false end
     if type(sync.api.InCombatLockdown) ~= "function" then return false end
@@ -64,7 +68,7 @@ local function timer(sync, delay, fn)
         if sync.generation == generation then fn() end
     end)
     if not ok or not value then return false end
-    return true
+    return true, value
 end
 
 local function visibleCatalogRefresh(sync)
@@ -204,18 +208,22 @@ end
 
 function GGM.CancelProfessionSync(sync)
     if not sync then return end
+    local operation = sync.manualOperation
+    local conflictProfession = manualOperationHasConflict(operation) and operation.professionID or nil
     sync.generation = sync.generation + 1
     flushCatalogRefresh(sync)
+    if sync.manualOperation then sync.manualOperation.cancelled = true end
+    sync.manualOperation = nil
     sync.sessions, sync.pending, sync.pendingSaves, sync.active = {}, {}, {}, nil
-    sync.backgroundStarted = false
     if sync.transport then GGM.CancelProfessionTransport(sync.transport) end
-    for professionID in pairs(sync.status) do notify(sync, professionID, "Sync unavailable") end
+    for professionID in pairs(sync.status) do
+        notify(sync, professionID, professionID == conflictProfession and "Conflict: fresh observation needed" or "Sync unavailable")
+    end
 end
 
 local function failed(sync, err)
     sync.lastError = err
     GGM.CancelProfessionSync(sync)
-    if sync.loginDone and sync.rosterReady and startBackground then startBackground(sync) end
 end
 local function send(sync, kind, recipient, id, professionID, body, onFinished)
     if not safe(sync) then failed(sync, "profession-sync-unavailable"); return false end
@@ -248,8 +256,12 @@ local function createSession(sync, initiator, id, professionID, digest, reason, 
         if not session.finished then
             session.finished = true
             if sync.active == session then sync.active = nil end
-            if sync.selfKey == session.initiator or sync.selfKey == session.selected then notify(sync, professionID, "Catch-up needed") end
-            timer(sync, 0.5, function() drainPending(sync) end)
+            if session.operation then
+                cancelManualOperation(sync, session.operation, "Catch-up needed")
+            else
+                if sync.selfKey == session.initiator or sync.selfKey == session.selected then notify(sync, professionID, "Catch-up needed") end
+                timer(sync, 0.5, function() drainPending(sync) end)
+            end
         end
         sync.sessions[sessionKey(initiator, id)] = nil
     end) then failed(sync, "profession-sync-timer-unavailable"); return nil end
@@ -306,7 +318,7 @@ function GGM.RefreshProfessionSyncRoster(sync)
     end
     if sync.guild and sync.guild ~= rows.guild then
         GGM.CancelProfessionSync(sync)
-        sync.peers, sync.heard, sync.cursor, sync.presenceEvidence = {}, {}, {}, {}
+        sync.peers, sync.heard, sync.cursor, sync.cursorPeer, sync.manualCursor, sync.presenceEvidence = {}, {}, {}, {}, {}, {}
     end
     sync.members, sync.senders, sync.selfKey, sync.selfGUID, sync.guild = rows.byGUID, rows.bySender, rows.selfKey, rows.selfGUID, rows.guild
     sync.presenceRevision = rows.presenceRevision
@@ -324,7 +336,6 @@ function GGM.RefreshProfessionSyncRoster(sync)
             or (sync.active.selected and not rows.bySender[sync.active.selected])
             or (peer and not canSendTarget(sync, peer))) then GGM.CancelProfessionSync(sync) end
     end
-    if sync.loginDone and not sync.backgroundStarted then startBackground(sync) end
     return true, nil
 end
 
@@ -367,7 +378,7 @@ local function sendManifest(sync, session)
 end
 
 drainPending = function(sync)
-    if sync.active then return end
+    if sync.active or sync.manualOperation then return end
     local selected
     for professionID, pending in pairs(sync.pending) do
         if pending.ready and (not selected or professionID < selected) then selected = professionID end
@@ -434,14 +445,44 @@ local function scheduleComparison(sync, professionID, reason, preferredPeer)
     end)
 end
 
+local function peerLabel(sync, peer)
+    local identity = peer and sync.senders[peer]
+    return identity and identity.name or peer or "peer"
+end
+
+local function statusForPeer(sync, session, message)
+    local peer = sync.selfKey == session.initiator and session.selected or session.initiator
+    if message == "Cache hashes match" then return "Matches " .. peerLabel(sync, peer) .. " cache" end
+    if message == "Compared cached data" then return "Compared with " .. peerLabel(sync, peer) end
+    return message
+end
+
 local function finish(sync, session, message)
     if session.finished then return end
     session.finished = true
     if sync.active == session then sync.active = nil end
-    if sync.selfKey == session.initiator and session.nextCursor ~= nil then sync.cursor[session.professionID] = session.nextCursor end
+    if sync.selfKey == session.initiator and session.nextCursor ~= nil then
+        sync.cursor[session.professionID] = session.nextCursor
+        sync.cursorPeer[session.professionID] = session.selected
+    end
+    local operation = session.operation
+    if operation and sync.manualOperation == operation and sync.selfKey == session.initiator then
+        if operation.currentSession == session then operation.currentSession = nil end
+        if message == "Cache hashes match" then
+            operation.matches = operation.matches + 1
+            operation.completed = operation.completed + 1
+        elseif message == "Compared cached data" then
+            operation.completed = operation.completed + 1
+        elseif message == "Conflict: fresh observation needed" then
+            operation.conflict = true
+        else
+            operation.uncertain = true
+        end
+        if session.truncated or message == "Catch-up needed" then operation.uncertain = true end
+    end
     if sync.selfKey == session.initiator or sync.selfKey == session.selected then
         flushCatalogRefresh(sync)
-        notify(sync, session.professionID, message)
+        if not operation then notify(sync, session.professionID, statusForPeer(sync, session, message)) end
     end
     if sync.selfKey == session.initiator or sync.selfKey == session.selected then
         local peer = sync.selfKey == session.initiator and session.selected or session.initiator
@@ -449,12 +490,15 @@ local function finish(sync, session, message)
             local digest = GGM.GetProfessionSyncDigest(sync.db, session.professionID, sync.members)
             if message == "Cache hashes match" or message == "Compared cached data" then
                 sync.peers[peer] = sync.peers[peer] or {}; sync.peers[peer][session.professionID] = digest
-            elseif message == "Catch-up needed" and session.plan and #session.plan > 0 then
-                scheduleComparison(sync, session.professionID, "background", peer)
             end
         end
     end
-    timer(sync, 0.5, function() drainPending(sync) end)
+    if operation and sync.manualOperation == operation and sync.selfKey == session.initiator then
+        notify(sync, session.professionID, "Comparing cached data")
+        timer(sync, 0.5, function() continueManualOperation(sync, operation) end)
+    else
+        timer(sync, 0.5, function() drainPending(sync) end)
+    end
 end
 maybeFinish = function(sync, session)
     if session.finished or not session.plan then return end
@@ -638,7 +682,9 @@ local function logical(sync, payload, rawSender, channel)
             sync.peers[sender] = sync.peers[sender] or {}; sync.peers[sender][pid] = bits[2]
             sync.heard[pid] = { digest = bits[2], at = now(sync) }
             local digest = GGM.GetProfessionSyncDigest(sync.db, pid, sync.members)
-            if digest and digest ~= bits[2] then scheduleComparison(sync, pid, bits[3], sender) end
+            if bits[3] == "save" and digest and digest ~= bits[2] then
+                scheduleComparison(sync, pid, "save", sender)
+            end
         end
         return "announced"
     end
@@ -647,12 +693,12 @@ local function logical(sync, payload, rawSender, channel)
         local bits = split(body, ";")
         if recipient ~= "*" or #bits ~= 4 or not hash(bits[1]) or (bits[3] ~= "" and not GGM.IsProfessionGUID(bits[3]))
             or (bits[4] ~= "" and (not sync.senders[bits[4]] or bits[4] == sender))
-            or (bits[2] ~= "manual" and bits[2] ~= "selection" and bits[2] ~= "login" and bits[2] ~= "save" and bits[2] ~= "background") then return "ignored" end
+            or (bits[2] ~= "manual" and bits[2] ~= "selection" and bits[2] ~= "save") then return "ignored" end
         if findSession(sync, sender, id) then return "ignored" end
         local cooldownKey = sender .. ":" .. professionID
         if (sync.peerCooldowns[cooldownKey] or -COOLDOWN) + COOLDOWN > now(sync) then return "ignored" end
-        local session = createSession(sync, sender, id, professionID, bits[1], bits[2], bits[3], bits[4] ~= "" and bits[4] or nil)
-        if not session then return "ignored" end
+        local preferredPeer = bits[4] ~= "" and bits[4] or nil
+        local cannotRespond = (preferredPeer and preferredPeer ~= sync.selfKey) or sync.active or sync.manualOperation
         acceptPeerMessage(sync, sender)
         sync.peerCooldowns[cooldownKey] = now(sync)
         -- Bystanders cannot consume whisper data. Defer their own comparison
@@ -665,9 +711,12 @@ local function logical(sync, payload, rawSender, channel)
             end)
         end
         sync.cooldowns[professionID] = now(sync)
+        if cannotRespond then return "observing" end
         local rows = manifest(sync, professionID)
         local digest = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
-        if not rows or not digest or sync.active or (session.preferredPeer and session.preferredPeer ~= sync.selfKey) then return "observing" end
+        if not rows or not digest then return "observing" end
+        local session = createSession(sync, sender, id, professionID, bits[1], bits[2], bits[3], preferredPeer)
+        if not session then return "observing" end
         local order = 0
         for candidate in pairs(sync.senders) do if candidate < sync.selfKey then order = order + 1 end end
         timer(sync, 1 + order * CLAIM_SLOT_SECONDS, function()
@@ -778,15 +827,13 @@ local function logical(sync, payload, rawSender, channel)
                 acceptPeerMessage(sync, sender)
                 local localRecord, localErr = GGM.GetProfessionSyncRecord(sync.db, record.guid, professionID)
                 if not localRecord and localErr ~= "profession-sync-record-missing" then return "ignored" end
-                local acknowledgement, publishBeforeHash = "stored", nil
+                local acknowledgement = "stored"
                 if record.guid == sync.selfGUID or GGM.IsLocalCharacterGUID(sync.db, record.guid) then
                     session.conflict = true; acknowledgement = "skip"
                 elseif not localRecord or localRecord.capturedAt < record.capturedAt then
-                    local beforeHash = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
                     local saved, err = GGM.SaveProfessionSnapshot(sync.db, sync.members[record.guid], record, { guildMembershipVerified = true })
                     if not saved then failed(sync, err); return "ignored" end
                     scheduleCatalogRefresh(sync)
-                    publishBeforeHash = beforeHash
                 elseif localRecord and localRecord.hash ~= record.hash and localRecord.capturedAt == record.capturedAt then
                     session.conflict = true; acknowledgement = "skip"
                 elseif localRecord and localRecord.capturedAt > record.capturedAt then
@@ -795,7 +842,6 @@ local function logical(sync, payload, rawSender, channel)
                 session.dataSeen[item.guid] = true
                 if not send(sync, "K", sender, id, professionID,
                     session.initiator .. ";" .. item.guid .. ";" .. item.capturedAt .. ";" .. acknowledgement) then return "ignored" end
-                if publishBeforeHash then GGM.PublishProfessionSyncSave(sync, professionID, publishBeforeHash) end
                 notify(sync, professionID, "Syncing cached data")
                 requestNext(sync, session)
                 maybeFinish(sync, session)
@@ -818,7 +864,7 @@ local function logical(sync, payload, rawSender, channel)
                 and recipient == sync.selfKey and session.requested[item.guid] and not session.dataSeen[item.guid] then
                 acceptPeerMessage(sync, sender)
                 local localRecord, localErr = GGM.GetProfessionSyncRecord(sync.db, item.guid, professionID)
-                local acknowledgement, publishBeforeHash = "stored", nil
+                local acknowledgement = "stored"
                 if item.guid == sync.selfGUID or GGM.IsLocalCharacterGUID(sync.db, item.guid) then
                     session.conflict = true
                     acknowledgement = "skip"
@@ -840,17 +886,14 @@ local function logical(sync, payload, rawSender, channel)
                     }
                     if not GGM.ValidateProfessionCapture(updated)
                         or GGM.HashProfessionRecipes(professionID, updated.recipes) ~= item.hash then return "ignored" end
-                    local beforeHash = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
                     local saved, err = GGM.SaveProfessionSnapshot(sync.db, sync.members[item.guid], updated,
                         { guildMembershipVerified = true })
                     if not saved then failed(sync, err); return "ignored" end
                     scheduleCatalogRefresh(sync)
-                    publishBeforeHash = beforeHash
                 end
                 session.dataSeen[item.guid] = true
                 if not send(sync, "K", sender, id, professionID,
                     session.initiator .. ";" .. item.guid .. ";" .. item.capturedAt .. ";" .. acknowledgement) then return "ignored" end
-                if publishBeforeHash then GGM.PublishProfessionSyncSave(sync, professionID, publishBeforeHash) end
                 notify(sync, professionID, "Syncing cached data")
                 requestNext(sync, session)
                 maybeFinish(sync, session)
@@ -889,7 +932,7 @@ function GGM.CreateProfessionSync(api, db)
     if type(api) ~= "table" or type(db) ~= "table" then return nil, "profession-sync-unavailable" end
     local sync = { api = api, db = db, generation = 0, sequence = 0, sessions = {}, pending = {}, status = {},
         cooldowns = {}, peerCooldowns = {}, pendingSaves = {}, lastAnnouncedDigests = {}, saveCooldowns = {},
-        selectedOnce = {}, cursor = {}, peers = {}, heard = {}, presenceEvidence = {}, presenceRevision = 0,
+        selectedOnce = {}, cursor = {}, cursorPeer = {}, manualCursor = {}, peers = {}, heard = {}, presenceEvidence = {}, presenceRevision = 0,
         registered = false, rosterReady = false }
     local transport, err = GGM.CreateProfessionTransport(api, function(payload, sender, channel) return logical(sync, payload, sender, channel) end,
         function(failure) failed(sync, failure) end)
@@ -920,24 +963,70 @@ function GGM.HandleProfessionSyncAddonMessage(sync, prefix, frame, channel, rawS
     return GGM.ReceiveProfessionFrame(sync.transport, prefix, frame, channel, sender)
 end
 
-function GGM.RequestProfessionSync(sync, professionID, reason, preferredPeer)
-    reason = reason or "manual"
+local function manualCandidates(sync, professionID, preferredPeer)
+    local ordered, seen = {}, {}
+    local function add(peer)
+        if not peer or peer == sync.selfKey or seen[peer] or not sync.senders[peer] then return end
+        seen[peer] = true
+        ordered[#ordered + 1] = peer
+    end
+    local known = {}
+    for peer, digests in pairs(sync.peers) do
+        if type(digests) == "table" and next(digests) then known[#known + 1] = peer end
+    end
+    table.sort(known)
+    for _, peer in ipairs(known) do add(peer) end
+    local roster = {}
+    for peer in pairs(sync.senders) do roster[#roster + 1] = peer end
+    table.sort(roster)
+    for _, peer in ipairs(roster) do add(peer) end
+
+    local first = 1
+    local previous = sync.manualCursor[professionID]
+    if previous then
+        for index, peer in ipairs(ordered) do
+            if peer == previous then first = index % #ordered + 1; break end
+        end
+    end
+    local candidates, included = {}, {}
+    local function include(peer)
+        if peer and not included[peer] and canSendTarget(sync, peer) and #candidates < MAX_MANUAL_PEERS then
+            included[peer] = true
+            candidates[#candidates + 1] = peer
+        end
+    end
+    include(preferredPeer)
+    for offset = 0, #ordered - 1 do
+        include(ordered[(first + offset - 1) % #ordered + 1])
+    end
+    local overflow = false
+    for _, peer in ipairs(ordered) do
+        if canSendTarget(sync, peer) and not included[peer] then overflow = true; break end
+    end
+    return candidates, overflow
+end
+
+local function startProfessionComparison(sync, professionID, reason, preferredPeer, operation)
     if not SUPPORTED[professionID] or not safe(sync) then
         if sync then notify(sync, professionID or 0, "Sync unavailable") end
         return false, "profession-sync-unavailable"
     end
-    if reason ~= "manual" and reason ~= "selection" and reason ~= "login" and reason ~= "save" and reason ~= "background" then return false, "profession-sync-reason-invalid" end
+    if reason ~= "manual" and reason ~= "selection" and reason ~= "save" then return false, "profession-sync-reason-invalid" end
     if preferredPeer and (not sync.senders[preferredPeer] or preferredPeer == sync.selfKey
         or not canSendTarget(sync, preferredPeer)) then return false, "profession-sync-peer-unavailable" end
     if reason == "selection" and sync.selectedOnce[professionID] then return false, "profession-sync-already-compared" end
-    if sync.active or (sync.cooldowns[professionID] or -COOLDOWN) + COOLDOWN > now(sync) then return false, "profession-sync-cooldown" end
+    if sync.active or (sync.manualOperation and sync.manualOperation ~= operation) then return false, "profession-sync-busy" end
+    if (sync.cooldowns[professionID] or -COOLDOWN) + COOLDOWN > now(sync) then return false, "profession-sync-cooldown" end
     local digest, err = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
     if not digest then return false, err end
     local id = nextID(sync)
     local startGUID = sync.cursor[professionID]
-    if type(startGUID) ~= "string" or not GGM.IsProfessionGUID(startGUID) then startGUID = "" end
+    if type(startGUID) ~= "string" or not GGM.IsProfessionGUID(startGUID)
+        or not preferredPeer or sync.cursorPeer[professionID] ~= preferredPeer then startGUID = "" end
     local session = createSession(sync, sync.selfKey, id, professionID, digest, reason, startGUID, preferredPeer)
     if not session then return false, "profession-sync-busy" end
+    session.operation = operation
+    if operation then operation.currentSession = session end
     if reason == "selection" then sync.selectedOnce[professionID] = true end
     sync.cooldowns[professionID], sync.active = now(sync), session
     notify(sync, professionID, "Comparing cached data")
@@ -948,29 +1037,142 @@ function GGM.RequestProfessionSync(sync, professionID, reason, preferredPeer)
             local chosen
             for candidate in pairs(session.claims) do if not chosen or candidate < chosen then chosen = candidate end end
             if not chosen then finish(sync, session, "Sync unavailable"); return end
+            session.selected = chosen
             if session.claims[chosen] == digest and GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members) == digest then
                 send(sync, "F", "*", id, professionID, "Cache hashes match")
                 finish(sync, session, "Cache hashes match")
                 return
             end
-            session.selected = chosen
             if send(sync, "S", chosen, id, professionID, "") then sendManifest(sync, session) end
         end)
     end)
     return sent, sent and nil or sync.lastError
 end
 
-function GGM.LoginProfessionSync(sync)
-    if not safe(sync) or sync.loginDone then return false end
-    local parts = {}
-    for _, professionID in ipairs(PROFESSIONS) do
-        local digest = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
-        if not digest then return false end
-        parts[#parts + 1] = professionID .. "," .. digest .. ",login"
+finishManualOperation = function(sync, operation, fallback)
+    if not operation or operation.finished or sync.manualOperation ~= operation then return end
+    operation.finished = true
+    if operation.deadlineTimer and type(operation.deadlineTimer.Cancel) == "function" then
+        pcall(operation.deadlineTimer.Cancel, operation.deadlineTimer)
     end
-    sync.loginDone = true
-    startBackground(sync)
-    return send(sync, "A", "*", nextID(sync), 0, table.concat(parts, ";"))
+    sync.manualOperation = nil
+    local session = operation.currentSession
+    if session and not session.finished then
+        session.finished = true
+        sync.sessions[sessionKey(session.initiator, session.id)] = nil
+        if sync.active == session then sync.active = nil end
+    end
+    operation.currentSession = nil
+    local status
+    if operation.conflict then
+        status = "Conflict: fresh observation needed"
+    elseif operation.uncertain or operation.moreCandidates then
+        status = "Catch-up needed"
+    elseif operation.completed > 0 and operation.matches == operation.completed then
+        status = "Matched " .. operation.completed .. (operation.completed == 1 and " peer cache" or " peer caches")
+    elseif operation.completed > 0 then
+        status = "Compared with " .. operation.completed .. (operation.completed == 1 and " peer" or " peers")
+    else
+        status = fallback or "Sync unavailable"
+    end
+    notify(sync, operation.professionID, status)
+    timer(sync, 0.5, function() drainPending(sync) end)
+end
+
+cancelManualOperation = function(sync, operation, status)
+    if not operation or operation.finished or sync.manualOperation ~= operation then return end
+    operation.finished, operation.cancelled, operation.uncertain = true, true, true
+    local professionID = operation.professionID
+    local finalStatus = manualOperationHasConflict(operation) and "Conflict: fresh observation needed" or status or "Catch-up needed"
+    -- Invalidate callbacks and discard every dependent transport frame. CTL may
+    -- still submit the one frame already handed to it, but cannot start another.
+    GGM.CancelProfessionSync(sync)
+    notify(sync, professionID, finalStatus)
+end
+
+local function continueManualOperationNow(sync, operation)
+    if not operation or operation.finished or operation.cancelled or sync.manualOperation ~= operation then return false end
+    if not safe(sync) then
+        cancelManualOperation(sync, operation, "Sync unavailable")
+        return false
+    end
+    local current = now(sync)
+    if not finiteTime(current) or current >= operation.deadline then
+        cancelManualOperation(sync, operation, "Catch-up needed")
+        return false
+    end
+    if sync.active or #sync.transport.outboundFrames > 0 then
+        timer(sync, math.min(0.5, operation.deadline - current), function() continueManualOperation(sync, operation) end)
+        return true
+    end
+    local peer = operation.candidates[operation.nextIndex]
+    if not peer then
+        finishManualOperation(sync, operation, "Sync unavailable")
+        return true
+    end
+    if not canSendTarget(sync, peer) then
+        operation.uncertain = true
+        operation.nextIndex = operation.nextIndex + 1
+        timer(sync, 0.5, function() continueManualOperation(sync, operation) end)
+        return true
+    end
+    local remaining = (sync.cooldowns[operation.professionID] or -COOLDOWN) + COOLDOWN - current
+    if remaining > 0 then
+        timer(sync, math.min(remaining, operation.deadline - current), function() continueManualOperation(sync, operation) end)
+        return true
+    end
+    operation.nextIndex = operation.nextIndex + 1
+    operation.attempted = operation.attempted + 1
+    local ok, err = startProfessionComparison(sync, operation.professionID, "manual", peer, operation)
+    if not ok and sync.manualOperation == operation then
+        operation.uncertain = true
+        timer(sync, math.min(0.5, operation.deadline - current), function() continueManualOperation(sync, operation) end)
+    end
+    return ok
+end
+
+continueManualOperation = function(sync, operation)
+    return continueManualOperationNow(sync, operation)
+end
+
+function GGM.RequestProfessionSync(sync, professionID, reason, preferredPeer)
+    reason = reason or "manual"
+    if reason ~= "manual" then return startProfessionComparison(sync, professionID, reason, preferredPeer) end
+    if not SUPPORTED[professionID] or not safe(sync) then
+        if sync then notify(sync, professionID or 0, "Sync unavailable") end
+        return false, "profession-sync-unavailable"
+    end
+    if preferredPeer and (not sync.senders[preferredPeer] or preferredPeer == sync.selfKey
+        or not canSendTarget(sync, preferredPeer)) then return false, "profession-sync-peer-unavailable" end
+    if sync.active or sync.manualOperation then return false, "profession-sync-busy" end
+    if (sync.cooldowns[professionID] or -COOLDOWN) + COOLDOWN > now(sync) then return false, "profession-sync-cooldown" end
+    local candidates, moreCandidates = manualCandidates(sync, professionID, preferredPeer)
+    if #candidates == 0 then
+        notify(sync, professionID, "Catch-up needed")
+        return false, "profession-sync-peer-unavailable"
+    end
+    local operation = {
+        professionID = professionID, candidates = candidates, moreCandidates = moreCandidates,
+        nextIndex = 1, attempted = 0, completed = 0, matches = 0,
+        startedAt = now(sync), deadline = now(sync) + MANUAL_OPERATION_SECONDS,
+    }
+    sync.manualOperation = operation
+    local timerOk, deadlineTimer = timer(sync, MANUAL_OPERATION_SECONDS, function()
+        if sync.manualOperation == operation and not operation.finished then
+            cancelManualOperation(sync, operation, "Catch-up needed")
+        end
+    end)
+    if not timerOk then
+        failed(sync, "profession-sync-timer-unavailable")
+        return false, sync.lastError
+    end
+    operation.deadlineTimer = deadlineTimer
+    sync.manualCursor[professionID] = candidates[#candidates]
+    return continueManualOperation(sync, operation)
+end
+
+function GGM.LoginProfessionSync()
+    return false
 end
 
 local function announceSave(sync, professionID, digest)
@@ -978,38 +1180,6 @@ local function announceSave(sync, professionID, digest)
     sync.saveCooldowns[professionID] = now(sync)
     sync.lastAnnouncedDigests[professionID] = digest
     return true
-end
-
-startBackground = function(sync)
-    if sync.backgroundStarted then return end
-    sync.backgroundStarted = true
-    local function schedule()
-        local generation = sync.generation
-        if not timer(sync, jitter(sync, BACKGROUND_MIN, BACKGROUND_MAX), function()
-            if safe(sync) and not sync.active and #sync.transport.outboundFrames == 0 then
-                local parts = {}
-                for _, professionID in ipairs(PROFESSIONS) do
-                    local digest = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
-                    local heard = sync.heard[professionID]
-                    if digest and (not heard or heard.digest ~= digest or now(sync) - heard.at >= SUPPRESS_SECONDS) then
-                        parts[#parts + 1] = professionID .. "," .. digest .. ",background"
-                    end
-                    -- A suppressed announcement must not strand local differences.
-                    -- One known peer per profession is enough for this tick.
-                    local selected
-                    for peer, digests in pairs(sync.peers) do
-                        if sync.senders[peer] and canSendTarget(sync, peer)
-                            and digests[professionID] and digests[professionID] ~= digest
-                            and (not selected or peer < selected) then selected = peer end
-                    end
-                    if selected then scheduleComparison(sync, professionID, "background", selected) end
-                end
-                if #parts > 0 then send(sync, "A", "*", nextID(sync), 0, table.concat(parts, ";")) end
-            end
-            if generation == sync.generation and sync.backgroundStarted then schedule() end
-        end) then sync.backgroundStarted = false end
-    end
-    schedule()
 end
 
 function GGM.PublishProfessionSyncSave(sync, professionID, beforeHash)
