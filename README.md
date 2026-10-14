@@ -1,49 +1,52 @@
-# Guild Gear Memory
+# The Guild Book
 
-Install and enable all three sibling folders in your WoW `Interface/AddOns` folder:
+The Guild Book is a World of Warcraft addon suite for browsing saved guild profession, gear, and bank information. Shared information is last-known data from participating addon users; cached snapshots do not prove a character's current in-game state.
+
+## Addons
+
+| Folder | SavedVariables | Purpose |
+| --- | --- | --- |
+| `The Guild Book` | `TheGuildBookDB` | Main addon and `/ggm` browser. Stores professions, the recipe index, and profession character metadata. |
+| `The Guild Book gear` | `TheGuildBookGearDB` | Captures and synchronizes gear, and owns the gear backend used by the main addon's browser. |
+| `The Guild Book Bank` | `TheGuildBookBankDB` | Stores last-known personal and guild bank snapshots. |
+
+Install matching versions of all three folders. `The Guild Book gear` runs gear capture and synchronization independently, but the main addon uses it to show the gear browser. The profession and bank features remain available if the gear companion is missing or disabled.
+
+## Installation
+
+Copy all three addon folders into the World of Warcraft `Interface/AddOns` directory. Each folder should directly contain its matching `.toc` file:
 
 ```text
 Interface/AddOns/
-    GuildGearMemory/
-    DysbankMemory/
-    DysgearMemory/
+    The Guild Book/
+    The Guild Book gear/
+    The Guild Book Bank/
 ```
 
-Each folder must directly contain its matching `.toc` file. GuildGearMemory
-remains the main addon and provides the `/ggm` browser.
+Enable the three addons in the game's AddOns list, then open the browser with `/ggm`. The addon databases are stored separately under `WTF/Account/<account>/SavedVariables` when you log out or reload; the addon folders do not go there.
 
-| Folder | Saved global | Contents |
-| --- | --- | --- |
-| GuildGearMemory | GuildGearMemoryDB | Professions, recipe index, and profession character metadata |
-| DysbankMemory | DysbankMemoryDB | Last-known personal and guild bank snapshots |
-| DysgearMemory | DysgearMemoryDB | Gear capture, stable changes, last-known gear, ownership, and guild synchronization |
+## Data and synchronization
 
-DysgearMemory owns the gear backend and runs capture and synchronization even
-when GuildGearMemory is disabled. GuildGearMemory reads its versioned backend
-interface to show the same gear browser and `/ggm` commands. Install matching
-versions of both folders; the earlier persistence-only companion is unsupported.
-The saved gear format and guild message protocol remain unchanged by this split.
+- Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
+- Profession sharing uses protocol P3 (`GC_PROF3`). Participating clients need compatible versions.
+- Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
+- Login, roster readiness, and elapsed time alone do not trigger profession traffic. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
+- The renamed addons use the SavedVariables globals shown above. Existing SavedVariables are not migrated to the new names, and this branch starts a fresh gear cache. Back up SavedVariables with the game closed if you need to keep existing data.
 
-WoW writes these to separate files under
-`WTF/Account/<account>/SavedVariables` when you log out or reload. The three
-addon folders belong in `Interface/AddOns`, not in `SavedVariables`.
+## Development
 
-This branch starts a fresh gear cache. Old gear in GuildGearMemoryDB is not
-migrated; its legacy gear fields are removed after profession storage validates.
-Your character's gear is captured again at login through the existing addon API
-path. Profession and bank data stay in their respective databases. Offline
-characters remain unavailable until a permitted observation or explicit cached
-snapshot request supplies their gear.
+Run the regression suite with Lua 5.1:
 
-If DysgearMemory is missing, disabled, or has an unsupported database, gear
-capture and synchronization are unavailable; profession and bank features remain
-usable. `/ggm status` reports storage errors. Back up SavedVariables with WoW
-closed before manually resetting any database.
+```bash
+lua tests/run.lua
+```
 
-Run the regression suite with Lua 5.1 using `lua tests/run.lua`. In this
-workspace, the local Lua 5.1 runtime can be used with
-`./tools/lua/lua.exe tests/run.lua`.
+In this workspace, the bundled runtime can be used with `./tools/lua/lua.exe tests/run.lua`.
 
-To create a local install ZIP containing all three addon folders, run
-`python ui-concepts/package-bank-polish.py` (requires Pillow). The output is
-`ui-concepts/GuildGearMemory-ThreeFolders.zip`.
+## Open pull requests
+
+Status checked 14 October 2026. GitHub currently marks all three open PRs as drafts, so none is marked ready for merge.
+
+- [#52 Synchronize guild profession caches through bounded whispers](https://github.com/StenFrancesco/guildcraft/pull/52) — Draft; GitHub reports it as mergeable. Live in-game delivery and throttling checks are still outstanding.
+- [#51 Store recipe crafters by GUID instead of local IDs](https://github.com/StenFrancesco/guildcraft/pull/51) — Draft; depends on #50 and is based on its rename branch. Retarget it after #50 is integrated.
+- [#50 Rename Guild Gear Memory addons to The Guild Book](https://github.com/StenFrancesco/guildcraft/pull/50) — Draft; GitHub currently reports a merge conflict. Its description reports static checks only; tests and packaging were not run.
