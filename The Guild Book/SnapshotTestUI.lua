@@ -1812,6 +1812,18 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     return frame.detailModel
 end
 
+function GGM.RefreshVisibleGuildGearBrowser()
+    local frame = GGM.guildGearBrowserFrame
+    if not frame or type(frame.IsShown) ~= "function" or not frame:IsShown() then
+        return false
+    end
+    if type(GGM.ShowGuildGearBrowserWindow) ~= "function" or type(GGM.db) ~= "table" then
+        return false
+    end
+    GGM.ShowGuildGearBrowserWindow(frame.api, GGM.db)
+    return true
+end
+
 local function parseRequestedIdentity(message)
     if type(message) ~= "string" then
         return nil, nil

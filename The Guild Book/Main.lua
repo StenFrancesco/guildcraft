@@ -53,7 +53,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
-        local db, err, professionDB, gearDB, gearErr = GGM.InitializeSavedDatabases(_G)
+        local db, err, professionDB, gearDB, gearErr, updateRuntimeGearDatabase = GGM.InitializeSavedDatabases(_G)
         if not db then
             GGM.startupError = err
             return
@@ -63,6 +63,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GGM.db = db
         GGM.gearDB = gearDB
         GGM.gearStartupError = gearErr
+        GGM.updateRuntimeGearDatabase = updateRuntimeGearDatabase
         GGM.startupError = nil
 
         if type(GGM.CreateProfessionSync) == "function" then
