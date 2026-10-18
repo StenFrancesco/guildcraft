@@ -10,8 +10,6 @@ GGM.RegisterSnapshotTestSlashCommand(_G)
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
-frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
-frame:RegisterEvent("CHAT_MSG_ADDON")
 frame:RegisterEvent("CHAT_MSG_GUILD")
 frame:RegisterEvent("TRADE_SKILL_SHOW")
 frame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
@@ -26,43 +24,30 @@ local function refreshVisibleProfessionCatalog()
     end
 end
 
-local function publishConfirmedSlot(characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
-    if not GGM.guildSync then
-        return
-    end
-
-    local queued, queueErr = GGM.PublishConfirmedSlot(
-        GGM.guildSync,
-        characterKey,
-        slotKey,
-        slotValue,
-        confirmedAt,
-        confirmedSequence
-    )
-
-    if queued then
-        GGM.lastSyncError = nil
-    else
-        GGM.lastSyncError = queueErr
-    end
-end
-
 frame:SetScript("OnEvent", function(_, event, ...)
     local arg1 = ...
+
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" or event == "GUILD_ROSTER_UPDATE" then
+        if type(GGM.RefreshVisibleBankView) == "function" then
+            GGM.RefreshVisibleBankView()
+        end
+    end
 
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then
             return
         end
 
-        local db, err = GGM.InitializeDatabase(GuildGearMemoryDB)
+        local db, err, professionDB, gearDB, gearErr = GGM.InitializeSavedDatabases(_G)
         if not db then
             GGM.startupError = err
             return
         end
 
-        GuildGearMemoryDB = db
+        GuildGearMemoryDB = professionDB
         GGM.db = db
+        GGM.gearDB = gearDB
+        GGM.gearStartupError = gearErr
         GGM.startupError = nil
 
         local professionLinkSave, professionControllerErr = GGM.CreateProfessionLinkSaveController(_G, db)
@@ -80,22 +65,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             GGM.lastProfessionSaveError = professionControllerErr
         end
 
-        local sync, syncErr = GGM.CreateGuildSync(_G, db)
-        if not sync then
-            GGM.guildSync = nil
-            GGM.lastSyncError = syncErr
-            return
-        end
-
-        local registered, registerErr = GGM.RegisterGuildSync(sync)
-        if not registered then
-            GGM.guildSync = nil
-            GGM.lastSyncError = registerErr
-            return
-        end
-
-        GGM.guildSync = sync
-        GGM.lastSyncError = nil
+        if type(GGM.RefreshGearBackendState) == "function" then GGM.RefreshGearBackendState() end
         return
     end
 
@@ -114,34 +84,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
             GGM.lastLocalOwnershipError = ownershipErr
         end
 
-        C_Timer.After(1, function()
-            if GGM.gearTracker or GGM.startupError or not GGM.db then
-                return
-            end
-
-            local tracker, err = GGM.StartLocalPlayerGearTracking(
-                _G,
-                GGM.db,
-                GGM.DEFAULT_STABILITY_DELAY_SECONDS,
-                publishConfirmedSlot
-            )
-            GGM.gearTracker = tracker
-            if GGM.guildSync then
-                GGM.guildSync.localGearTracker = tracker
-            end
-            GGM.lastGearTrackingError = err
-            GGM.lastCaptureError = err
-        end)
-        return
-    end
-
-    if event == "PLAYER_EQUIPMENT_CHANGED" then
-        if not GGM.gearTracker or GGM.startupError then
-            return
-        end
-
-        local _, err = GGM.HandlePlayerEquipmentChanged(GGM.gearTracker, arg1)
-        GGM.lastGearTrackingError = err
         return
     end
 
@@ -216,19 +158,4 @@ frame:SetScript("OnEvent", function(_, event, ...)
         return
     end
 
-    if event == "CHAT_MSG_ADDON" then
-        if not GGM.guildSync or GGM.startupError then
-            return
-        end
-
-        local prefix, text, channel, sender = ...
-        local _, receiveErr = GGM.HandleGuildSyncAddonMessage(
-            GGM.guildSync,
-            prefix,
-            text,
-            channel,
-            sender
-        )
-        GGM.lastSyncReceiveError = receiveErr
-    end
 end)

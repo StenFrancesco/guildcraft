@@ -67,7 +67,7 @@ def patch_fixture(source: str) -> str:
             '    function control:ClearAllPoints() self.point = nil; self.points = {}; self.allPointsTo = nil end',
         ),
         (
-            '    function control:SetJustifyH() end',
+            '    function control:SetJustifyH(value) self.justifyH = value end',
             '    function control:SetJustifyH(value) self.justifyH = value end\n'
             '    function control:SetJustifyV(value) self.justifyV = value end\n'
             '    function control:SetShadowColor(...) self.shadowColor = { ... } end',
@@ -137,7 +137,7 @@ def seq(table):
 
 def norm_color(value, default=(0.19, 0.125, 0.07, 1)):
     try:
-        vals = [float(value[i]) for i in range(1, 5)]
+        vals = [float(v) for v in value] if isinstance(value, (list, tuple)) else [float(value[i]) for i in range(1, 5)]
     except (TypeError, KeyError, IndexError):
         vals = list(default)
     while len(vals) < 4:
@@ -201,6 +201,10 @@ def build_tree():
             model["message"] = message
             ggm["BuildRecipeMaterialDetails"] = lambda *_: model
         frame = ggm["ShowRecipeDetailsWindow"](browser, recipe)
+        # The lightweight fixture does not fire Blizzard's OnDisable callback.
+        # Apply the real button style so unavailable actions are shown accurately.
+        if not frame["whisperButton"]["enabled"]:
+            ggm["SetFlatButtonState"](frame["whisperButton"], "disabled")
         if STATE == "many-crafters":
             frame["crafterDropdown"]["scripts"]["OnClick"](frame["crafterDropdown"])
     else:
@@ -312,7 +316,7 @@ def collect_controls(module, frame, api):
             "text_color": lv(item, "textColor"),
             "shadow_color": lv(item, "shadowColor"),
             "shadow_offset": seq(lv(item, "shadowOffset")),
-            "justify": str(lv(item, "justifyH", "LEFT")),
+            "justify": str(lv(item, "justifyH", "CENTER")),
             "texture": texture if isinstance(texture, str) else ("Interface\\Icons\\Item" if isinstance(texture, (int, float)) else None),
             "atlas": lv(item, "atlas"),
             "fill": lv(item, "color"),
@@ -349,6 +353,13 @@ def font_for(rec, media=MEDIA):
 def text_lines(rec, font, width=None):
     """Match the word wrapping of bounded in-game font strings."""
     width = rec["width"] if width is None else width
+    if rec.get("word_wrap") is False and width:
+        line = rec["text"].replace("\n", " ")
+        if font.getlength(line) > width:
+            while line and font.getlength(line + "…") > width:
+                line = line[:-1]
+            line += "…"
+        return [line]
     lines = []
     for paragraph in rec["text"].splitlines() or [""]:
         if not width or font.getlength(paragraph) <= width:
@@ -524,7 +535,7 @@ def render_recipe(controls, rects, by_id, root_id):
     canvas = Image.new("RGBA", (width, height + 38), (39, 27, 18, 255))
     layers = {"BACKGROUND": 0, "BORDER": 1, "ARTWORK": 2, "OVERLAY": 3, "HIGHLIGHT": 4}
     for c in sorted(controls, key=lambda c: (c["frame_level"], layers.get(c["layer"], 3), c["sublevel"], c["id"])):
-        if not effectively_visible(c, by_id) or c["layer"] == "HIGHLIGHT" or c["type"] == "Frame":
+        if not effectively_visible(c, by_id) or c["layer"] == "HIGHLIGHT" or (c["type"] == "Frame" and c["frame_type"] != "EditBox"):
             continue
         rect = rects.get(c["id"])
         if not rect:
@@ -533,14 +544,15 @@ def render_recipe(controls, rects, by_id, root_id):
         x, y = x - root_x, y - root_y
         overlay = Image.new("RGBA", canvas.size)
         draw = ImageDraw.Draw(overlay)
-        if c["type"] == "FontString" and c["text"]:
+        if (c["type"] == "FontString" or c["frame_type"] == "EditBox") and c["text"]:
             font = font_for(c)
             line_height = max(round(c["font_size"]), font.getbbox("Ag")[3] - font.getbbox("Ag")[1])
             for row, line in enumerate(text_lines(c, font, w)):
                 if row * line_height >= h:
                     break
                 tx = x + (w - font.getlength(line)) / 2 if c["justify"] == "CENTER" else x
-                draw_text_with_shadow(draw, c, (tx, y + row * line_height), line, font)
+                ty = y + (h - line_height) / 2 if c["frame_type"] == "EditBox" else y + row * line_height
+                draw_text_with_shadow(draw, c, (tx, ty), line, font)
         elif c["type"] == "Texture":
             box = tuple(round(v) for v in (x, y, x + w, y + h))
             if box[2] <= box[0] or box[3] <= box[1]:
@@ -653,6 +665,8 @@ def main():
         elif c["texture"] and c["texture"].startswith("Interface\\"):
             draw_native_placeholder(draw, (x, y, w, h), c["texture"])
 
+    # alpha_composite may replace Pillow's image core; bind text to the final canvas.
+    draw = ImageDraw.Draw(canvas, "RGBA")
     for c in sorted((x for x in controls if x["type"] == "FontString" and x["text"]), key=lambda x: x["id"]):
         if not effectively_visible(c, by_id):
             continue

@@ -57,6 +57,48 @@ local function assertUnavailable(result)
     T.assertEqual(#result.materials, 0)
 end
 
+T.test("crafter presence matches the selected character and realm in a current public roster", function()
+    local GGM = loadGGM()
+    GGM.professionRosterMembershipCurrent = true
+    local rows = {
+        { "Alice-OtherRealm", "Rank", 0, 80, "Mage", "Stormwind", "", "", true },
+        { "Alice-MyRealm", "Rank", 0, 80, "Mage", "Stormwind", "", "", false },
+    }
+    local api = {
+        issecretvalue = function() return false end,
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return #rows end,
+        GetGuildRosterInfo = function(index) return unpack(rows[index]) end,
+    }
+
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-MyRealm"), "offline")
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-My Realm"), "offline")
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-MissingRealm"), "unavailable")
+    rows[2][9] = true
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-MyRealm"), "online")
+end)
+
+T.test("crafter presence fails closed when roster state is stale, secret, missing, or throwing", function()
+    local GGM = loadGGM()
+    local secret = {}
+    local api = {
+        issecretvalue = function(value) return value == secret end,
+        IsInGuild = function() return true end,
+        GetNumGuildMembers = function() return 1 end,
+        GetGuildRosterInfo = function() return secret, nil, nil, nil, nil, nil, nil, nil, true end,
+    }
+    GGM.professionRosterMembershipCurrent = false
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-Realm"), "unavailable")
+    GGM.professionRosterMembershipCurrent = true
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-Realm"), "unavailable")
+    T.assertEqual(GGM.GetCrafterRosterStatus({}, "Alice-Realm"), "unavailable")
+    api.issecretvalue = function() error("secret check unavailable") end
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-Realm"), "unavailable")
+    api.issecretvalue = function() return false end
+    api.GetGuildRosterInfo = function() error("roster unavailable") end
+    T.assertEqual(GGM.GetCrafterRosterStatus(api, "Alice-Realm"), "unavailable")
+end)
+
 T.test("recipe material details preserve groups, quantities, optional state, and alternatives", function()
     local GGM = loadGGM()
     local api, calls = makeAPI(schematicWith({

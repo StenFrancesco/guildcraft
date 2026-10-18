@@ -4,15 +4,21 @@ local makeRecord, compactRecord
 local function loadUI()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearData.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/GearSnapshot.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearData.lua", GGM)
+    T.loadAddonFile("DysgearMemory/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("DysgearMemory/GearSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
     T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
     T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
     T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
     T.loadAddonFile("GuildGearMemory/RecipeDetailsUI.lua", GGM)
+    local bankView = loadfile("GuildGearMemory/BankView.lua")
+    if bankView then bankView("GuildGearMemory", GGM) end
+    local bankUI = loadfile("GuildGearMemory/BankUI.lua")
+    if bankUI then bankUI("GuildGearMemory", GGM) end
     T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
     return GGM
 end
@@ -418,6 +424,9 @@ local function newControl()
         if changed then changed(self, true) end
     end
     function control:SetTextColor(...) self.textColor = { ... } end
+    function control:SetEnabled(value) self.enabled = value end
+    function control:SetNumeric(value) self.numeric = value end
+    function control:SetMaxLetters(value) self.maxLetters = value end
     function control:GetText() return self.text or "" end
     function control:GetStringHeight() return #self:GetText() > 80 and 56 or 14 end
     function control:Show() self.visible = true end
@@ -442,7 +451,7 @@ local function newControl()
     function control:SetAllPoints(relativeTo) self.allPointsTo = relativeTo end
     function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end
     function control:SetClampedToScreen(value) self.clampedToScreen = value end
-    function control:SetJustifyH() end
+    function control:SetJustifyH(value) self.justifyH = value end
     function control:SetAutoFocus() end
     function control:SetHeight(height) self.height = height end
     function control:SetWidth(width) self.width = width end
@@ -454,15 +463,17 @@ local function newControl()
     function control:StopMovingOrSizing() self.moving = false end
     function control:IsShown() return self.visible end
     function control:SetVerticalScroll(value) self.verticalScroll = value end
+    function control:EnableMouseWheel(value) self.mouseWheelEnabled = value end
     function control:SetScript(name, callback) self.scripts[name] = callback end
     function control:RegisterForClicks() end
+    function control:RegisterEvent(name) self.registeredEvents = self.registeredEvents or {}; self.registeredEvents[name] = true end
     function control:SetDesaturated(value) self.desaturated = value end
     function control:SetAlpha(value) self.alpha = value end
     function control:SetBlendMode(value) self.blendMode = value end
     function control:SetVertexColor(...) self.vertexColor = { ... } end
-    function control:SetTexture(value) self.texture = value; self.atlas = nil end
+    function control:SetTexture(value) self.texture = value; self.atlas = nil; self.color = nil end
     function control:SetColorTexture(...) self.color = { ... }; self.texture = nil; self.atlas = nil end
-    function control:SetAtlas(value) self.atlas = value; self.texture = nil end
+    function control:SetAtlas(value) self.atlas = value; self.texture = nil; self.color = nil end
     function control:SetTexCoord(...) self.texCoord = { ... } end
     function control:CreateFontString() return newControl() end
     function control:CreateTexture() return newControl() end
@@ -501,7 +512,7 @@ local function makeModelBrowserAPI(failModelCreation)
     local createFrame = api.CreateFrame
     api.CreateFrame = function(frameType, name, parent)
         if failModelCreation and frameType == "Frame" and parent
-            and parent.width == 208 and parent.height == 226 then return nil end
+            and parent.width == 208 and parent.point and parent.point.point == "TOP" then return nil end
         return createFrame(frameType, name, parent)
     end
     return api
@@ -561,17 +572,18 @@ T.test("character content stays within the journal's painted page borders", func
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local detail = frame.gearPanel
-    T.assertTrue(detail.point.x >= 635 and detail.point.x <= 645, "detail misses the painted left border")
-    T.assertTrue(-detail.point.y >= 70 and -detail.point.y <= 80, "detail misses the painted top border")
+    local inset = detail.background.point
+    -- The fixture retains the last (bottom-right) anchor of the symmetric inset.
+    T.assertTrue(detail.point.x - inset.x >= 635 and detail.point.x - inset.x <= 645, "detail misses the painted left border")
+    T.assertTrue(-detail.point.y + inset.y >= 70 and -detail.point.y + inset.y <= 80, "detail misses the painted top border")
     T.assertTrue(detail.point.x + detail.width <= 1350, "detail extends beyond the painted right border")
     T.assertTrue(-detail.point.y + detail.height <= 574, "detail extends beyond the painted bottom border")
     local libraryLeft = frame.searchPanel.point.x
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
         "native scrollbar extends beyond the library border")
-    local artworkLeft = detail.width + detail.armoryArt.point.x - detail.armoryArt.width
-    T.assertTrue(frame.completenessBadge.point.x + frame.completenessBadge.width + 6 <= artworkLeft,
-        "status badge overlaps the header artwork")
+    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.completenessBadge.point.x,
+        "status badge overlaps the capture date")
 end)
 
 T.test("journal headings reserve space for subtitles inside their columns", function()
@@ -582,7 +594,25 @@ T.test("journal headings reserve space for subtitles inside their columns", func
     T.assertNil(frame.brandSubtitle, "brand subtitle should be removed")
 end)
 
-T.test("character header artwork is above parchment and captured date has a bounded region", function()
+T.test("character realm stays left aligned beneath the character name", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    T.assertEqual(frame.realmLine.justifyH, "LEFT")
+    T.assertTrue(math.abs(frame.realmLine.point.x - frame.characterLine.point.x) <= 1,
+        "realm label must share the name's left edge")
+end)
+
+T.test("portrait decoration follows the portrait bounds without an overlay icon texture", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeModelBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local view = frame.characterModelView
+    T.assertTrue(view.portraitFrame.allPointsTo == view.model.portraitBorder,
+        "portrait border must cover exactly the portrait surround")
+    T.assertNil(view.portraitFrame.texture, "a padded icon texture must not cover the portrait")
+    T.assertEqual(#view.portraitFrame.border, 4)
+end)
+
+T.test("character page uses blended artwork and captured date has a bounded region", function()
     local GGM = loadUI()
     local api = makeBrowserAPI()
     local createFrame = api.CreateFrame
@@ -597,8 +627,10 @@ T.test("character header artwork is above parchment and captured date has a boun
         return control
     end
     local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
-    T.assertEqual(frame.gearPanel.armoryArt.drawLayer, "ARTWORK",
-        "armory illustration must draw above the opaque parchment background")
+    T.assertEqual(frame.gearPanel.background.texture, GGM.UIJournalTextures.gearPage)
+    T.assertEqual(frame.gearPanel.background.mask.texture, GGM.UIJournalTextures.professionMask)
+    T.assertTrue(frame.gearPanel.background.mask.allPointsTo == frame.gearPanel.background,
+        "armory page must blend into the same painted border as professions")
     T.assertTrue((frame.capturedLine.width or 0) >= 140,
         "capture date needs explicit space independent of caption autosizing")
     T.assertTrue((frame.capturedLine.height or 0) >= 14)
@@ -609,13 +641,33 @@ T.test("character portrait and weapon labels have separate space above the foote
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local portraitBottom = -frame.modelStage.point.y + frame.modelStage.height
-    local footerTop = frame.gearPanel.height - 14 - frame.detailFooter.height
+    local footerTop = frame.gearPanel.height - frame.detailFooter.point.y - frame.detailFooter.height
     for _, button in ipairs(frame.slotButtons) do
         if button.paperDollGroup == "bottom" then
             local top = -button.point.y - button.height / 2
             local labelsBottom = -button.point.y + button.height / 2 + 5 + 16 + 1 + 14
             T.assertTrue(top >= portraitBottom + 8, "weapons overlap the saved portrait")
             T.assertTrue(labelsBottom <= footerTop - 6, "weapon labels overlap the footer")
+        end
+    end
+end)
+
+T.test("adjacent equipment rows leave room for icons and their separator", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local groups = { left = {}, right = {} }
+    for _, button in ipairs(frame.slotButtons) do
+        if groups[button.paperDollGroup] then
+            groups[button.paperDollGroup][button.paperDollOrder] = button
+        end
+    end
+    for _, rows in pairs(groups) do
+        for index = 2, #rows do
+            local previous, current = rows[index - 1], rows[index]
+            local previousBottom = -previous.point.y + previous.height / 2
+            local currentTop = -current.point.y - current.height / 2
+            T.assertTrue(currentTop >= previousBottom + 3,
+                "equipment icon and separator overlap the next row")
         end
     end
 end)
@@ -681,6 +733,27 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+local function configureCrafterWhisperAPI(GGM, api, rows)
+    local sent = {}
+    GGM.professionRosterMembershipCurrent = true
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    api.IsInGuild = function() return true end
+    api.GetNumGuildMembers = function() return #rows end
+    api.GetGuildRosterInfo = function(index)
+        local row = rows[index]
+        return row[1], nil, nil, nil, nil, nil, nil, nil, row[2]
+    end
+    api.C_ChatInfo = {
+        InChatMessagingLockdown = function() return false end,
+        SendChatMessage = function(message, channel, language, target)
+            sent[#sent + 1] = { message, channel, language, target }
+        end,
+    }
+    api.GetTime = function() return 10 end
+    return sent
+end
+
 T.test("recipe parchment and leather have explicit ordering on the same owning frame", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     local createFrame = api.CreateFrame
@@ -734,7 +807,8 @@ T.test("recipe details display quantities optional groups and alternative choice
     T.assertEqual(details.materialRows[2].label.text, "Copper")
     T.assertEqual(details.materialRows[3].label.text, "Fine Copper")
     T.assertTrue(string.find(details.materialRows[4].label.text, "Optional", 1, true) ~= nil)
-    T.assertEqual(details.materialRows[5].label.text, "Polish")
+    T.assertTrue(string.find(details.materialRows[4].label.text, "Polish", 1, true) ~= nil)
+    T.assertEqual(#details.materialRows, 4, "single-choice materials should not repeat the item in a second row")
 end)
 
 T.test("crafter dropdown sorts saved owners and selection displays saved knowledge date", function()
@@ -750,6 +824,157 @@ T.test("crafter dropdown sorts saved owners and selection displays saved knowled
     T.assertEqual(details.selectedCrafterKey, "Bob-Realm")
     T.assertTrue(string.find(details.crafterStatus.text, "2026-09-02", 1, true) ~= nil)
     T.assertFalse(details.crafterMenu:IsShown())
+end)
+
+T.test("recipe detail whisper controls default to one and only an explicit click sends to the online selected crafter", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local sent = {}
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    api.IsInGuild = function() return true end
+    api.GetNumGuildMembers = function() return 2 end
+    api.GetGuildRosterInfo = function(index)
+        if index == 1 then return "Alice-OtherRealm", nil, nil, nil, nil, nil, nil, nil, true end
+        return "Alice-Realm", nil, nil, nil, nil, nil, nil, nil, true
+    end
+    api.C_ChatInfo = {
+        InChatMessagingLockdown = function() return false end,
+        SendChatMessage = function(message, channel, language, target)
+            sent[#sent + 1] = { message, channel, language, target }
+        end,
+    }
+    api.GetTime = function() return 10 end
+    GGM.professionRosterMembershipCurrent = true
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertEqual(details.amountInput:GetText(), "1")
+    T.assertEqual(details.whisperButton.enabled, true)
+    T.assertEqual(#sent, 0, "rendering must not send a whisper")
+    details.amountInput:SetText("3")
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+
+    T.assertEqual(#sent, 1)
+    T.assertEqual(sent[1][1], "Hi! Do you have time to craft 3 x Copper Bracers for me?")
+    T.assertEqual(sent[1][2], "WHISPER")
+    T.assertEqual(sent[1][4], "Alice-Realm")
+    T.assertTrue(string.find(details.whisperStatus.text, "Request attempted", 1, true) ~= nil)
+end)
+
+T.test("crafter whisper amount is preserved for same recipe and reset for a new recipe", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.amountInput:SetText("8")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(details.amountInput:GetText(), "8")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(details.amountInput:GetText(), "1")
+end)
+
+T.test("crafter whisper rejects invalid amounts and rechecks online status on click and roster events", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    for _, amount in ipairs({ "0", "1000", "2.5", "-1", "" }) do
+        details.amountInput:SetText(amount)
+        T.assertFalse(details.whisperButton.enabled, "invalid amount should disable the action: " .. amount)
+        details.whisperButton.scripts.OnClick(details.whisperButton)
+        T.assertEqual(#sent, 0)
+    end
+    details.amountInput:SetText("2")
+    rows[1][2] = false
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0, "click must recheck presence after selection state changed")
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "GUILD_ROSTER_UPDATE")
+    T.assertTrue(string.find(details.whisperPresenceStatus.text, "Offline", 1, true) ~= nil)
+    T.assertFalse(details.whisperButton.enabled)
+end)
+
+T.test("crafter whisper respects combat and chat restrictions and never retries through a fallback API", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+
+    api.InCombatLockdown = function() return true end
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0)
+    api.InCombatLockdown = function() return false end
+    api.C_ChatInfo.InChatMessagingLockdown = function() return true end
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0)
+
+    api.C_ChatInfo.InChatMessagingLockdown = function() return false end
+    local primaryCalls, fallbackCalls = 0, 0
+    api.C_ChatInfo.SendChatMessage = function() primaryCalls = primaryCalls + 1; error("restricted") end
+    api.SendChatMessage = function() fallbackCalls = fallbackCalls + 1 end
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(primaryCalls, 1)
+    T.assertEqual(fallbackCalls, 0)
+    T.assertTrue(string.find(details.whisperStatus.text, "unavailable", 1, true) ~= nil)
+end)
+
+T.test("crafter whisper applies a local cooldown and renders unavailable when required checks are missing", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    local now = 10
+    local cooldownCallback
+    api.GetTime = function() return now end
+    api.C_Timer = { After = function(seconds, callback)
+        T.assertEqual(seconds, 2)
+        cooldownCallback = callback
+    end }
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 1)
+    T.assertFalse(details.whisperButton.enabled)
+    now = 13
+    cooldownCallback()
+    T.assertTrue(details.whisperButton.enabled)
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 2)
+
+    api.issecretvalue = nil
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertFalse(details.whisperButton.enabled)
+    T.assertTrue(string.find(details.whisperPresenceStatus.text, "Unavailable", 1, true) ~= nil)
+end)
+
+T.test("crafter whisper uses the supported legacy sender only when the modern sender is absent", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    api.C_ChatInfo.SendChatMessage = nil
+    local legacyCalls = 0
+    api.SendChatMessage = function(message, channel, language, target)
+        legacyCalls = legacyCalls + 1
+        sent[#sent + 1] = { message, channel, language, target }
+    end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(legacyCalls, 1)
+    T.assertEqual(sent[1][2], "WHISPER")
+    T.assertEqual(sent[1][4], "Alice-Realm")
+end)
+
+T.test("crafter whisper rejects recipe names that cannot fit a normal chat message", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local rows = { { "Alice-Realm", true }, { "Bob-Realm", true } }
+    local sent = configureCrafterWhisperAPI(GGM, api, rows)
+    recipes[1].name = string.rep("Long recipe ", 30)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertEqual(#sent, 0)
+    T.assertTrue(string.find(details.whisperStatus.text, "too long", 1, true) ~= nil)
 end)
 
 T.test("details refresh preserves eligible crafter without querying materials and removes obsolete attribution", function()
@@ -1275,6 +1500,50 @@ T.test("guild gear browser distinguishes empty Mine and Guild views from unmatch
     T.assertEqual(emptyFrame.detailEmpty.text, "No personal snapshots yet")
 end)
 
+T.test("gear browser explains missing or unavailable gear storage while other tabs remain usable", function()
+    for _, reason in ipairs({
+        "gear-companion-missing", "gear-database-invalid", "gear-backend-call-failed",
+        "gear-backend-invalid", "gear-backend-incompatible",
+    }) do
+        local GGM = loadUI()
+        local db = makeDB(GGM)
+        db.gearUnavailableReason = reason
+        local frame = showBrowser(GGM, makeBrowserAPI(), db)
+        local expected
+        if reason == "gear-companion-missing" then
+            expected = "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+        elseif reason:match("^gear%-backend%-") then
+            expected = "Gear backend unavailable. Check /ggm status for details."
+        else
+            expected = "Gear storage is unavailable. Check /ggm status for details."
+        end
+        T.assertEqual(frame.detailEmpty.text, expected)
+        T.assertEqual(frame.listEmpty.text, "Gear unavailable")
+        GGM.SelectGuildGearBrowserTab(frame, "Professions")
+        T.assertEqual(frame.activeTab, "Professions")
+        GGM.SelectGuildGearBrowserTab(frame, "Bank")
+        T.assertEqual(frame.activeTab, "Bank")
+    end
+end)
+
+T.test("gear backend status explains initialization failures without suggesting a data reset", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = {
+        SlashCmdList = {},
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, message) messages[#messages + 1] = message end },
+    }
+    GGM.gearStartupError = "gear-backend-call-failed"
+
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("DysgearMemory could not provide a compatible gear backend", 1, true) ~= nil)
+    T.assertTrue(output:find("saved gear was left unchanged", 1, true) ~= nil)
+    T.assertTrue(output:find("DysgearMemory.lua", 1, true) == nil)
+end)
+
 T.test("guild gear browser hides the model stage when detail has no valid record", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
@@ -1301,11 +1570,10 @@ T.test("guild gear browser slot buttons fit inside the detail panel with a gap a
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
     local ui = GGM.UIStyleTokens
-    local panelLeft = ui.railWidth + ui.pageMargin + ui.browserColumnWidth + ui.contentGap
-    local listRight = ui.railWidth + ui.pageMargin + ui.browserColumnWidth
-    local panelHeight = ui.windowHeight - ui.contentTop - ui.contentBottom
-    local panelWidth = ui.detailColumnWidth
-    local footerTop = panelHeight - 14 - 32
+    local panelLeft = frame.gearPanel.point.x
+    local listRight = frame.listPanel.point.relativeTo.point.x + frame.listPanel.width
+    local panelWidth = frame.gearPanel.width
+    local footerTop = frame.gearPanel.height - frame.detailFooter.point.y - frame.detailFooter.height
 
     for index, button in ipairs(frame.slotButtons) do
         local point = button.point
@@ -1616,9 +1884,25 @@ T.test("unsupported schema status gives backup and removal guidance with cleared
     T.assertTrue(output:find("No automatic migration", 1, true) ~= nil)
     T.assertTrue(output:find("back up", 1, true) ~= nil)
     T.assertTrue(output:find("GuildGearMemory.lua", 1, true) ~= nil)
-    T.assertTrue(output:find("cached gear", 1, true) ~= nil)
+    T.assertTrue(output:find("Gear and bank companion databases are separate", 1, true) ~= nil)
     T.assertTrue(output:find("profession snapshots/index data", 1, true) ~= nil)
     T.assertTrue(output:find("local-character metadata", 1, true) ~= nil)
+end)
+
+T.test("gear companion status points to its own SavedVariables file", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = {
+        SlashCmdList = {},
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, message) messages[#messages + 1] = message end },
+    }
+    GGM.gearStartupError = "unsupported-schema-version:99"
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Gear storage: unavailable", 1, true) ~= nil)
+    T.assertTrue(output:find("DysgearMemory.lua", 1, true) ~= nil)
+    T.assertTrue(output:find("DysgearMemoryDB", 1, true) ~= nil)
 end)
 
 T.test("snapshot slash command can explicitly request exactly one named character", function()
@@ -1665,6 +1949,204 @@ T.test("snapshot slash command rejects malformed requests without sending", func
 
     T.assertEqual(sendCount, 0)
     T.assertEqual(GGM.lastSyncError, "request-target-invalid")
+end)
+
+T.test("gear requests print queued feedback without claiming transfer success", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = { SlashCmdList = {}, print = function(message) messages[#messages + 1] = message end }
+    GGM.guildSync = {}
+    GGM.RequestCompleteSnapshot = function() return true end
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("request Alice-Silvermoon")
+    T.assertEqual(#messages, 1)
+    T.assertEqual(messages[1], "Gear request queued for Alice-Silvermoon. Waiting for a cached snapshot.")
+end)
+
+T.test("gear requests print readable failures and usage without opening the browser", function()
+    local cases = {
+        { command = "request Alice", expected = "Usage: /ggm request Name-Realm", err = "request-target-invalid" },
+        { command = "request Alice-Silvermoon", expected = "Gear sync is unavailable.", unavailable = true, err = "sync-unavailable" },
+        { command = "request Alice-Silvermoon", expected = "A gear request for this character is already pending.", err = "sync-snapshot-request-pending" },
+        { command = "request Alice-Silvermoon", expected = "Please wait before requesting this character again.", err = "sync-snapshot-request-cooldown" },
+        { command = "request Alice-Silvermoon", expected = "Gear sync requires guild membership.", err = "send-addon-message-failed:NotInGuild" },
+        { command = "request Alice-Silvermoon", expected = "Gear sync was throttled. Try again later.", err = "send-addon-message-failed:AddonMessageThrottle" },
+    }
+    for _, case in ipairs(cases) do
+        local GGM = loadUI()
+        local messages = {}
+        local api = { SlashCmdList = {}, DEFAULT_CHAT_FRAME = { AddMessage = function(_, message) messages[#messages + 1] = message end } }
+        GGM.guildSync = not case.unavailable and {} or nil
+        GGM.RequestCompleteSnapshot = function() return false, case.err end
+        GGM.ShowGuildGearBrowserWindow = function() error("request must not open browser") end
+        GGM.RegisterSnapshotTestSlashCommand(api)
+        api.SlashCmdList.GUILDGEARMEMORY(case.command)
+        T.assertEqual(messages[1], case.expected)
+        T.assertEqual(GGM.lastSyncError, case.err)
+    end
+end)
+
+T.test("gear sync status reports prefix availability and async errors even without database", function()
+    local GGM = loadUI()
+    local messages = {}
+    local api = { SlashCmdList = {}, print = function(message) messages[#messages + 1] = message end }
+    GGM.RegisterSnapshotTestSlashCommand(api)
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    T.assertTrue(table.concat(messages, "\n"):find("Gear sync: unavailable (GC_GEAR)", 1, true) ~= nil)
+    messages = {}
+    GGM.guildSync = { transport = { lastSendError = "send-addon-message-failed:NotInGuild" } }
+    GGM.lastSyncReceiveError = "sync-frame-invalid"
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Gear sync: registered (GC_GEAR)", 1, true) ~= nil)
+    T.assertTrue(output:find("Gear sync send/request error: send-addon-message-failed:NotInGuild", 1, true) ~= nil)
+    T.assertTrue(output:find("Gear sync receive error: sync-frame-invalid", 1, true) ~= nil)
+end)
+
+T.test("journal Bank page selects cached entries, tabs, and slots and refreshes without losing selection", function()
+    local GGM = loadUI()
+    local previousAPI, previousDB = _G.DysbankMemoryAPI, _G.DysbankMemoryDB
+    _G.DysbankMemoryAPI = { schemaVersion = 1 }
+    local function record(name, realm, tabCount)
+        local tabs = {}
+        for tabID = 1, tabCount do
+            local slots = {}
+            for slotID = 1, 40 do
+                if slotID == 3 then
+                    slots[slotID] = {
+                        itemID = 19019 + tabID, itemLink = "|Hitem:" .. tostring(19019 + tabID)
+                            .. "|h[Saved " .. tostring(tabID) .. "]|h", icon = 134,
+                        count = 2,
+                    }
+                end
+            end
+            tabs[tabID] = {
+                id = tabID, name = "Tab " .. tostring(tabID), numSlots = 200,
+                capturedAt = 1700000000 + tabID, status = "cached", slots = slots,
+            }
+        end
+        local key = name .. "-" .. realm
+        return {
+            identity = { key = key, name = name, realm = realm },
+            capturedAt = 1700000001, status = "cached", tabs = tabs,
+        }
+    end
+    local ggmRecord = makeRecord(GGM)
+    local ggmRecords = { ggmRecord }
+    for index = 1, 14 do
+        local extra = makeRecord(GGM)
+        extra.identity = {
+            key = "Extra" .. tostring(index) .. "-Silvermoon",
+            name = "Extra" .. tostring(index),
+            realm = "Silvermoon",
+        }
+        table.insert(ggmRecords, extra)
+    end
+    local characterBank = record("Alice", "Silvermoon", 12)
+    local guildBank = record("Testers", "Silvermoon", 2)
+    _G.DysbankMemoryDB = {
+        schemaVersion = 1,
+        characters = { [characterBank.identity.key] = characterBank },
+        guilds = { [guildBank.identity.key] = guildBank },
+    }
+    local api = makeBrowserAPI()
+    api.GetGuildInfo = function(unit)
+        T.assertEqual(unit, "player")
+        return "Testers", "Guild Leader", 0, "Silvermoon"
+    end
+    api.GetRealmName = nil
+    api.issecretvalue = function() return false end
+    local tooltip = { SetOwner = function() end }
+    function tooltip:Show() self.visible = true end
+    function tooltip:Hide() self.visible = false; self.hideCount = (self.hideCount or 0) + 1 end
+    function tooltip:SetHyperlink(link) self.link = link end
+    api.GameTooltip = tooltip
+
+    local frame = showBrowser(GGM, api, makeDB(GGM, ggmRecords))
+    T.assertNotNil(frame.bankPage, "journal should construct a dedicated Bank page")
+    T.assertTrue(GGM.SelectGuildGearBrowserTab(frame, "Bank"))
+    local page = frame.bankPage
+    T.assertTrue(page.visible)
+    T.assertEqual(page.entries[1].label, "Guild Bank")
+    T.assertTrue(page.entries[1].record == guildBank, "guild tab should use the realm returned with guild identity")
+    local titleTop = -frame.pageTitle.point.y
+    local headerBottom = titleTop + frame.pageTitle.font.size + math.abs(frame.pageSubtitle.point.y)
+        + frame.pageSubtitle.font.size
+    local listTop = 64 - page.listScroll.point.y
+    T.assertEqual(page.libraryTitle.text, "BANK LIBRARY")
+    T.assertNil(page.libraryHelper, "bank page should use the shared subtitle instead of a duplicate helper")
+    T.assertTrue(listTop >= headerBottom + 8, "bank list must begin below the shared page heading")
+    T.assertEqual(page.selectedEntry.kind, "guild")
+    T.assertTrue(page.listScroll.scrollChild == page.listContent)
+    T.assertTrue(page.tabScroll.scrollChild == page.tabContent)
+    T.assertTrue(page.itemScroll.scrollChild == page.itemContent)
+    T.assertTrue(page.listScroll.mouseWheelEnabled)
+    T.assertTrue(page.tabScroll.mouseWheelEnabled)
+    T.assertTrue(page.itemScroll.mouseWheelEnabled)
+    T.assertTrue(page.listContent.height > page.listScroll.height, "character list should scroll when full")
+    T.assertTrue(page.itemContent.height > page.itemScroll.height, "long item grids should scroll")
+    page.listScroll.scripts.OnMouseWheel(page.listScroll, -1)
+    T.assertEqual(page.listScroll.verticalScroll, 42, "mouse wheel should scroll long bank lists")
+
+    page.entryButtons[2].scripts.OnClick(page.entryButtons[2])
+    T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
+    T.assertTrue(page.tabContent.height > page.tabScroll.height, "long tab lists should scroll")
+    page.tabButtons[2].scripts.OnClick(page.tabButtons[2])
+    T.assertEqual(page.selectedTabID, 2)
+    page.itemButtons[3].scripts.OnClick(page.itemButtons[3])
+    T.assertEqual(page.selectedSlotID, 3)
+    page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
+    T.assertEqual(tooltip.link, "|Hitem:19021|h[Saved 2]|h")
+    page.listScroll:SetVerticalScroll(42)
+    page.tabScroll:SetVerticalScroll(28)
+    page.itemScroll:SetVerticalScroll(80)
+
+    local refreshed = record("Alice", "Silvermoon", 12)
+    refreshed.capturedAt = 1700000500
+    refreshed.tabs[1].capturedAt = refreshed.capturedAt
+    _G.DysbankMemoryDB.characters[refreshed.identity.key] = refreshed
+    _G.GuildGearMemoryBankChanged()
+
+    T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
+    T.assertEqual(page.selectedTabID, 2)
+    T.assertEqual(page.selectedSlotID, 3)
+    T.assertEqual(page.listScroll.verticalScroll, 42)
+    T.assertEqual(page.tabScroll.verticalScroll, 28)
+    T.assertEqual(page.itemScroll.verticalScroll, 80)
+    T.assertEqual(page.detailModel.capturedAtText, "saved-1700000500")
+
+    frame:Hide()
+    local changedWhileHidden = record("Alice", "Silvermoon", 12)
+    changedWhileHidden.capturedAt = 1700000600
+    changedWhileHidden.tabs[1].capturedAt = changedWhileHidden.capturedAt
+    _G.DysbankMemoryDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
+    local addedWhileHidden = record("Beatrice", "Silvermoon", 1)
+    _G.DysbankMemoryDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
+    T.assertFalse(_G.GuildGearMemoryBankChanged(), "hidden Bank page should defer its visible refresh")
+    GGM.ShowGuildGearBrowserWindow(api, frame.db)
+
+    T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
+    T.assertEqual(page.detailModel.capturedAtText, "saved-1700000600",
+        "reopening the journal should read the latest local bank snapshot")
+    local foundAddedEntry = false
+    for _, entry in ipairs(page.entries) do
+        if entry.key == "Beatrice-Silvermoon" then foundAddedEntry = true end
+    end
+    T.assertTrue(foundAddedEntry, "reopening the journal should refresh the cached character list")
+    T.assertEqual(page.selectedTabID, 2)
+    T.assertEqual(page.selectedSlotID, 3)
+
+    page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
+    T.assertTrue(tooltip.visible)
+    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = nil, nil
+    _G.GuildGearMemoryBankChanged()
+    T.assertEqual(page.tabStatus.text, "", "missing companion should clear the previously selected tab status")
+    T.assertNil(page.selectedTabID)
+    T.assertNil(page.selectedSlotID)
+    T.assertFalse(tooltip.visible, "missing companion should close a tooltip from the previous snapshot")
+    T.assertTrue(page.slotsEmpty.text:find("_retail_/Interface/AddOns/DysbankMemory", 1, true) ~= nil,
+        "missing companion state should include its installation path")
+    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = previousAPI, previousDB
 end)
 
 T.test("paper doll layout uses the requested left right and bottom slot order", function()

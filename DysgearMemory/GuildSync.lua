@@ -107,6 +107,7 @@ local function cancelPendingSnapshotResponse(sync, requesterKey, targetKey, requ
     if not pending then return end
     if pending.timer and type(pending.timer.Cancel) == "function" then pending.timer:Cancel() end
     if pending.settleTimer and type(pending.settleTimer.Cancel) == "function" then pending.settleTimer:Cancel() end
+    if pending.claimToken then GGM.CancelSyncPayload(sync.transport, pending.claimToken) end
     if pending.sendToken then GGM.CancelSyncPayload(sync.transport, pending.sendToken) end
     removePendingSnapshotResponse(sync, key, pending)
 end
@@ -168,37 +169,54 @@ local function handleSnapshotRequest(sync, sender, message)
     sync.pendingSnapshotResponseCount = sync.pendingSnapshotResponseCount + 1
     local timerOk, timerOrError = pcall(sync.api.C_Timer.NewTimer, responseDelay(message.requester.key, message.target.key, responder.key), function()
         if sync.pendingSnapshotResponses[responseKey] ~= pending then return end
-        local claimQueued, claimQueueErr = GGM.SendSyncPayload(sync.transport, claimPayload)
+        -- A busy client cannot advertise within the bounded election window.
+        -- Decline this request rather than sending a second, late full copy.
+        if #sync.transport.outboundFrames > 0 then
+            removePendingSnapshotResponse(sync, responseKey, pending)
+            return
+        end
+        local function claimFinished(sent, sendErr)
+            if sync.pendingSnapshotResponses[responseKey] ~= pending then return end
+            if not sent then
+                sync.transport.lastSendError = sendErr
+                removePendingSnapshotResponse(sync, responseKey, pending)
+                return
+            end
+            -- Settle from transmission, not queueing: peers must have had a
+            -- chance to observe the claim before a complete response is sent.
+            local settleOk, settleTimer = pcall(sync.api.C_Timer.NewTimer, GGM.SYNC_SNAPSHOT_RESPONSE_OFFER_SETTLE_SECONDS, function()
+                if sync.pendingSnapshotResponses[responseKey] ~= pending then return end
+                local function responseFinished(responseSent, responseErr)
+                    if not removePendingSnapshotResponse(sync, responseKey, pending) then return end
+                    if responseSent then
+                        local sentAt = getResponseTime(sync)
+                        rememberResponse(sync, message.requester.key, message.target.key, sentAt or now)
+                    else
+                        sync.transport.lastSendError = responseErr
+                    end
+                end
+                local queued, queueErr, sendToken = GGM.SendSyncPayload(sync.transport, payload, responseFinished)
+                if queued then
+                    pending.sendToken = sendToken
+                else
+                    removePendingSnapshotResponse(sync, responseKey, pending)
+                    sync.transport.lastSendError = queueErr
+                end
+            end)
+            if not settleOk or settleTimer == nil then
+                removePendingSnapshotResponse(sync, responseKey, pending)
+                sync.transport.lastSendError = "sync-response-timer-create-failed"
+                return
+            end
+            pending.settleTimer = settleTimer
+        end
+        local claimQueued, claimQueueErr, claimToken = GGM.SendSyncPayload(sync.transport, claimPayload, claimFinished)
         if not claimQueued then
             sync.transport.lastSendError = claimQueueErr
             removePendingSnapshotResponse(sync, responseKey, pending)
             return
         end
-        local settleOk, settleTimer = pcall(sync.api.C_Timer.NewTimer, GGM.SYNC_SNAPSHOT_RESPONSE_OFFER_SETTLE_SECONDS, function()
-            if sync.pendingSnapshotResponses[responseKey] ~= pending then return end
-            local function responseFinished(sent, sendErr)
-                if not removePendingSnapshotResponse(sync, responseKey, pending) then return end
-                if sent then
-                    local sentAt = getResponseTime(sync)
-                    rememberResponse(sync, message.requester.key, message.target.key, sentAt or now)
-                else
-                    sync.transport.lastSendError = sendErr
-                end
-            end
-            local queued, queueErr, sendToken = GGM.SendSyncPayload(sync.transport, payload, responseFinished)
-            if queued then
-                pending.sendToken = sendToken
-            else
-                removePendingSnapshotResponse(sync, responseKey, pending)
-                sync.transport.lastSendError = queueErr
-            end
-        end)
-        if not settleOk or settleTimer == nil then
-            removePendingSnapshotResponse(sync, responseKey, pending)
-            sync.transport.lastSendError = "sync-response-timer-create-failed"
-            return
-        end
-        pending.settleTimer = settleTimer
+        pending.claimToken = claimToken
     end)
     if not timerOk or timerOrError == nil then
         removePendingSnapshotResponse(sync, responseKey, pending)

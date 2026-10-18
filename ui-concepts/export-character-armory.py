@@ -7,7 +7,8 @@ MEDIA = Path(__file__).resolve().parents[1] / "GuildGearMemory" / "Media" / "Art
 SOURCE = Path(__file__).resolve().parents[1] / "tests" / "Source"
 
 for name, size in (("character-armory", (1024, 1024)),
-                   ("character-armory-vignette", (1024, 512))):
+                   ("character-armory-vignette", (1024, 512)),
+                   ("gear-journal-page", (1024, 1024))):
     with Image.open(SOURCE / f"{name}.png") as source:
         texture = source.convert("RGBA").resize(size, Image.Resampling.LANCZOS)
     if name.endswith("vignette"):

@@ -1,0 +1,18 @@
+## Interface: 120000, 16001
+## Title: Dysgear Memory
+## Notes: Gear capture, storage, and synchronization backend for Guild Gear Memory
+## Author: Guild Gear Memory contributors
+## Version: 1.1.0
+## SavedVariables: DysgearMemoryDB
+
+Constants.lua
+CharacterIdentity.lua
+GearData.lua
+GearSnapshot.lua
+Storage.lua
+StableGearTracker.lua
+LocalGearMemory.lua
+SyncProtocol.lua
+SyncTransport.lua
+GuildSync.lua
+Main.lua

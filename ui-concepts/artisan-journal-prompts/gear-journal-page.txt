@@ -1,0 +1,9 @@
+Use case: game-asset
+Asset type: square full-page background for a World of Warcraft addon gear-memory journal.
+Input image: Existing professions-page artwork is a style and palette reference only. Match pale honey aged parchment, warm amber-brown palette, painterly fantasy illustration, and fine sepia drafting linework. Do not reproduce interface, text, or layout frame.
+Primary request: Create a complete background illustration for the Gear page, designed to sit behind live UI.
+Scene/backdrop: A broad, unframed field of pale honey aged parchment with gentle paper grain and restrained warm amber-brown staining, matching the bright inner content panel of the reference.
+Subject: Restrict the painted armory still life (steel and bronze shield, ornate plate helmet, gauntlets, leather straps and buckles, and an open blank gear ledger) to the top-right band only, x=58%-100%, y=0%-27%. Keep it refined and softly blended, fading completely by y=30%.
+Composition: Square background image. Leave the left half and center quiet and lightly textured for live character details, equipment slots, and icons. All space below y=30% remains broad, quiet parchment negative space. Add only a tiny, barely visible pale-sepia construction trace within the extreme lower-right corner (rightmost 12%, bottommost 12%).
+Style: Highly polished artisan-journal illustration matching the professions-page reference. Softly integrated edges, delicate inked lines, antique paper grain, warm subdued light.
+Constraints: Match the reference parchment brightness and warm amber-brown color. No bright or saturated colors. No border, frame, vignette, drop shadow, card, or edge treatment. No text, letters, numbers, UI, buttons, icons, symbols, watermark, or logo.

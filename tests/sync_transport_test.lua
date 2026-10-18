@@ -3,7 +3,8 @@ local T = require("tests.testlib")
 local function loadModules()
     local GGM = {}
     T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/SyncTransport.lua", GGM)
+    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
+    T.loadAddonFile("DysgearMemory/SyncTransport.lua", GGM)
     return GGM
 end
 
@@ -22,7 +23,7 @@ local function makeApi(sendResults)
     }
 
     api.C_ChatInfo.RegisterAddonMessagePrefix = function(prefix)
-        T.assertEqual(prefix, "DysGuildGear")
+        T.assertEqual(prefix, "GC_GEAR")
         return registerResult
     end
 
@@ -134,7 +135,7 @@ T.test("transport ignores unrelated prefix and channel without invoking the logi
         handled = handled + 1
     end))
 
-    local state1, err1 = GGM.HandleSyncTransportMessage(transport, "OtherAddon", "anything", "GUILD", "Alice-Silvermoon")
+    local state1, err1 = GGM.HandleSyncTransportMessage(transport, "DysGuildGear", "anything", "GUILD", "Alice-Silvermoon")
     local state2, err2 = GGM.HandleSyncTransportMessage(transport, GGM.SYNC_PREFIX, "anything", "PARTY", "Alice-Silvermoon")
 
     T.assertEqual(state1, "ignored")

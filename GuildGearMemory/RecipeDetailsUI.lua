@@ -2,9 +2,184 @@ local _, GGM = ...
 
 local UNKNOWN_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local MAX_NATIVE_CRAFTERS = 12
+local WHISPER_COOLDOWN_SECONDS = 2
 local createCrafterDropdown
+local refreshCrafterWhisperState
+local shown
+
+local function isPublic(api, value)
+    if type(api.issecretvalue) ~= "function" then return false end
+    local ok, secret = pcall(api.issecretvalue, value)
+    return ok and secret == false
+end
+
+local function parseAmount(api, value)
+    if not isPublic(api, value) or type(value) ~= "string" or not value:match("^%d+$") then return nil end
+    local amount = tonumber(value)
+    if not amount or amount < 1 or amount > 999 or amount ~= math.floor(amount) then return nil end
+    return amount
+end
+
+local function chatSendFunction(api)
+    local chatInfo = api.C_ChatInfo
+    if type(chatInfo) == "table" then
+        if type(chatInfo.SendChatMessage) == "function" then return chatInfo.SendChatMessage end
+        if type(api.SendChatMessage) == "function" then return api.SendChatMessage end
+        return nil
+    end
+    if chatInfo == nil and type(api.SendChatMessage) == "function" then return api.SendChatMessage end
+    return nil
+end
+
+local function whisperSafety(api)
+    if type(api.InCombatLockdown) ~= "function" then return false, "Whisper unavailable: safety check unavailable." end
+    local combatOK, inCombat = pcall(api.InCombatLockdown)
+    if not combatOK or not isPublic(api, inCombat) or type(inCombat) ~= "boolean" then
+        return false, "Whisper unavailable: safety check unavailable."
+    end
+    if inCombat then return false, "Whisper unavailable during combat." end
+
+    local chatInfo = api.C_ChatInfo
+    if type(chatInfo) ~= "table" or type(chatInfo.InChatMessagingLockdown) ~= "function" then
+        return false, "Whisper unavailable: chat safety check unavailable."
+    end
+    local restrictionOK, restricted = pcall(chatInfo.InChatMessagingLockdown)
+    if not restrictionOK or not isPublic(api, restricted) or type(restricted) ~= "boolean" then
+        return false, "Whisper unavailable: chat safety check unavailable."
+    end
+    if restricted then return false, "Whisper unavailable: chat is restricted." end
+    if not chatSendFunction(api) then return false, "Whisper unavailable: chat API unavailable." end
+
+    if type(api.GetTime) ~= "function" then return false, "Whisper unavailable: cooldown check unavailable." end
+    local timeOK, now = pcall(api.GetTime)
+    if not timeOK or not isPublic(api, now) or type(now) ~= "number"
+        or now ~= now or now < 0 or now == math.huge then
+        return false, "Whisper unavailable: cooldown check unavailable."
+    end
+    return true, nil, now
+end
+
+local function updateWhisperButton(details)
+    if not details.whisperButton then return end
+    local amount = parseAmount(details.api, details.amountInput:GetText())
+    local selected = details.selectedCrafterKey ~= nil
+    local safetyOK, _, now = whisperSafety(details.api)
+    local cooldownOK = safetyOK and (details.lastWhisperAt == nil
+        or now - details.lastWhisperAt >= WHISPER_COOLDOWN_SECONDS)
+    details.whisperButton:SetEnabled(selected and amount ~= nil
+        and details.crafterPresence == "online" and cooldownOK == true)
+end
+
+refreshCrafterWhisperState = function(details, actionMessage, checkRoster)
+    if not details or not details.whisperStatus then return end
+    if checkRoster ~= false then
+        details.crafterPresence = GGM.GetCrafterRosterStatus(details.api, details.selectedCrafterKey)
+    end
+    local statusText = details.crafterPresence == "online" and "Online (guild roster)"
+        or details.crafterPresence == "offline" and "Offline (guild roster)"
+        or "Unavailable (guild roster)"
+    details.whisperPresenceStatus:SetText(statusText)
+    if not actionMessage then
+        if details.crafterPresence == "online" then
+            local safe, safetyMessage = whisperSafety(details.api)
+            if not safe then actionMessage = safetyMessage
+            elseif not parseAmount(details.api, details.amountInput:GetText()) then
+                actionMessage = "Enter an amount from 1 to 999."
+            end
+        elseif details.crafterPresence == "offline" then
+            actionMessage = "Selected crafter is offline."
+        elseif details.selectedCrafterKey then
+            actionMessage = "Guild roster status is unavailable."
+        end
+    end
+    details.whisperStatus:SetText(actionMessage or "")
+    updateWhisperButton(details)
+end
+
+local function scheduleCooldownRefresh(details)
+    local timer = details.api.C_Timer
+    if type(timer) == "table" and type(timer.After) == "function" then
+        pcall(timer.After, WHISPER_COOLDOWN_SECONDS, function()
+            if shown(details) then updateWhisperButton(details) end
+        end)
+    end
+end
+
+local function sendCrafterWhisper(details)
+    local api = details.api
+    local amount = parseAmount(api, details.amountInput:GetText())
+    if not amount then
+        refreshCrafterWhisperState(details, "Enter an amount from 1 to 999.", false)
+        updateWhisperButton(details)
+        return
+    end
+    if not details.selectedCrafterKey then
+        refreshCrafterWhisperState(details, "Select a crafter first.", false)
+        return
+    end
+    local selectedKnownCrafter = false
+    for _, crafter in ipairs(details.crafters or {}) do
+        if crafter.key == details.selectedCrafterKey then selectedKnownCrafter = true; break end
+    end
+    if not selectedKnownCrafter then
+        refreshCrafterWhisperState(details, "Whisper unavailable: crafter selection is stale.", false)
+        return
+    end
+
+    local presence = GGM.GetCrafterRosterStatus(api, details.selectedCrafterKey)
+    details.crafterPresence = presence
+    if presence ~= "online" then
+        refreshCrafterWhisperState(details, nil, false)
+        return
+    end
+
+    local safe, safetyMessage, now = whisperSafety(api)
+    if not safe then
+        refreshCrafterWhisperState(details, safetyMessage, false)
+        return
+    end
+    if details.lastWhisperAt ~= nil and now - details.lastWhisperAt < WHISPER_COOLDOWN_SECONDS then
+        refreshCrafterWhisperState(details, "Please wait before sending another request.", false)
+        return
+    end
+
+    local recipeName = details.currentRecipeName
+    if not isPublic(api, recipeName) or type(recipeName) ~= "string" or recipeName == ""
+        or #recipeName > 512 or recipeName:find("%c") then
+        refreshCrafterWhisperState(details, "Whisper unavailable: recipe name unavailable.", false)
+        return
+    end
+    local message = "Hi! Do you have time to craft " .. amount .. " x " .. recipeName .. " for me?"
+    if #message > 255 then
+        refreshCrafterWhisperState(details, "Whisper unavailable: recipe name is too long.", false)
+        return
+    end
+    local send = chatSendFunction(api)
+    if not send then
+        refreshCrafterWhisperState(details, "Whisper unavailable: chat API unavailable.", false)
+        return
+    end
+    details.lastWhisperAt = now
+    scheduleCooldownRefresh(details)
+    local sendOK, sendResult = pcall(send, message, "WHISPER", nil, details.selectedCrafterKey)
+    if not sendOK then
+        refreshCrafterWhisperState(details, "Whisper unavailable: request could not be sent.", false)
+        return
+    end
+    if sendResult ~= nil and not isPublic(api, sendResult) then
+        refreshCrafterWhisperState(details, "Whisper unavailable: request could not be sent.", false)
+        return
+    end
+    if sendResult == false or (sendResult ~= nil and type(sendResult) ~= "boolean") then
+        refreshCrafterWhisperState(details, "Whisper unavailable: request could not be sent.", false)
+        return
+    end
+
+    refreshCrafterWhisperState(details, "Request attempted; delivery is not confirmed.", false)
+end
+
 local WINDOW_WIDTH, WINDOW_HEIGHT = 540, 620
-local CONTENT_WIDTH, MATERIAL_WIDTH = 484, 448
+local CONTENT_WIDTH, MATERIAL_WIDTH = 468, 424
 
 local function applyTextTheme(label, tone)
     local theme = GGM.UITheme
@@ -44,6 +219,10 @@ local function surface(api, parent, kind, backgroundOwner, sublevel)
         panel.background = backgroundOwner:CreateTexture(nil, "BACKGROUND", nil, sublevel)
     end
     GGM.ApplyJournalSurface(panel, kind or "parchment")
+    if kind == "recipe" then
+        panel.background:SetTexture("Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\recipe-page.tga")
+        return panel
+    end
     border(panel, 0, "border")
     border(panel, 3, "borderSoft")
     return panel
@@ -65,7 +244,7 @@ local function text(parent, font, point, relative, relativePoint, x, y, width)
     return label
 end
 
-local function shown(frame)
+shown = function(frame)
     return frame and frame:IsShown()
 end
 
@@ -112,8 +291,9 @@ local function selectCrafter(details, key)
         details.crafterDropdown:SetText(label .. "   v")
     end
     details.crafterStatus:SetText(owner
-        and ("Last-known recipe knowledge\nSaved: " .. (owner.savedDate or "Date unavailable"))
+        and ("Last-known recipe\nSaved: " .. (owner.savedDate or "Date unavailable"))
         or "No known crafters in saved records.")
+    refreshCrafterWhisperState(details)
 end
 
 local function updateCrafters(details, recipe, preserveSelection)
@@ -142,7 +322,7 @@ createCrafterDropdown = function(details, forceScrollable)
         and type(api.UIDropDownMenu_SetWidth) == "function"
     if details.nativeDropdown then
         local dropdown = api.CreateFrame("Frame", "GuildGearMemoryRecipeCrafterDropdown", details, "UIDropDownMenuTemplate")
-        dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 12, 118)
+        dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 20, 180)
         api.UIDropDownMenu_SetWidth(dropdown, CONTENT_WIDTH - 40)
         for _, key in ipairs({ "Left", "Middle", "Right" }) do
             if dropdown[key] and dropdown[key].Hide then dropdown[key]:Hide() end
@@ -187,7 +367,7 @@ createCrafterDropdown = function(details, forceScrollable)
         or nil
     if not dropdown then dropdown = api.CreateFrame("Button", nil, details, "UIPanelButtonTemplate") end
     dropdown:SetSize(CONTENT_WIDTH, 34)
-    dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 28, 112)
+    dropdown:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 36, 174)
     if dropdown.label then
         dropdown.label:ClearAllPoints()
         dropdown.label:SetPoint("LEFT", dropdown, "LEFT", 12, 0)
@@ -242,8 +422,8 @@ local function renderMaterials(details, model)
     details.materialStatus:SetText(message)
     if message == "" then details.materialStatus:Hide() else details.materialStatus:Show() end
     details.materialScroll:ClearAllPoints()
-    details.materialScroll:SetPoint("TOPLEFT", details, "TOPLEFT", 36, message == "" and -202 or -234)
-    details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -56, 208)
+    details.materialScroll:SetPoint("TOPLEFT", details, "TOPLEFT", 46, message == "" and -210 or -244)
+    details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -70, 274)
     if #model.materials == 0 then details.materialScroll:Hide() else details.materialScroll:Show() end
     local rowIndex, y = 0, 0
     local function addRow(label, icon, heading)
@@ -272,14 +452,75 @@ local function renderMaterials(details, model)
         y = y + rowHeight
     end
     for _, group in ipairs(model.materials) do
-        local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " x" .. group.quantity
-        if #group.choices > 1 then label = label .. " (choose one)" end
-        addRow(label, nil, true)
-        for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+        if #group.choices == 1 then
+            local choice = group.choices[1]
+            addRow(choice.name .. "  ×" .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false)
+        else
+            local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " ×" .. group.quantity
+            if #group.choices > 1 then label = label .. " (choose one)" end
+            addRow(label, nil, true)
+            for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+        end
     end
     for index = rowIndex + 1, #details.materialRows do details.materialRows[index]:Hide() end
     details.materialContent:SetHeight(math.max(1, y))
     details.materialScroll:SetVerticalScroll(0)
+end
+
+local function createWhisperControls(details)
+    local api = details.api
+    details.amountInput = api.CreateFrame("EditBox", nil, details)
+    details.amountInput:SetSize(52, 30)
+    details.amountInput:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", 74, 88)
+    GGM.ApplyJournalSurface(details.amountInput, "button")
+    border(details.amountInput, 0, "border")
+    GGM.ApplyJournalFont(details.amountInput, 16, "bold")
+    details.amountInput:SetTextColor(0.19, 0.125, 0.07, 1)
+    details.amountInput:SetJustifyH("CENTER")
+    details.amountInput:SetAutoFocus(false)
+    details.amountInput:SetNumeric(true)
+    details.amountInput:SetMaxLetters(3)
+    details.amountInput:SetText("1")
+    details.amountInput:SetScript("OnTextChanged", function()
+        refreshCrafterWhisperState(details, nil, false)
+    end)
+
+    local function makeAmountButton(label, offset, delta)
+        local button = GGM.CreateFlatButton(api, details, label, 30, 30, "secondary")
+        button:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", offset, 88)
+        button:SetScript("OnClick", function()
+            local amount = parseAmount(api, details.amountInput:GetText()) or 1
+            details.amountInput:SetText(tostring(math.max(1, math.min(999, amount + delta))))
+        end)
+        return button
+    end
+    details.amountMinusButton = makeAmountButton("−", 36, -1)
+    details.amountPlusButton = makeAmountButton("+", 134, 1)
+
+    details.whisperButton = GGM.CreateFlatButton(api, details, "Whisper crafter", 180, 30, "primary")
+    details.whisperButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 88)
+    GGM.ApplyJournalFont(details.whisperButton.label, 16, "bold")
+    details.whisperButton:SetScript("OnClick", function() sendCrafterWhisper(details) end)
+
+    text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 36, 126, 130)
+        :SetText("Amount")
+
+    details.whisperPresenceStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details,
+        "BOTTOMLEFT", 36, 59, CONTENT_WIDTH)
+    details.whisperStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details,
+        "BOTTOMLEFT", 36, 25, CONTENT_WIDTH)
+    details.whisperPresenceStatus:SetHeight(18)
+    details.whisperStatus:SetHeight(32)
+
+    details.rosterEventFrame = api.CreateFrame("Frame", nil, details)
+    details.rosterEventFrame:RegisterEvent("GUILD_ROSTER_UPDATE")
+    details.rosterEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    details.rosterEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    details.rosterEventFrame:SetScript("OnEvent", function(_, event)
+        if not shown(details) then return end
+        refreshCrafterWhisperState(details)
+    end)
+    updateWhisperButton(details)
 end
 
 local function setRecipeTitle(details, name)
@@ -296,12 +537,8 @@ local function createWindow(browser, recipe)
     details.api = api
     details.background = details:CreateTexture(nil, "BACKGROUND", nil, -8)
     GGM.ApplyJournalSurface(details, "leather")
-    border(details, 0, "borderDark")
-    border(details, 3, "gold")
-    border(details, 6, "border")
-    details.paper = surface(api, details, "parchment", details, -7)
-    details.paper:SetPoint("TOPLEFT", details, "TOPLEFT", 10, -44)
-    details.paper:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -10, 10)
+    details.paper = surface(api, details, "recipe", details, -7)
+    details.paper:SetAllPoints(details)
     details:SetSize(WINDOW_WIDTH, WINDOW_HEIGHT)
     if details.SetScale and browser.GetScale then details:SetScale(browser:GetScale()) end
     details:SetPoint("CENTER", api.UIParent, "CENTER", 100, 0)
@@ -312,31 +549,34 @@ local function createWindow(browser, recipe)
     details:RegisterForDrag("LeftButton")
     details:SetScript("OnDragStart", function(self) self:StartMoving() end)
     details:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    details.TitleText = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 28, -14, CONTENT_WIDTH - 44)
+    details.TitleText = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 36, -30, CONTENT_WIDTH - 44)
     details.TitleText:SetText("RECIPE DETAILS")
-    applyTextTheme(details.TitleText, "railGold")
+    applyTextTheme(details.TitleText, "muted")
+    GGM.ApplyJournalFont(details.TitleText, 13, "bold")
     details.closeButton = GGM.CreateFlatButton(api, details, "×", 28, 28, "secondary")
-    details.closeButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -12, -9)
+    details.closeButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -24, -22)
     details.closeButton:SetScript("OnClick", function() details:Hide() end)
     details.iconFrame = surface(api, details, "button", details, -5)
     details.iconFrame:SetSize(66, 66)
-    details.iconFrame:SetPoint("TOPLEFT", details, "TOPLEFT", 28, -64)
+    details.iconFrame:SetPoint("TOPLEFT", details, "TOPLEFT", 36, -66)
     details.recipeIcon = details.iconFrame:CreateTexture(nil, "ARTWORK")
     details.recipeIcon:SetPoint("TOPLEFT", details.iconFrame, "TOPLEFT", 6, -6)
     details.recipeIcon:SetPoint("BOTTOMRIGHT", details.iconFrame, "BOTTOMRIGHT", -6, 6)
     details.recipeIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    details.recipeName = text(details, "GameFontNormalLarge", "TOPLEFT", details, "TOPLEFT", 110, -64, 402)
+    details.recipeName = text(details, "GameFontNormalLarge", "TOPLEFT", details, "TOPLEFT", 118, -66, 374)
     GGM.ApplyJournalFont(details.recipeName, 24, "bold")
     details.recipeName:SetHeight(56)
     if details.recipeName.SetMaxLines then details.recipeName:SetMaxLines(2) end
-    details.professionName = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 110, -124, 402)
+    details.professionName = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 118, -124, 374)
     applyTextTheme(details.professionName, "muted")
+    GGM.ApplyJournalFont(details.professionName, 16, "italic")
     details.materialPanel = surface(api, details, "parchment", details, -6)
-    details.materialPanel:SetPoint("TOPLEFT", details, "TOPLEFT", 22, -154)
-    details.materialPanel:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -22, 196)
-    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 36, -168, 448)
+    details.materialPanel:SetPoint("TOPLEFT", details, "TOPLEFT", 32, -164)
+    details.materialPanel:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -32, 262)
+    details.materialPanel.background:SetColorTexture(0.93, 0.78, 0.51, 0.18)
+    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 46, -180, 424)
     details.materialHeading:SetText("CRAFTING MATERIALS")
-    details.materialStatus = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 36, -194, 448)
+    details.materialStatus = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 46, -208, 424)
     details.materialStatus:SetHeight(32)
     applyTextTheme(details.materialStatus, "muted")
     details.materialScroll = api.CreateFrame("ScrollFrame", nil, details, "UIPanelScrollFrameTemplate")
@@ -346,15 +586,16 @@ local function createWindow(browser, recipe)
     details.materialContent:SetSize(MATERIAL_WIDTH, 1)
     details.materialScroll:SetScrollChild(details.materialContent)
     details.materialRows, details.crafters = {}, sortedCrafters(recipe)
-    details.crafterHeading = text(details, "GameFontNormal", "BOTTOMLEFT", details, "BOTTOMLEFT", 28, 160, CONTENT_WIDTH)
+    details.crafterHeading = text(details, "GameFontNormal", "BOTTOMLEFT", details, "BOTTOMLEFT", 36, 226, CONTENT_WIDTH)
     details.crafterHeading:SetText("KNOWN CRAFTERS")
-    details.crafterStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 28, 62, CONTENT_WIDTH)
-    details.crafterStatus:SetHeight(40)
+    details.crafterStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 198, 124, 306)
+    details.crafterStatus:SetHeight(42)
     applyTextTheme(details.crafterStatus, "muted")
-    details.cachedStatus = text(details, "GameFontDisableSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 28, 24, CONTENT_WIDTH)
-    details.cachedStatus:SetHeight(28)
-    details.cachedStatus:SetText("Crafter knowledge is cached from saved profession records.")
+    details.cachedStatus = text(details, "GameFontDisableSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 36, 208, CONTENT_WIDTH)
+    details.cachedStatus:SetHeight(16)
+    details.cachedStatus:SetText("Recipe knowledge is cached.")
     applyTextTheme(details.cachedStatus, "muted")
+    createWhisperControls(details)
     createCrafterDropdown(details)
     api.UISpecialFrames = api.UISpecialFrames or {}
     local registered = false
@@ -384,7 +625,9 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     if not canonical then return nil end
     local details = browser.recipeDetailsFrame or createWindow(browser, canonical)
     local preserveSelection = details.recipeID == canonical.recipeID
+    if not preserveSelection then details.amountInput:SetText("1") end
     details.recipeID = canonical.recipeID
+    details.currentRecipeName = canonical.name
     setRecipeTitle(details, canonical.name)
     details.recipeIcon:SetTexture(canonical.outputIcon or UNKNOWN_ICON)
     details.professionName:SetText(browser.selectedProfession or "Profession")
@@ -402,6 +645,7 @@ function GGM.RefreshRecipeDetailsWindow(browser)
             if recipe.recipeID == details.recipeID then
                 setRecipeTitle(details, recipe.name)
                 details.recipeIcon:SetTexture(recipe.outputIcon or UNKNOWN_ICON)
+                details.currentRecipeName = recipe.name
                 updateCrafters(details, recipe, true)
                 return
             end
