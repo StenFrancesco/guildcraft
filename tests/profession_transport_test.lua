@@ -2,7 +2,7 @@ local T = require("tests.testlib")
 
 local function loadModules()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", GGM)
     return GGM
 end
 

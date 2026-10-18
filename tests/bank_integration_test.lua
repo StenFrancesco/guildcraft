@@ -6,7 +6,7 @@ local function fixture(saved)
     function frame:SetScript(name, callback) self.scripts[name] = callback end
     local reads, changes = 0, 0
     local api = setmetatable({
-        DysbankMemoryDB = saved,
+        TheGuildBookBankDB = saved,
         CreateFrame = function() return frame end,
         issecretvalue = function() return false end,
         InCombatLockdown = function() return false end,
@@ -36,10 +36,10 @@ local function fixture(saved)
         setfenv(chunk, api)
         chunk(name, namespace)
     end
-    load("DysbankMemory/BankMemory.lua", "DysbankMemory", memory)
-    load("DysbankMemory/Main.lua", "DysbankMemory", memory)
-    load("GuildGearMemory/Constants.lua", "GuildGearMemory", GGM)
-    load("GuildGearMemory/BankView.lua", "GuildGearMemory", GGM)
+    load("The Guild Book Bank/BankMemory.lua", "The Guild Book Bank", memory)
+    load("The Guild Book Bank/Main.lua", "The Guild Book Bank", memory)
+    load("The Guild Book/Constants.lua", "The Guild Book", GGM)
+    load("The Guild Book/BankView.lua", "The Guild Book", GGM)
     return api, frame, GGM, function() return reads, changes end
 end
 
@@ -47,10 +47,10 @@ T.test("companion startup captures only after bank open and main addon reads sam
     local saved = { schemaVersion = 1, characters = {}, guilds = {} }
     local api, frame, GGM, counts = fixture(saved)
     local event = assert(frame.scripts.OnEvent)
-    event(frame, "ADDON_LOADED", "GuildGearMemory")
+    event(frame, "ADDON_LOADED", "The Guild Book")
     T.assertEqual(counts(), 0)
-    event(frame, "ADDON_LOADED", "DysbankMemory")
-    T.assertTrue(api.DysbankMemoryDB == saved)
+    event(frame, "ADDON_LOADED", "The Guild Book Bank")
+    T.assertTrue(api.TheGuildBookBankDB == saved)
     T.assertEqual(api.DysbankMemoryAPI.schemaVersion, 1)
     local initialReads, initialChanges = counts()
     T.assertEqual(initialReads, 0)
@@ -75,9 +75,9 @@ end)
 T.test("companion entrypoint preserves unsupported SavedVariables and does no capture", function()
     local saved = { schemaVersion = 99, characters = { preserved = true }, guilds = {} }
     local api, frame, _, counts = fixture(saved)
-    frame.scripts.OnEvent(frame, "ADDON_LOADED", "DysbankMemory")
+    frame.scripts.OnEvent(frame, "ADDON_LOADED", "The Guild Book Bank")
     frame.scripts.OnEvent(frame, "BANKFRAME_OPENED")
-    T.assertTrue(api.DysbankMemoryDB == saved)
+    T.assertTrue(api.TheGuildBookBankDB == saved)
     T.assertEqual(saved.characters.preserved, true)
     T.assertEqual(counts(), 0)
 end)
@@ -99,7 +99,7 @@ T.test("reloaded bank snapshot displays a named quality color link while the ban
     local api, frame, GGM, counts = fixture(saved)
     api.C_Bank.CanUseBank = function() return false end
     api.C_Bank.FetchPurchasedBankTabData = function() return {} end
-    frame.scripts.OnEvent(frame, "ADDON_LOADED", "DysbankMemory")
+    frame.scripts.OnEvent(frame, "ADDON_LOADED", "The Guild Book Bank")
 
     local entries = GGM.BuildBankEntries(nil, saved)
     T.assertTrue(entries[2].record == record, "valid saved bank record was discarded")
@@ -112,14 +112,14 @@ T.test("reloaded bank snapshot displays a named quality color link while the ban
     T.assertEqual(detail.slots[47].itemLink, link)
     T.assertEqual(detail.slots[47].count, 1)
     T.assertEqual(counts(), 0)
-    T.assertTrue(api.DysbankMemoryDB == saved)
+    T.assertTrue(api.TheGuildBookBankDB == saved)
 end)
 
 T.test("bank addon manifests declare optional companion and independent SavedVariables", function()
-    local companion = assert(io.open("DysbankMemory/DysbankMemory.toc", "r")):read("*a")
-    local main = assert(io.open("GuildGearMemory/GuildGearMemory.toc", "r")):read("*a")
-    T.assertTrue(companion:find("## SavedVariables: DysbankMemoryDB", 1, true) ~= nil)
-    T.assertTrue(main:find("## OptionalDeps: DysbankMemory", 1, true) ~= nil)
+    local companion = assert(io.open("The Guild Book Bank/The Guild Book Bank.toc", "r")):read("*a")
+    local main = assert(io.open("The Guild Book/The Guild Book.toc", "r")):read("*a")
+    T.assertTrue(companion:find("## SavedVariables: TheGuildBookBankDB", 1, true) ~= nil)
+    T.assertTrue(main:find("## OptionalDeps: The Guild Book Bank, The Guild Book gear", 1, true) ~= nil)
     T.assertTrue(companion:find("BankMemory.lua", 1, true) < companion:find("Main.lua", 1, true))
     T.assertTrue(main:find("BankView.lua", 1, true) < main:find("BankUI.lua", 1, true))
     T.assertTrue(main:find("BankUI.lua", 1, true) < main:find("SnapshotTestUI.lua", 1, true))

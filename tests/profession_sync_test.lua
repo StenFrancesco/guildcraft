@@ -26,7 +26,7 @@ local function guild()
         client.identity.online = true
         client.visibleCatalog = {}
         for _, file in ipairs({ "Constants", "ProfessionSnapshot", "ProfessionIndex", "Storage", "CharacterIdentity", "ProfessionSyncData", "ProfessionTransport", "ProfessionSync" }) do
-            local path = "GuildGearMemory/" .. file .. ".lua"
+            local path = "The Guild Book/" .. file .. ".lua"
             local handle = io.open(path, "r")
             if handle then handle:close(); T.loadAddonFile(path, client.G) end
         end
@@ -582,14 +582,14 @@ T.test("real profession event startup does not require the gear companion", func
     api._G = api; setmetatable(api, { __index = _G })
     api.CreateFrame = function() return { RegisterEvent = function() end, SetScript = function(_, _, fn) onEvent = fn end } end
     api.C_GuildInfo = { GuildRoster = function() return true end }
-    api.GuildGearMemoryDB = b.db
+    api.TheGuildBookDB = b.db
     G.RegisterSnapshotTestSlashCommand = function() end
     G.InitializeSavedDatabases = function() return b.db, nil, b.db end
     G.CreateProfessionLinkSaveController = function() return {} end
     G.RegisterProfessionLinkSaveController = function() return true end
     G.RecordLocalPlayerOwnership = function() return G.MarkLocalCharacterGUID(b.db, b.identity.guid) end
-    local chunk = assert(loadfile("GuildGearMemory/Main.lua")); setfenv(chunk, api); chunk("GuildGearMemory", G)
-    onEvent(nil, "ADDON_LOADED", "GuildGearMemory")
+    local chunk = assert(loadfile("The Guild Book/Main.lua")); setfenv(chunk, api); chunk("The Guild Book", G)
+    onEvent(nil, "ADDON_LOADED", "The Guild Book")
     b.sync = G.professionSync
     T.assertNotNil(b.sync)
     T.assertEqual(#bus.frames, 0)

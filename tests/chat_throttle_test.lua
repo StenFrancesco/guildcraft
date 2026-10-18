@@ -43,9 +43,9 @@ local function client(results)
         setfenv(chunk, api)
         chunk()
     end
-    loadLibrary("GuildGearMemory")
+    loadLibrary("The Guild Book")
     c.library = api.ChatThrottleLib
-    loadLibrary("DysgearMemory")
+    loadLibrary("The Guild Book gear")
     T.assertEqual(api.ChatThrottleLib, c.library)
     T.assertEqual(#c.frames, 1)
     function c:update(seconds)
@@ -114,8 +114,8 @@ end)
 
 local function gear(api)
     local G = {}
-    T.loadAddonFile("DysgearMemory/Constants.lua", G)
-    T.loadAddonFile("DysgearMemory/SyncTransport.lua", G)
+    T.loadAddonFile("The Guild Book gear/Constants.lua", G)
+    T.loadAddonFile("The Guild Book gear/SyncTransport.lua", G)
     return G, assert(G.CreateSyncTransport(api, function() end))
 end
 
@@ -123,7 +123,7 @@ T.test("bundled CTL shares one queue for independent gear and profession addons"
     local api, c = client()
     local G, transport = gear(api)
     local P = {}
-    T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", P)
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", P)
     local profession = assert(P.CreateProfessionTransport(api, function() end))
     local completed = 0
     G.SendSyncPayload(transport, "gear", function(sent) T.assertTrue(sent); completed = completed + 1 end)
@@ -157,7 +157,7 @@ T.test("bundled CTL blocked prefix does not prevent another prefix from completi
     local api, c = client({3, 0, 0})
     local G, transport = gear(api)
     local P = {}
-    T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", P)
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", P)
     local profession = assert(P.CreateProfessionTransport(api, function() end))
     local gearDone, professionDone = 0, 0
     G.SendSyncPayload(transport, "gear", function(sent) T.assertTrue(sent); gearDone = gearDone + 1 end)
@@ -193,7 +193,7 @@ T.test("bundled CTL channel throttle fails both transports closed without retry"
     local api, c = client({8, 8})
     local G, transport = gear(api)
     local P = {}
-    T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", P)
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", P)
     local profession = assert(P.CreateProfessionTransport(api, function() end))
     local completed = 0
     G.SendSyncPayload(transport, string.rep("g", 500), function(sent, err)
@@ -225,7 +225,7 @@ T.test("real CTL completion starts each transports pacing after a prefix throttl
             G.SendSyncPayload(transport, string.rep("g", 500))
         else
             G = {}
-            T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", G)
+            T.loadAddonFile("The Guild Book/ProfessionTransport.lua", G)
             transport = assert(G.CreateProfessionTransport(api, function() end))
             interval = 0
             G.SendProfessionPayload(transport, string.rep("p", 500), "Alice-Realm")
@@ -260,7 +260,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
     c:update(6)
     local G, transport = gear(api)
     local P = {}
-    T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", P)
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", P)
     local profession = assert(P.CreateProfessionTransport(api, function() end))
     local gearPayload, professionPayload = string.rep("g", 700), string.rep("p", 222 * 40)
     local gearDone, professionDone, finishedAt = 0, 0, nil
@@ -321,8 +321,8 @@ T.test("transports fail closed when ChatThrottleLib is missing", function()
     local api = client()
     api.ChatThrottleLib = nil
     local G, P = {}, {}
-    T.loadAddonFile("DysgearMemory/SyncTransport.lua", G)
-    T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", P)
+    T.loadAddonFile("The Guild Book gear/SyncTransport.lua", G)
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", P)
     local transport, err = G.CreateSyncTransport(api, function() end)
     T.assertNil(transport)
     T.assertEqual(err, "sync-chat-throttle-lib-unavailable")
@@ -350,7 +350,7 @@ end)
 T.test("profession cancellation ignores the real CTL send without starting more frames", function()
     local api, c = client()
     local G = {}
-    T.loadAddonFile("GuildGearMemory/ProfessionTransport.lua", G)
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", G)
     local transport = assert(G.CreateProfessionTransport(api, function() end))
     local completed = 0
     G.SendProfessionPayload(transport, string.rep("x", 500), "Alice-Realm", function(sent)

@@ -3,23 +3,23 @@ local makeRecord, compactRecord
 
 local function loadUI()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
-    T.loadAddonFile("DysgearMemory/GearData.lua", GGM)
-    T.loadAddonFile("DysgearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("DysgearMemory/GearSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
-    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/RecipeDetailsUI.lua", GGM)
-    local bankView = loadfile("GuildGearMemory/BankView.lua")
-    if bankView then bankView("GuildGearMemory", GGM) end
-    local bankUI = loadfile("GuildGearMemory/BankUI.lua")
-    if bankUI then bankUI("GuildGearMemory", GGM) end
-    T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
+    T.loadAddonFile("The Guild Book/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/GearData.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/GearSnapshot.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionIndex.lua", GGM)
+    T.loadAddonFile("The Guild Book/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book/SavedCharacterModel.lua", GGM)
+    T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/RecipeDetailsUI.lua", GGM)
+    local bankView = loadfile("The Guild Book/BankView.lua")
+    if bankView then bankView("The Guild Book", GGM) end
+    local bankUI = loadfile("The Guild Book/BankUI.lua")
+    if bankUI then bankUI("The Guild Book", GGM) end
+    T.loadAddonFile("The Guild Book/SnapshotTestUI.lua", GGM)
     return GGM
 end
 
@@ -1142,7 +1142,7 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     local frame = GGM.CreateGuildGearBrowserWindow(api)
     local separator = string.char(92)
     local mediaPath = table.concat({
-        "Interface", "AddOns", "GuildGearMemory", "Media", "ArtisanJournal", "",
+        "Interface", "AddOns", "The Guild Book", "Media", "ArtisanJournal", "",
     }, separator)
 
     T.assertEqual(frame.width, 1400)
@@ -1208,7 +1208,7 @@ T.test("profession selection changes the full page artwork for each supported pr
     local frame = GGM.CreateGuildGearBrowserWindow(makeBrowserAPI())
     local separator = string.char(92)
     local mediaPath = table.concat({
-        "Interface", "AddOns", "GuildGearMemory", "Media", "ArtisanJournal", "",
+        "Interface", "AddOns", "The Guild Book", "Media", "ArtisanJournal", "",
     }, separator)
     local expected = {
         { key = "Alchemy", texture = mediaPath .. "alchemy-page.tga" },
@@ -1535,7 +1535,7 @@ T.test("gear browser explains missing or unavailable gear storage while other ta
         local frame = showBrowser(GGM, makeBrowserAPI(), db)
         local expected
         if reason == "gear-companion-missing" then
-            expected = "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+            expected = "Install and enable The Guild Book gear beside The Guild Book to save and view gear."
         elseif reason:match("^gear%-backend%-") then
             expected = "Gear backend unavailable. Check /ggm status for details."
         else
@@ -1563,9 +1563,9 @@ T.test("gear backend status explains initialization failures without suggesting 
     api.SlashCmdList.GUILDGEARMEMORY("status")
 
     local output = table.concat(messages, "\n")
-    T.assertTrue(output:find("DysgearMemory could not provide a compatible gear backend", 1, true) ~= nil)
+    T.assertTrue(output:find("The Guild Book gear could not provide a compatible gear backend", 1, true) ~= nil)
     T.assertTrue(output:find("saved gear was left unchanged", 1, true) ~= nil)
-    T.assertTrue(output:find("DysgearMemory.lua", 1, true) == nil)
+    T.assertTrue(output:find("The Guild Book gear.lua", 1, true) == nil)
 end)
 
 T.test("guild gear browser hides the model stage when detail has no valid record", function()
@@ -1907,7 +1907,7 @@ T.test("unsupported schema status gives backup and removal guidance with cleared
     local output = table.concat(messages, "\n")
     T.assertTrue(output:find("No automatic migration", 1, true) ~= nil)
     T.assertTrue(output:find("back up", 1, true) ~= nil)
-    T.assertTrue(output:find("GuildGearMemory.lua", 1, true) ~= nil)
+    T.assertTrue(output:find("The Guild Book.lua", 1, true) ~= nil)
     T.assertTrue(output:find("Gear and bank companion databases are separate", 1, true) ~= nil)
     T.assertTrue(output:find("profession snapshots/index data", 1, true) ~= nil)
     T.assertTrue(output:find("local-character metadata", 1, true) ~= nil)
@@ -1925,8 +1925,8 @@ T.test("gear companion status points to its own SavedVariables file", function()
     api.SlashCmdList.GUILDGEARMEMORY("status")
     local output = table.concat(messages, "\n")
     T.assertTrue(output:find("Gear storage: unavailable", 1, true) ~= nil)
-    T.assertTrue(output:find("DysgearMemory.lua", 1, true) ~= nil)
-    T.assertTrue(output:find("DysgearMemoryDB", 1, true) ~= nil)
+    T.assertTrue(output:find("The Guild Book gear.lua", 1, true) ~= nil)
+    T.assertTrue(output:find("TheGuildBookGearDB", 1, true) ~= nil)
 end)
 
 T.test("snapshot slash command can explicitly request exactly one named character", function()
@@ -2029,7 +2029,7 @@ end)
 
 T.test("journal Bank page selects cached entries, tabs, and slots and refreshes without losing selection", function()
     local GGM = loadUI()
-    local previousAPI, previousDB = _G.DysbankMemoryAPI, _G.DysbankMemoryDB
+    local previousAPI, previousDB = _G.DysbankMemoryAPI, _G.TheGuildBookBankDB
     _G.DysbankMemoryAPI = { schemaVersion = 1 }
     local function record(name, realm, tabCount)
         local tabs = {}
@@ -2068,7 +2068,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     end
     local characterBank = record("Alice", "Silvermoon", 12)
     local guildBank = record("Testers", "Silvermoon", 2)
-    _G.DysbankMemoryDB = {
+    _G.TheGuildBookBankDB = {
         schemaVersion = 1,
         characters = { [characterBank.identity.key] = characterBank },
         guilds = { [guildBank.identity.key] = guildBank },
@@ -2128,7 +2128,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     local refreshed = record("Alice", "Silvermoon", 12)
     refreshed.capturedAt = 1700000500
     refreshed.tabs[1].capturedAt = refreshed.capturedAt
-    _G.DysbankMemoryDB.characters[refreshed.identity.key] = refreshed
+    _G.TheGuildBookBankDB.characters[refreshed.identity.key] = refreshed
     _G.GuildGearMemoryBankChanged()
 
     T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
@@ -2143,9 +2143,9 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     local changedWhileHidden = record("Alice", "Silvermoon", 12)
     changedWhileHidden.capturedAt = 1700000600
     changedWhileHidden.tabs[1].capturedAt = changedWhileHidden.capturedAt
-    _G.DysbankMemoryDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
+    _G.TheGuildBookBankDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
     local addedWhileHidden = record("Beatrice", "Silvermoon", 1)
-    _G.DysbankMemoryDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
+    _G.TheGuildBookBankDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
     T.assertFalse(_G.GuildGearMemoryBankChanged(), "hidden Bank page should defer its visible refresh")
     GGM.ShowGuildGearBrowserWindow(api, frame.db)
 
@@ -2162,15 +2162,15 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
 
     page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
     T.assertTrue(tooltip.visible)
-    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = nil, nil
+    _G.DysbankMemoryAPI, _G.TheGuildBookBankDB = nil, nil
     _G.GuildGearMemoryBankChanged()
     T.assertEqual(page.tabStatus.text, "", "missing companion should clear the previously selected tab status")
     T.assertNil(page.selectedTabID)
     T.assertNil(page.selectedSlotID)
     T.assertFalse(tooltip.visible, "missing companion should close a tooltip from the previous snapshot")
-    T.assertTrue(page.slotsEmpty.text:find("_retail_/Interface/AddOns/DysbankMemory", 1, true) ~= nil,
+    T.assertTrue(page.slotsEmpty.text:find("_retail_/Interface/AddOns/The Guild Book Bank", 1, true) ~= nil,
         "missing companion state should include its installation path")
-    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = previousAPI, previousDB
+    _G.DysbankMemoryAPI, _G.TheGuildBookBankDB = previousAPI, previousDB
 end)
 
 T.test("paper doll layout uses the requested left right and bottom slot order", function()

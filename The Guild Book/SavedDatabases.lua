@@ -58,7 +58,7 @@ local function runtimeDatabase(professions, gear, gearErr)
 end
 
 function GGM.InitializeSavedDatabases(api)
-    local professions = api.GuildGearMemoryDB
+    local professions = api.TheGuildBookDB
     if professions == nil then
         local err
         professions, err = GGM.InitializeDatabase(nil)

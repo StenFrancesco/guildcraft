@@ -1,9 +1,9 @@
 ## Interface: 120000, 16001
-## Title: Dysgear Memory
-## Notes: Gear capture, storage, and synchronization backend for Guild Gear Memory
-## Author: Guild Gear Memory contributors
+## Title: The Guild Book gear
+## Notes: Gear capture, storage, and synchronization backend for The Guild Book
+## Author: The Guild Book contributors
 ## Version: 1.1.0
-## SavedVariables: DysgearMemoryDB
+## SavedVariables: TheGuildBookGearDB
 
 Libs/ChatThrottleLib/ChatThrottleLib.lua
 

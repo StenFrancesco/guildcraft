@@ -19,7 +19,7 @@
 
 ## Task 1: Request-driven bounded peer correctness
 
-Files: GuildGearMemory/ProfessionSync.lua, tests/profession_sync_test.lua, tests/main_test.lua (if lifecycle expectations require it), README.md.
+Files: The Guild Book/ProfessionSync.lua, tests/profession_sync_test.lua, tests/main_test.lua (if lifecycle expectations require it), README.md.
 
 - [x] Add an end-to-end failing regression with an offline crafter: Alice and requester have capture 1700000001 and recipes {3,8}, Bob has 1700000002 and {3,8,9}. Only the requester calls manual sync; its final snapshot must equal Bob's original timestamp and membership. Confirmed red before production edits: 60 passed / 1 failed, requester retained 1700000001.
 - [x] Also retain the older-Alice variant (1700000000 and {3}) as coverage. Investigation showed an older first peer can sometimes reach Bob through change-triggered notices; equal-first-peer is the proven blind spot.

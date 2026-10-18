@@ -3,8 +3,8 @@ local T = require("tests.testlib")
 local function load()
     local G = {}
     for _, file in ipairs({ "Constants", "ProfessionSnapshot", "ProfessionIndex", "Storage", "ProfessionSyncData" }) do
-        if file ~= "ProfessionSyncData" or io.open("GuildGearMemory/ProfessionSyncData.lua", "r") then
-            T.loadAddonFile("GuildGearMemory/" .. file .. ".lua", G)
+        if file ~= "ProfessionSyncData" or io.open("The Guild Book/ProfessionSyncData.lua", "r") then
+            T.loadAddonFile("The Guild Book/" .. file .. ".lua", G)
         end
     end
     return G

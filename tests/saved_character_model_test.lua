@@ -2,7 +2,7 @@ local T = require("tests.testlib")
 
 local function loadModel()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
+    T.loadAddonFile("The Guild Book/SavedCharacterModel.lua", GGM)
     return GGM
 end
 

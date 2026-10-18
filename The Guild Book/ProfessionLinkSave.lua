@@ -289,7 +289,7 @@ function GGM.CreateProfessionSaveButton(controller)
         if not api.GameTooltip then return end
         api.GameTooltip:SetOwner(self, "ANCHOR_TOP")
         if type(api.GameTooltip.SetText) == "function" then
-            api.GameTooltip:SetText("Save to Guild Gear Memory")
+            api.GameTooltip:SetText("Save to The Guild Book")
             if type(api.GameTooltip.AddLine) == "function" then
                 api.GameTooltip:AddLine("Stores the currently visible recipes as a last-known profession snapshot.", 0.72, 0.74, 0.78, true)
             end
@@ -303,7 +303,7 @@ function GGM.CreateProfessionSaveButton(controller)
     button:SetScript("OnClick", function()
         local result, err = GGM.SaveActiveLinkedProfession(controller)
         if result == "saved" then
-            setStatus(controller, "Guild Gear Memory  •  snapshot saved", "success")
+            setStatus(controller, "The Guild Book  •  snapshot saved", "success")
         else
             setStatus(controller, "Save failed: " .. tostring(err or "unavailable"), "warning")
         end
@@ -341,9 +341,9 @@ function GGM.RefreshProfessionSaveButton(controller)
     local validContext = linked == true or (linked == false and controller.activeSource == "player")
     if linkedOk and validContext and readyOk and ready == true then
         if controller.activeSource == "player" then
-            setStatus(controller, "Guild Gear Memory  •  personal profession  •  last-known recipes")
+            setStatus(controller, "The Guild Book  •  personal profession  •  last-known recipes")
         else
-            setStatus(controller, "Guild Gear Memory  •  guild profession  •  last-known recipes")
+            setStatus(controller, "The Guild Book  •  guild profession  •  last-known recipes")
         end
         controller.button:Show()
         return "shown"
