@@ -653,6 +653,28 @@ local function parseRecord(sync, session, body)
     return record
 end
 
+local COMPARISON_PRIORITY = { save = 1, selection = 2, manual = 3 }
+local function yieldUnselectedComparison(sync, sender, reason)
+    local session = sync.active
+    if not session or session.finished or session.initiator ~= sync.selfKey or session.selected then return end
+    local incoming, current = COMPARISON_PRIORITY[reason], COMPARISON_PRIORITY[session.reason]
+    if not incoming or not current or incoming < current
+        or (incoming == current and sender > sync.selfKey) then return end
+    -- Simultaneous queries otherwise leave both initiators busy and unable to
+    -- claim either comparison. Manual work wins, then the canonical sender key.
+    -- Only yield before peer selection, when no record transfers have started.
+    if session.operation and sync.manualOperation == session.operation then
+        session.operation.uncertain = true
+        finishManualOperation(sync, session.operation, "Catch-up needed")
+    else
+        session.finished = true
+        sync.sessions[sessionKey(session.initiator, session.id)] = nil
+        sync.active = nil
+        notify(sync, session.professionID, "Catch-up needed")
+    end
+    return true
+end
+
 local function logical(sync, payload, rawSender, channel)
     if not safe(sync) then return "ignored" end
     local sender = key(rawSender)
@@ -698,6 +720,10 @@ local function logical(sync, payload, rawSender, channel)
         local cooldownKey = sender .. ":" .. professionID
         if (sync.peerCooldowns[cooldownKey] or -COOLDOWN) + COOLDOWN > now(sync) then return "ignored" end
         local preferredPeer = bits[4] ~= "" and bits[4] or nil
+        local yielded
+        if not preferredPeer or preferredPeer == sync.selfKey then
+            yielded = yieldUnselectedComparison(sync, sender, bits[2])
+        end
         local cannotRespond = (preferredPeer and preferredPeer ~= sync.selfKey) or sync.active or sync.manualOperation
         acceptPeerMessage(sync, sender)
         sync.peerCooldowns[cooldownKey] = now(sync)
@@ -717,11 +743,16 @@ local function logical(sync, payload, rawSender, channel)
         if not rows or not digest then return "observing" end
         local session = createSession(sync, sender, id, professionID, bits[1], bits[2], bits[3], preferredPeer)
         if not session then return "observing" end
+        -- Reserve the comparison we yielded to, including its response window.
+        -- Pending work must not occupy the slot before selection arrives.
+        if yielded then sync.active = session end
         local order = 0
         for candidate in pairs(sync.senders) do if candidate < sync.selfKey then order = order + 1 end end
         timer(sync, 1 + order * CLAIM_SLOT_SECONDS, function()
-            if session.finished or session.selected or sync.active then return end
-            if #sync.transport.outboundFrames > 0 then return end
+            if session.finished or session.selected or (sync.active and sync.active ~= session) then return end
+            -- A yielded query can still be waiting in CTL. Queue this one
+            -- response behind it instead of silently missing the claim window.
+            if #sync.transport.outboundFrames > 0 and not yielded then return end
             if next(session.claims) then return end
             session.claims[sync.selfKey] = digest
             send(sync, "C", sender, id, professionID, sender .. ";" .. digest)
@@ -746,7 +777,7 @@ local function logical(sync, payload, rawSender, channel)
         acceptPeerMessage(sync, sender)
         session.selected = recipient
         if recipient == sync.selfKey then
-            if sync.active then return "ignored" end
+            if sync.active and sync.active ~= session then return "ignored" end
             sync.active = session
             notify(sync, professionID, "Comparing cached data")
             sendManifest(sync, session)
@@ -1036,7 +1067,12 @@ local function startProfessionComparison(sync, professionID, reason, preferredPe
             if session.finished or sync.active ~= session then return end
             local chosen
             for candidate in pairs(session.claims) do if not chosen or candidate < chosen then chosen = candidate end end
-            if not chosen then finish(sync, session, "Sync unavailable"); return end
+            if not chosen then
+                sync.lastError = "profession-sync-no-responder"
+                finish(sync, session, "Sync unavailable")
+                return
+            end
+            sync.lastError = nil
             session.selected = chosen
             if session.claims[chosen] == digest and GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members) == digest then
                 send(sync, "F", "*", id, professionID, "Cache hashes match")

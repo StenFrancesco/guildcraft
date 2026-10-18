@@ -592,6 +592,24 @@ T.test("profession sync UI is silent while hidden and offers selected automatic 
     T.assertEqual(calls[3].reason, "manual")
 end)
 
+T.test("profession sync status has an opaque backing and readable text contrast", function()
+    local G = loadUI()
+    local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
+    T.assertNotNil(frame.professionSyncStatusBackground, "sync status needs a backing over the busy hero artwork")
+    local background = frame.professionSyncStatusBackground.color
+    T.assertNotNil(background)
+    T.assertEqual(background[4], 1, "artwork must not show through the status backing")
+    local function luminance(color)
+        local function linear(value)
+            return value <= 0.04045 and value / 12.92 or ((value + 0.055) / 1.055) ^ 2.4
+        end
+        return 0.2126 * linear(color[1]) + 0.7152 * linear(color[2]) + 0.0722 * linear(color[3])
+    end
+    local a, b = luminance(background), luminance(frame.professionSyncStatus.textColor)
+    T.assertTrue((math.max(a, b) + 0.05) / (math.min(a, b) + 0.05) >= 4.5,
+        "small sync status text must retain at least 4.5:1 contrast")
+end)
+
 T.test("character content stays within the journal's painted page borders", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
@@ -2008,6 +2026,34 @@ T.test("gear requests print readable failures and usage without opening the brow
         T.assertEqual(messages[1], case.expected)
         T.assertEqual(GGM.lastSyncError, case.err)
     end
+end)
+
+T.test("status reports profession startup roster and transport failures without a database", function()
+    local G = loadUI()
+    local messages = {}
+    local api = { SlashCmdList = {}, print = function(message) messages[#messages + 1] = message end }
+    G.RegisterSnapshotTestSlashCommand(api)
+    G.lastProfessionSyncError = "profession-prefix-register-failed:MaxPrefixes"
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Profession sync: unavailable (GC_PROF3)", 1, true) ~= nil)
+    T.assertTrue(output:find("profession-prefix-register-failed:MaxPrefixes", 1, true) ~= nil)
+    messages = {}
+    G.professionSync = { registered = true, rosterReady = true,
+        lastError = "profession-sync-no-responder", transport = {} }
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Profession roster: ready", 1, true) ~= nil)
+    T.assertTrue(output:find("Profession sync error: profession-sync-no-responder", 1, true) ~= nil)
+    messages = {}
+    G.professionSync.rosterReady = false
+    G.lastProfessionIndexError = "profession-roster-incomplete"
+    G.professionSync.transport.lastSendError = "profession-send-addon-message-failed:NotInGuild"
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Profession roster: not ready", 1, true) ~= nil)
+    T.assertTrue(output:find("Profession roster error: profession-roster-incomplete", 1, true) ~= nil)
+    T.assertTrue(output:find("Profession sync error: profession-send-addon-message-failed:NotInGuild", 1, true) ~= nil)
 end)
 
 T.test("gear sync status reports prefix availability and async errors even without database", function()

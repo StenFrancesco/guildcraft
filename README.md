@@ -38,6 +38,14 @@ status reports how many peer caches matched or were compared; it does not claim
 agreement across the guild. If more than four peers are eligible, a later manual
 request rotates to another bounded candidate window. Unavailable peers, a
 reached limit, or incomplete evidence leave the status at **Catch-up needed**.
+When comparisons start simultaneously, a manual request takes precedence over
+an automatic comparison; ties use the normalized character name and realm.
+The other initiator yields before peer selection so it can answer the winning
+request. An interrupted manual operation remains **Catch-up needed** until a
+later comparison completes. Exchanges already transferring records finish first.
+If no peer answers within the response window, `/ggm status` reports
+`profession-sync-no-responder`. The command also reports profession registration,
+roster readiness, and send errors on each client.
 Legacy login and background hashes are cached as hints, while legacy periodic
 queries receive no response.
 

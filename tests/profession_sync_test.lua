@@ -99,6 +99,141 @@ local function guild()
     return bus
 end
 
+T.test("tailor can manually receive engineering from the only other online guild member", function()
+    local bus = guild()
+    local tailor, engineer = bus:client("Tailor"), bus:client("Engineer")
+    local function save(client, professionID, professionName, recipeID)
+        assert(client.G.SaveProfessionSnapshot(client.db, client.identity, {
+            complete = true, professionID = professionID, professionName = professionName,
+            recipes = { { recipeID = recipeID, name = professionName .. " recipe" } },
+            source = client.G.PROFESSION_SOURCE_PLAYER, status = "cached", capturedAt = 1700000000,
+        }, { guildMembershipVerified = true }))
+    end
+    save(tailor, 197, "Tailoring", 1001)
+    save(engineer, 202, "Engineering", 1002)
+    tailor:ready(); engineer:ready()
+    T.assertTrue(tailor.G.RequestProfessionSync(tailor.sync, 202, "selection"))
+    local ok, err = tailor.G.RequestProfessionSync(tailor.sync, 202, "manual")
+    T.assertFalse(ok)
+    T.assertEqual(err, "profession-sync-busy")
+    bus:advance(60)
+    local received = assert(tailor.G.GetProfessionSyncRecord(tailor.db, engineer.identity.guid, 202))
+    T.assertEqual(received.recipes[1].recipeID, 1002)
+    T.assertTrue(tailor.G.RequestProfessionSync(tailor.sync, 202, "manual"))
+    bus:advance(60)
+    T.assertEqual(tailor.G.GetProfessionSyncStatus(tailor.sync, 202), "Matched 1 peer cache")
+    T.assertNotNil(tailor.G.GetProfessionSyncRecord(tailor.db, tailor.identity.guid, 197))
+end)
+
+T.test("simultaneous profession comparisons elect one initiator and still exchange recipes", function()
+    for _, reasons in ipairs({ { "selection", "selection" }, { "selection", "manual" },
+        { "manual", "selection" }, { "manual", "manual" } }) do
+        for _, firstName in ipairs({ "Alice", "Zelda" }) do
+            local bus = guild()
+            local a, b = bus:client(firstName), bus:client("Bob")
+            a:save(a.identity, { 3, 8 })
+            a:ready(); b:ready()
+            T.assertTrue(a.G.RequestProfessionSync(a.sync, 164, reasons[1]))
+            T.assertTrue(b.G.RequestProfessionSync(b.sync, 164, reasons[2]))
+            bus:advance(120)
+            local received = b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164)
+            T.assertNotNil(received, reasons[1] .. "/" .. reasons[2] .. " collision lost the comparison")
+            T.assertEqual(#received.recipes, 2)
+            T.assertEqual(bus:count("Q"), 2, "collision handling must not create retries")
+            T.assertEqual(bus:count("C"), 1, "only one initiator should win")
+            local frames = #bus.frames
+            bus:advance(1800)
+            T.assertEqual(#bus.frames, frames)
+        end
+    end
+end)
+
+T.test("manual profession comparison can reach a peer comparing a different profession", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3, 8 }); a:ready(); b:ready()
+    T.assertTrue(a.G.RequestProfessionSync(a.sync, 202, "selection"))
+    T.assertTrue(b.G.RequestProfessionSync(b.sync, 164, "manual"))
+    bus:advance(120)
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+end)
+
+T.test("collision arbitration never preempts selected initiators or responders", function()
+    local bus = guild()
+    local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    b:save(b.identity, { 3, 8 }); a:ready(); b:ready(); c:ready()
+    local original, resume = a.api.ChatThrottleLib.SendAddonMessage, nil
+    a.api.ChatThrottleLib.SendAddonMessage = function(...)
+        local args = { ... }
+        if args[4]:find("P3|M|", 1, true) then
+            resume = function() original(unpack(args)) end
+            return
+        end
+        return original(...)
+    end
+    T.assertTrue(a.G.RequestProfessionSync(a.sync, 164, "selection"))
+    bus:advance(28)
+    T.assertNotNil(resume)
+    local initiator, responder = a.sync.active, b.sync.active
+    T.assertNotNil(initiator.selected)
+    T.assertEqual(responder.selected, b.sync.selfKey)
+    T.assertTrue(c.G.RequestProfessionSync(c.sync, 202, "manual"))
+    bus:advance(1)
+    T.assertEqual(a.sync.active, initiator)
+    T.assertEqual(b.sync.active, responder)
+    T.assertTrue(not initiator.finished)
+    T.assertTrue(not responder.finished)
+    a.api.ChatThrottleLib.SendAddonMessage = original
+    resume()
+    bus:advance(120)
+    T.assertNotNil(a.G.GetProfessionSyncRecord(a.db, b.identity.guid, 164))
+end)
+
+T.test("yielded manual sync reserves its response slot ahead of queued comparisons", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3, 8 }); a:ready(); b:ready()
+    T.assertTrue(a.G.RequestProfessionSync(a.sync, 164, "manual"))
+    T.assertTrue(b.G.RequestProfessionSync(b.sync, 164, "manual"))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    bus:advance(30)
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+    T.assertTrue(bus:count("C") >= 1)
+end)
+
+T.test("yielded profession sync queues its claim behind a throttled abandoned query", function()
+    for _, reason in ipairs({ "selection", "manual" }) do
+        local bus = guild()
+        local a, b = bus:client("Alice"), bus:client("Bob")
+        a:save(a.identity, { 3, 8 }); a:ready(); b:ready()
+        local original, delayed = b.api.ChatThrottleLib.SendAddonMessage, false
+        b.api.ChatThrottleLib.SendAddonMessage = function(...)
+            local args = { ... }
+            if not delayed then
+                delayed = true
+                b.api.C_Timer.NewTimer(2, function() original(unpack(args)) end)
+                return
+            end
+            return original(...)
+        end
+        T.assertTrue(a.G.RequestProfessionSync(a.sync, 164, reason))
+        T.assertTrue(b.G.RequestProfessionSync(b.sync, 164, reason))
+        bus:advance(30)
+        T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+        T.assertEqual(bus:count("C"), 1)
+        T.assertEqual(bus:count("Q"), 2)
+    end
+end)
+
+T.test("unanswered profession query records a diagnostic distinct from startup failure", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready(); a.drop = true
+    T.assertTrue(b.G.RequestProfessionSync(b.sync, 164, "selection"))
+    bus:advance(30)
+    T.assertEqual(b.sync.lastError, "profession-sync-no-responder")
+end)
+
 local function receiveLegacyAnnouncement(sender, receiver, reason)
     local digest = assert(sender.G.GetProfessionSyncDigest(sender.db, 164, sender.sync.members))
     local payload = "P3|A|*|123-1|0|164," .. digest .. "," .. reason

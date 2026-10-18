@@ -1036,7 +1036,12 @@ local function createProfessionsPage(api, frame)
     frame.professionSyncStatus:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -151)
     frame.professionSyncStatus:SetWidth(360)
     frame.professionSyncStatus:SetJustifyH("RIGHT")
-    setTextColor(frame.professionSyncStatus, THEME.textSoft)
+    setTextColor(frame.professionSyncStatus, THEME.text)
+    -- Keep feedback readable over both light parchment and dark hero details.
+    frame.professionSyncStatusBackground = panel:CreateTexture(nil, "ARTWORK")
+    frame.professionSyncStatusBackground:SetPoint("TOPLEFT", frame.professionSyncStatus, "TOPLEFT", -8, 4)
+    frame.professionSyncStatusBackground:SetPoint("BOTTOMRIGHT", frame.professionSyncStatus, "BOTTOMRIGHT", 8, -4)
+    frame.professionSyncStatusBackground:SetColorTexture(THEME.panel[1], THEME.panel[2], THEME.panel[3], 1)
 
     frame.professionRecipeHeading = createText(panel, "OVERLAY", "GameFontNormal")
     GGM.ApplyJournalFont(frame.professionRecipeHeading, 17, "bold")
@@ -1879,6 +1884,14 @@ end
 local function printAddonStatus(api)
     local emit = chatEmitter(api)
     emit("The Guild Book status:")
+    local professionSync = GGM.professionSync
+    local professionTransport = professionSync and professionSync.transport
+    emit("Profession sync: " .. (professionSync and professionSync.registered and "registered" or "unavailable") .. " (GC_PROF3)")
+    emit("Profession roster: " .. (professionSync and professionSync.rosterReady and "ready" or "not ready"))
+    local professionError = professionTransport and professionTransport.lastSendError
+        or professionSync and professionSync.lastError or GGM.lastProfessionSyncError
+    emit("Profession sync error: " .. tostring(professionError or "none"))
+    emit("Profession roster error: " .. tostring(GGM.lastProfessionIndexError or "none"))
     local transport = GGM.guildSync and GGM.guildSync.transport
     emit("Gear sync: " .. (GGM.guildSync and "registered" or "unavailable") .. " (" .. GGM.SYNC_PREFIX .. ")")
     local sendErr = transport and transport.lastSendError or GGM.lastSyncError
