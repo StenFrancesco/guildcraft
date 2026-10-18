@@ -52,11 +52,11 @@ T.test("schema version is seven and protocol version stays five", function()
     T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
 end)
 
-T.test("profession recipe index version is three", function()
+T.test("profession recipe index version is four", function()
     local GGM = {}
     T.loadAddonFile("The Guild Book/Constants.lua", GGM)
     T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
-    T.assertEqual(GGM.PROFESSION_RECIPE_INDEX_VERSION, 3)
+    T.assertEqual(GGM.PROFESSION_RECIPE_INDEX_VERSION, 4)
 end)
 
 T.test("profession snapshot limits are conservative", function()

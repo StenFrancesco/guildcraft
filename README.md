@@ -26,6 +26,17 @@ WoW writes account-wide SavedVariables under `WTF/Account/<account>/SavedVariabl
 
 If The Guild Book gear is missing, disabled, or has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Back up SavedVariables with WoW closed before manually resetting any database.
 
+Recipe storage uses full character GUIDs. For example, `professionRecipeIndex[164][41234]` contains:
+
+```lua
+{
+    name = "Copper Bracers",
+    crafters = { "Player-1303-01234567", "Player-1303-89ABCDEF" },
+}
+```
+
+`professionCharacters` is also keyed by GUID. Recipe index version 4 automatically migrates valid version 3 numeric IDs on load, then removes the old GUID-to-local-ID map and ID counter. Ambiguous or damaged mappings leave the saved data intact and report an unavailable index instead of guessing recipe ownership. WoW persists the migrated format on normal logout or UI reload.
+
 Run the regression suite with Lua 5.1 using `lua tests/run.lua`. In this workspace, the local Lua 5.1 runtime can be used with `./tools/lua/lua.exe tests/run.lua`.
 
 The Professions tab shares complete last-known recipe snapshots with guild

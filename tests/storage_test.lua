@@ -52,7 +52,7 @@ T.test("database initialization creates schema seven with GUID ownership state",
     T.assertEqual(type(db.localCharacterGUIDs), "table")
     T.assertNil(next(db.localCharacterGUIDs))
     T.assertEqual(type(db.professions), "table")
-    T.assertEqual(db.professionRecipeIndexVersion, 3)
+    T.assertEqual(db.professionRecipeIndexVersion, 4)
 end)
 
 T.test("schema four is rejected without mutating the old database", function()
@@ -790,7 +790,7 @@ T.test("saving a profession capture stores metadata only and catalogs recipes", 
     T.assertEqual(saved.source, GGM.PROFESSION_SOURCE_PLAYER)
     T.assertEqual(saved.status, GGM.PROFESSION_CACHE_STATUS)
 
-    local localID = db.localCharacterIDByGUID[identity.guid]
+    local localID = (db.professionCharacters[identity.guid] and identity.guid)
     local recipe = db.professionRecipeIndex[164][100]
     T.assertEqual(recipe.name, "Copper Bracers")
     T.assertEqual(#recipe.crafters, 1)
@@ -813,7 +813,7 @@ T.test("invalid profession refresh preserves membership and last complete metada
         recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
     assert(GGM.SaveProfessionSnapshot(db, identity, complete))
-    local localID = db.localCharacterIDByGUID[identity.guid]
+    local localID = (db.professionCharacters[identity.guid] and identity.guid)
 
     local incomplete = {
         complete = false,
@@ -888,7 +888,7 @@ T.test("re-saving the same profession replaces that profession snapshot predicta
     local record = GGM.GetProfessionRecord(db, identity.key)
     T.assertEqual(record.snapshots[164].capturedAt, 1700005000)
     T.assertNil(record.snapshots[164].recipes)
-    local localID = db.localCharacterIDByGUID[identity.guid]
+    local localID = (db.professionCharacters[identity.guid] and identity.guid)
     T.assertNil(db.professionRecipeIndex[164][100])
     local recipe = db.professionRecipeIndex[164][300]
     T.assertEqual(recipe.name, "Iron Buckle")
@@ -975,7 +975,7 @@ T.test("saving a profession snapshot updates only that profession membership", f
     }
 
     assert(GGM.SaveProfessionSnapshot(db, identity, blacksmithing))
-    local localID = db.localCharacterIDByGUID[identity.guid]
+    local localID = (db.professionCharacters[identity.guid] and identity.guid)
     T.assertFalse(db.professionCharacters[localID].active)
     T.assertNotNil(db.professionRecipeIndex[164])
     assert(GGM.SetProfessionCharacterActive(db, localID, true))
@@ -1014,8 +1014,8 @@ T.test("two characters may share one profession recipe bucket", function()
     assert(GGM.SaveProfessionSnapshot(db, bob, snapshot, { guildMembershipVerified = true }))
 
     local recipe = db.professionRecipeIndex[171][300]
-    local aliceID = db.localCharacterIDByGUID[alice.guid]
-    local bobID = db.localCharacterIDByGUID[bob.guid]
+    local aliceID = (db.professionCharacters[alice.guid] and alice.guid)
+    local bobID = (db.professionCharacters[bob.guid] and bob.guid)
     T.assertEqual(recipe.name, "Potion")
     T.assertEqual(#recipe.crafters, 2)
     T.assertEqual(recipe.crafters[1], aliceID)
@@ -1046,8 +1046,8 @@ T.test("two complete snapshots share one catalog recipe and store no duplicate r
     assert(GGM.SaveProfessionSnapshot(db, bob, capture))
 
     local recipe = db.professionRecipeIndex[171][2330]
-    local aliceID = db.localCharacterIDByGUID[alice.guid]
-    local bobID = db.localCharacterIDByGUID[bob.guid]
+    local aliceID = (db.professionCharacters[alice.guid] and alice.guid)
+    local bobID = (db.professionCharacters[bob.guid] and bob.guid)
 
     T.assertEqual(recipe.name, "Minor Healing Potion")
     T.assertEqual(#recipe.crafters, 2)
@@ -1070,7 +1070,7 @@ T.test("a local-player save cannot reactivate a departed profession character", 
         recipes = { { recipeID = 100, name = "Copper Bracers" } },
     }
     assert(GGM.SaveProfessionSnapshot(db, identity, snapshot, { guildMembershipVerified = true }))
-    local localID = db.localCharacterIDByGUID[identity.guid]
+    local localID = (db.professionCharacters[identity.guid] and identity.guid)
     assert(GGM.SetProfessionCharacterActive(db, localID, false))
     snapshot.capturedAt = 2
     assert(GGM.SaveProfessionSnapshot(db, identity, snapshot))
@@ -1109,7 +1109,7 @@ T.test("profession save requires a GUID and legacy guidless records stay readabl
     }
     local record = assert(GGM.GetProfessionRecord(db, legacyIdentity.key))
     T.assertNotNil(record.snapshots[164])
-    T.assertNil(db.localCharacterIDByGUID[legacyIdentity.guid])
+    T.assertNil((db.professionCharacters[legacyIdentity.guid] and legacyIdentity.guid))
 end)
 
 T.test("verified same-GUID rename moves the canonical profession record and preserves other professions", function()
@@ -1157,7 +1157,7 @@ T.test("verified same-GUID rename merges disjoint profession records", function(
         recipes = { { recipeID = 300, name = "Potion" } },
     }
     assert(GGM.SaveProfessionSnapshot(db, oldIdentity, first, { guildMembershipVerified = true }))
-    local localID = db.localCharacterIDByGUID[oldIdentity.guid]
+    local localID = (db.professionCharacters[oldIdentity.guid] and oldIdentity.guid)
     assert(GGM.ReconcileProfessionRecipeMembership(db, localID, second))
     db.professions["Alicia-Silvermoon"] = {
         identity = { key = "Alicia-Silvermoon", name = "Alicia", realm = "Silvermoon", guid = oldIdentity.guid },
@@ -1178,7 +1178,7 @@ T.test("verified same-GUID rename merges disjoint profession records", function(
     T.assertNotNil(db.professions[renamed.key].snapshots[164])
     T.assertNotNil(db.professions[renamed.key].snapshots[171])
     local recipe = db.professionRecipeIndex[171][300]
-    local localID = db.localCharacterIDByGUID[oldIdentity.guid]
+    local localID = (db.professionCharacters[oldIdentity.guid] and oldIdentity.guid)
     T.assertEqual(#recipe.crafters, 1)
     T.assertEqual(recipe.crafters[1], localID)
 end)
@@ -1210,7 +1210,7 @@ T.test("same-GUID rename with overlapping profession snapshots fails without mut
     T.assertTrue(db.professionIndexRepairNeeded)
     T.assertNotNil(db.professions[oldIdentity.key])
     T.assertNotNil(db.professions[renamed.key])
-    T.assertEqual(db.professionCharacters[db.localCharacterIDByGUID[oldIdentity.guid]].key, oldIdentity.key)
+    T.assertEqual(db.professionCharacters[(db.professionCharacters[oldIdentity.guid] and oldIdentity.guid)].key, oldIdentity.key)
     T.assertEqual(db.professions[oldIdentity.key].snapshots[164].capturedAt, 1)
 end)
 
@@ -1229,7 +1229,7 @@ T.test("rename never overwrites a different GUID at the destination key", functi
         alice, snapshot, { guildMembershipVerified = true }))
     assert(GGM.SaveProfessionSnapshot(db,
         bob, snapshot, { guildMembershipVerified = true }))
-    local aliceID, bobID = db.localCharacterIDByGUID[alice.guid], db.localCharacterIDByGUID[bob.guid]
+    local aliceID, bobID = (db.professionCharacters[alice.guid] and alice.guid), (db.professionCharacters[bob.guid] and bob.guid)
     local aliceRecord, bobRecord = db.professions[alice.key], db.professions[bob.key]
     local characters, reverseMap = db.professionCharacters, db.localCharacterIDByGUID
     local index = db.professionRecipeIndex
@@ -1247,8 +1247,8 @@ T.test("rename never overwrites a different GUID at the destination key", functi
     T.assertEqual(db.professions[bob.key].identity.guid, bob.guid)
     T.assertTrue(db.professionCharacters == characters)
     T.assertTrue(db.localCharacterIDByGUID == reverseMap)
-    T.assertEqual(db.localCharacterIDByGUID[alice.guid], aliceID)
-    T.assertEqual(db.localCharacterIDByGUID[bob.guid], bobID)
+    T.assertEqual((db.professionCharacters[alice.guid] and alice.guid), aliceID)
+    T.assertEqual((db.professionCharacters[bob.guid] and bob.guid), bobID)
     T.assertEqual(db.professionCharacters[aliceID].key, alice.key)
     T.assertEqual(db.professionCharacters[bobID].key, bob.key)
     T.assertTrue(db.professionRecipeIndex == index)

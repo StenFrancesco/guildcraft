@@ -227,7 +227,7 @@ T.test("profession saves and index updates through the runtime view persist in m
     }
     local saved, saveErr = GGM.SaveProfessionSnapshot(runtime, identity, snapshot, { guildMembershipVerified = true })
     T.assertTrue(saved, saveErr)
-    T.assertEqual(professions.nextLocalCharacterID, 2)
+    T.assertNil(professions.nextLocalCharacterID)
     T.assertEqual(professions.professionRecipeIndex[164][41234].name, "Copper Bracers")
     T.assertNotNil(professions.professions[identity.key])
     T.assertNil(gear.professions)
