@@ -4,7 +4,7 @@ local function gearUnavailableMessage(db)
     local reason = type(db) == "table" and db.gearUnavailableReason or nil
     if not reason then return nil end
     if reason == "gear-companion-missing" then
-        return "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+        return "Install and enable The Guild Book gear beside The Guild Book to save and view gear."
     end
     if type(reason) == "string" and reason:match("^gear%-backend%-") then
         return "Gear backend unavailable. Check /ggm status for details."
@@ -309,24 +309,24 @@ local THEME = {
 }
 
 local JOURNAL_TEXTURES = {
-    parchment = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\parchment.tga",
-    leather = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\leather.tga",
-    button = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button.tga",
-    professionButton = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button-framed.tga",
-    window = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-window.tga",
-    professionMask = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-page-mask.tga",
-    armory = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\character-armory-vignette.tga",
-    gearPage = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\gear-journal-page.tga",
-    font = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif.ttf",
-    boldFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
-    italicFont = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\journal-serif-italic.ttf",
+    parchment = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\parchment.tga",
+    leather = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leather.tga",
+    button = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button.tga",
+    professionButton = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button-framed.tga",
+    window = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-window.tga",
+    professionMask = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-page-mask.tga",
+    armory = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\character-armory-vignette.tga",
+    gearPage = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\gear-journal-page.tga",
+    font = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif.ttf",
+    boldFont = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
+    italicFont = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif-italic.ttf",
     professions = {
-        Alchemy = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\alchemy-page.tga",
-        Blacksmithing = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\blacksmithing-page.tga",
-        Enchanting = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\enchanting-page.tga",
-        Engineering = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\engineering-page.tga",
-        Leatherworking = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\leatherworking-page.tga",
-        Tailoring = "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\tailoring-page.tga",
+        Alchemy = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\alchemy-page.tga",
+        Blacksmithing = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\blacksmithing-page.tga",
+        Enchanting = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\enchanting-page.tga",
+        Engineering = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\engineering-page.tga",
+        Leatherworking = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leatherworking-page.tga",
+        Tailoring = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\tailoring-page.tga",
     },
 }
 GGM.UITheme = THEME
@@ -842,7 +842,41 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, selectedProfession.professionID, selectedProfession.key, frame.api)
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
     end
+    if frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
     return true
+end
+
+function GGM.SyncSelectedProfession(frame, manual)
+    if not frame or frame.activeTab ~= "Professions" then return false end
+    local professionID
+    for _, profession in ipairs(PROFESSIONS) do
+        if profession.key == frame.selectedProfession then professionID = profession.professionID; break end
+    end
+    if not professionID then return false end
+    frame.professionSyncSelections = frame.professionSyncSelections or {}
+    if not manual and frame.professionSyncSelections[professionID] then return false end
+    local ok, err = false, "profession-sync-unavailable"
+    if GGM.professionSync and type(GGM.RequestProfessionSync) == "function" then
+        ok, err = GGM.RequestProfessionSync(GGM.professionSync, professionID, manual and "manual" or "selection")
+    end
+    if ok and not manual then frame.professionSyncSelections[professionID] = true end
+    if frame.professionSyncStatus then
+        local status = GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, professionID) or "Sync unavailable"
+        if manual and not ok and (err == "profession-sync-cooldown" or err == "profession-sync-busy") then status = "Comparison pending or on cooldown" end
+        frame.professionSyncStatus:SetText(status)
+    end
+    return ok, err
+end
+
+function GGM.RefreshVisibleProfessionSyncStatus()
+    local frame = GGM.guildGearBrowserFrame
+    if not frame or frame.activeTab ~= "Professions" or not frame.professionSyncStatus then return end
+    for _, profession in ipairs(PROFESSIONS) do
+        if profession.key == frame.selectedProfession then
+            frame.professionSyncStatus:SetText(GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, profession.professionID) or "Sync unavailable")
+            return
+        end
+    end
 end
 
 local function createProfessionButton(api, sidebar, profession, offset)
@@ -966,7 +1000,7 @@ local function createProfessionsPage(api, frame)
     setTextColor(searchLabel, THEME.text)
     searchLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -156)
     frame.professionSearchBox = api.CreateFrame("EditBox", nil, panel)
-    frame.professionSearchBox:SetSize(400, 27)
+    frame.professionSearchBox:SetSize(310, 27)
     frame.professionSearchBox:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -177)
     frame.professionSearchBox:SetAutoFocus(false)
     frame.professionSearchBox:SetTextInsets(31, 8, 0, 0)
@@ -985,6 +1019,7 @@ local function createProfessionsPage(api, frame)
 
     frame.professionCount = createText(panel, "OVERLAY", "GameFontDisableSmall")
     frame.professionCount:SetPoint("LEFT", frame.professionSearchBox, "RIGHT", 14, 0)
+    frame.professionCount:SetWidth(130)
     setTextColor(frame.professionCount, THEME.textSoft)
     frame.professionStatus = createText(panel, "OVERLAY", "GameFontHighlight")
     GGM.ApplyJournalFont(frame.professionStatus, 13)
@@ -992,6 +1027,21 @@ local function createProfessionsPage(api, frame)
     frame.professionStatus:SetPoint("RIGHT", panel, "RIGHT", -18, 0)
     frame.professionStatus:SetJustifyH("LEFT")
     setTextColor(frame.professionStatus, THEME.textSoft)
+
+    frame.professionSyncButton = GGM.CreateFlatButton(api, panel, "Sync profession", 140, 27, "secondary")
+    frame.professionSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
+    frame.professionSyncButton:SetScript("OnClick", function() GGM.SyncSelectedProfession(frame, true) end)
+    frame.professionSyncStatus = createText(panel, "OVERLAY", "GameFontHighlightSmall")
+    GGM.ApplyJournalFont(frame.professionSyncStatus, 13)
+    frame.professionSyncStatus:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -151)
+    frame.professionSyncStatus:SetWidth(360)
+    frame.professionSyncStatus:SetJustifyH("RIGHT")
+    setTextColor(frame.professionSyncStatus, THEME.text)
+    -- Keep feedback readable over both light parchment and dark hero details.
+    frame.professionSyncStatusBackground = panel:CreateTexture(nil, "ARTWORK")
+    frame.professionSyncStatusBackground:SetPoint("TOPLEFT", frame.professionSyncStatus, "TOPLEFT", -8, 4)
+    frame.professionSyncStatusBackground:SetPoint("BOTTOMRIGHT", frame.professionSyncStatus, "BOTTOMRIGHT", 8, -4)
+    frame.professionSyncStatusBackground:SetColorTexture(THEME.panel[1], THEME.panel[2], THEME.panel[3], 1)
 
     frame.professionRecipeHeading = createText(panel, "OVERLAY", "GameFontNormal")
     GGM.ApplyJournalFont(frame.professionRecipeHeading, 17, "bold")
@@ -1135,7 +1185,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then return false end
     if selectedKey ~= "Professions" and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.activeTab = selectedKey
-    if frame.TitleText then frame.TitleText:SetText("Guild Gear Memory") end
+    if frame.TitleText then frame.TitleText:SetText("The Guild Book") end
 
     if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known guild equipment")
     elseif selectedKey == "Professions" then setPageHeader(frame, "Professions", "")
@@ -1156,6 +1206,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     local showCharacter = selectedKey == "Character"
     if selectedKey == "Professions" then
         frame.professionsPage:Show()
+        GGM.SyncSelectedProfession(frame, false)
         if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
             local profession
             for _, item in ipairs(PROFESSIONS) do if item.key == frame.selectedProfession then profession = item; break end end
@@ -1518,7 +1569,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.brandTitle = createText(frame.navigationRail, "OVERLAY", "GameFontNormalLarge")
     GGM.ApplyJournalFont(frame.brandTitle, 19, "bold")
     frame.brandTitle:SetPoint("TOPLEFT", frame.brandIconFrame, "TOPRIGHT", 10, -5)
-    frame.brandTitle:SetText("Guild Gear Memory")
+    frame.brandTitle:SetText("The Guild Book")
     setTextColor(frame.brandTitle, THEME.railGold)
 
     local navLabel = createSectionLabel(frame.navigationRail, "LIBRARY")
@@ -1766,6 +1817,18 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     return frame.detailModel
 end
 
+function GGM.RefreshVisibleGuildGearBrowser()
+    local frame = GGM.guildGearBrowserFrame
+    if not frame or type(frame.IsShown) ~= "function" or not frame:IsShown() then
+        return false
+    end
+    if type(GGM.ShowGuildGearBrowserWindow) ~= "function" or type(GGM.db) ~= "table" then
+        return false
+    end
+    GGM.ShowGuildGearBrowserWindow(frame.api, GGM.db)
+    return true
+end
+
 local function parseRequestedIdentity(message)
     if type(message) ~= "string" then
         return nil, nil
@@ -1820,7 +1883,15 @@ end
 
 local function printAddonStatus(api)
     local emit = chatEmitter(api)
-    emit("Guild Gear Memory status:")
+    emit("The Guild Book status:")
+    local professionSync = GGM.professionSync
+    local professionTransport = professionSync and professionSync.transport
+    emit("Profession sync: " .. (professionSync and professionSync.registered and "registered" or "unavailable") .. " (GC_PROF3)")
+    emit("Profession roster: " .. (professionSync and professionSync.rosterReady and "ready" or "not ready"))
+    local professionError = professionTransport and professionTransport.lastSendError
+        or professionSync and professionSync.lastError or GGM.lastProfessionSyncError
+    emit("Profession sync error: " .. tostring(professionError or "none"))
+    emit("Profession roster error: " .. tostring(GGM.lastProfessionIndexError or "none"))
     local transport = GGM.guildSync and GGM.guildSync.transport
     emit("Gear sync: " .. (GGM.guildSync and "registered" or "unavailable") .. " (" .. GGM.SYNC_PREFIX .. ")")
     local sendErr = transport and transport.lastSendError or GGM.lastSyncError
@@ -1830,19 +1901,19 @@ local function printAddonStatus(api)
     if GGM.gearStartupError then
         emit("Gear storage: unavailable (" .. tostring(GGM.gearStartupError) .. ")")
         if GGM.gearStartupError == "gear-companion-missing" then
-            emit("Install and enable DysgearMemory beside GuildGearMemory in Interface/AddOns.")
+            emit("Install and enable The Guild Book gear beside The Guild Book in Interface/AddOns.")
         elseif type(GGM.gearStartupError) == "string" and GGM.gearStartupError:match("^gear%-backend%-") then
-            emit("DysgearMemory could not provide a compatible gear backend (" .. GGM.gearStartupError
-                .. "). Check that DysgearMemory is enabled and up to date; saved gear was left unchanged.")
+            emit("The Guild Book gear could not provide a compatible gear backend (" .. GGM.gearStartupError
+                .. "). Check that The Guild Book gear is enabled and up to date; saved gear was left unchanged.")
         else
-            emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/DysgearMemory.lua (DysgearMemoryDB). Close WoW and back up that file before any manual reset.")
+            emit("Gear is stored separately in WTF/Account/<account>/SavedVariables/The Guild Book gear.lua (TheGuildBookGearDB). Close WoW and back up that file before any manual reset.")
         end
     end
     if GGM.startupError then
         emit("Database: unavailable (" .. tostring(GGM.startupError) .. ")")
         if type(GGM.startupError) == "string"
             and GGM.startupError:match("^unsupported%-schema%-version:%d+$") then
-            emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/GuildGearMemory.lua (or remove only its GuildGearMemoryDB global), then relaunch.")
+            emit("No automatic migration is available. Close WoW, back up and remove WTF/Account/<account>/SavedVariables/The Guild Book.lua (or remove only its TheGuildBookDB global), then relaunch.")
             emit("This clears profession snapshots/index data and local-character metadata. Gear and bank companion databases are separate.")
         end
         return

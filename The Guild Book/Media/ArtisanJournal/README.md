@@ -18,7 +18,7 @@ All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source P
 
 ## Reproduction and checking
 
-`ui-concepts/export-journal-reference.py` exports the eight revised textures, verifies pixel round-trips, and builds the complete `GuildGearMemory-ArtisanJournal-v2.zip`. `reference-export.json` records sources and dimensions. `ui-concepts/export-artisan-journal.py` exports the three shared surfaces and rebuilds the smaller artwork package; `manifest.json` records those surfaces.
+`ui-concepts/export-journal-reference.py` exports the eight revised textures, verifies pixel round-trips, and builds the complete `The-Guild-Book-ArtisanJournal-v2.zip`. `reference-export.json` records sources and dimensions. `ui-concepts/export-artisan-journal.py` exports the three shared surfaces and rebuilds the smaller artwork package; `manifest.json` records those surfaces.
 
 `ui-concepts/render-journal-preview.py` creates an off-game preview from the actual Lua UI anchors, fonts, and runtime textures. Native WoW icons are represented by placeholders. This preview does not establish in-game texture loading or font rendering.
 

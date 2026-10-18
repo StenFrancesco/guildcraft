@@ -6,7 +6,7 @@
   "textures": {
     "parchment": {
       "file": "parchment.tga",
-      "wow_path": "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\parchment.tga",
+      "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\parchment.tga",
       "size": [
         512,
         512
@@ -20,7 +20,7 @@
     },
     "leather": {
       "file": "leather.tga",
-      "wow_path": "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\leather.tga",
+      "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leather.tga",
       "size": [
         512,
         512
@@ -34,7 +34,7 @@
     },
     "profession-button": {
       "file": "profession-button.tga",
-      "wow_path": "Interface\\AddOns\\GuildGearMemory\\Media\\ArtisanJournal\\profession-button.tga",
+      "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button.tga",
       "size": [
         512,
         512

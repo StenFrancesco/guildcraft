@@ -37,7 +37,7 @@ local function stubSnapshotUI(GGM, registerFn)
     -- Isolated event tests supply their own database initializer. Real split
     -- startup and persistence are exercised by gear_storage_split_test.
     GGM.InitializeSavedDatabases = function(api)
-        local db, err = GGM.InitializeDatabase(api.GuildGearMemoryDB)
+        local db, err = GGM.InitializeDatabase(api.TheGuildBookDB)
         return db, err, db, db, nil
     end
     GGM.RegisterSnapshotTestSlashCommand = registerFn or function() end
@@ -99,12 +99,12 @@ T.test("main registers display and profession events without gear backend events
             return "ignored", nil
         end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
 
         T.assertTrue(registered.ADDON_LOADED == true)
         T.assertTrue(registered.PLAYER_LOGIN == true)
         T.assertNil(registered.PLAYER_EQUIPMENT_CHANGED)
-        T.assertNil(registered.CHAT_MSG_ADDON)
+        T.assertTrue(registered.CHAT_MSG_ADDON == true)
         T.assertTrue(registered.CHAT_MSG_GUILD == true)
         T.assertTrue(registered.TRADE_SKILL_SHOW == true)
         T.assertTrue(registered.TRADE_SKILL_CLOSE == true)
@@ -113,6 +113,41 @@ T.test("main registers display and profession events without gear backend events
         T.assertTrue(registered.PLAYER_ENTERING_WORLD == true)
         T.assertFalse(GGM.professionRosterMembershipCurrent)
         T.assertNotNil(onEvent)
+    end)
+end)
+
+T.test("main profession sync waits for reconciled roster and routes addon messages independently of gear", function()
+    local onEvent, logins, received, cancelled = nil, 0, 0, 0
+    local frame = { RegisterEvent = function() end, SetScript = function(_, _, fn) onEvent = fn end }
+    withGlobals({ CreateFrame = function() return frame end, TheGuildBookDB = NIL,
+        IsInGuild = function() return true end, C_GuildInfo = { GuildRoster = function() return true end },
+    }, function()
+        local G = {}
+        stubSnapshotUI(G)
+        G.InitializeDatabase = function() return { schemaVersion = 7, professions = {} } end
+        G.CreateProfessionSync = function(_, db) return { db = db } end
+        G.RegisterProfessionSync = function() return true end
+        G.RefreshProfessionSyncRoster = function() return true end
+        G.LoginProfessionSync = function() logins = logins + 1; return true end
+        G.CancelProfessionSync = function() cancelled = cancelled + 1 end
+        G.HandleProfessionSyncAddonMessage = function(_, prefix, message, channel, sender)
+            T.assertEqual(prefix, "GC_PROF"); T.assertEqual(sender, "Alice-Realm")
+            received = received + 1; return "ignored"
+        end
+        G.RecordLocalPlayerOwnership = function() return true end
+        G.ReconcileProfessionGuildRoster = function() G.professionRosterMembershipCurrent = true; return true end
+        T.loadAddonFile("The Guild Book/Main.lua", G)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
+        T.assertNotNil(G.professionSync)
+        onEvent(frame, "PLAYER_LOGIN")
+        T.assertEqual(logins, 0)
+        onEvent(frame, "PLAYER_ENTERING_WORLD")
+        onEvent(frame, "GUILD_ROSTER_UPDATE")
+        T.assertEqual(logins, 1)
+        onEvent(frame, "CHAT_MSG_ADDON", "GC_PROF", "frame", "GUILD", "Alice-Realm")
+        T.assertEqual(received, 1)
+        onEvent(frame, "PLAYER_GUILD_UPDATE")
+        T.assertTrue(cancelled > 0)
     end)
 end)
 
@@ -130,7 +165,7 @@ T.test("main refreshes the visible Bank view on local guild identity events", fu
         local GGM = {}
         stubSnapshotUI(GGM)
         GGM.RefreshVisibleBankView = function() table.insert(refreshedEvents, true); return true end
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
 
         onEvent(frame, "PLAYER_GUILD_UPDATE")
         onEvent(frame, "GUILD_ROSTER_UPDATE")
@@ -156,7 +191,7 @@ T.test("guild roster refresh is bounded to guild periods and reconciliation wait
 
     withGlobals({
         CreateFrame = function() return frame end,
-        GuildGearMemoryDB = NIL,
+        TheGuildBookDB = NIL,
         IsInGuild = function() return isInGuild end,
         C_GuildInfo = {
             GuildRoster = function() rosterRefreshCount = rosterRefreshCount + 1 end,
@@ -181,8 +216,8 @@ T.test("guild roster refresh is bounded to guild periods and reconciliation wait
         GGM.StartLocalPlayerGearTracking = function() return {}, nil end
         GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
         onEvent(frame, "PLAYER_ENTERING_WORLD")
 
         T.assertEqual(rosterRefreshCount, 1)
@@ -233,7 +268,7 @@ T.test("guild membership API failure clears cached roster readiness", function()
     }
     withGlobals({
         CreateFrame = function() return frame end,
-        GuildGearMemoryDB = NIL,
+        TheGuildBookDB = NIL,
         IsInGuild = function() error("guild state unavailable") end,
     }, function()
         local GGM = {}
@@ -248,8 +283,8 @@ T.test("guild membership API failure clears cached roster readiness", function()
         end
         GGM.professionRosterMembershipCurrent = true
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
         GGM.professionRosterMembershipCurrent = true
         onEvent(frame, "PLAYER_ENTERING_WORLD")
 
@@ -269,7 +304,7 @@ T.test("failed guild roster refresh cannot make a later roster event authoritati
         }
         local replacements = {
             CreateFrame = function() return frame end,
-            GuildGearMemoryDB = NIL,
+            TheGuildBookDB = NIL,
             IsInGuild = function() return true end,
         }
         if failureMode == "throwing" then
@@ -295,8 +330,8 @@ T.test("failed guild roster refresh cannot make a later roster event authoritati
                 return true, nil
             end
 
-            T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-            onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+            T.loadAddonFile("The Guild Book/Main.lua", GGM)
+            onEvent(frame, "ADDON_LOADED", "The Guild Book")
             onEvent(frame, "PLAYER_ENTERING_WORLD")
 
             T.assertTrue(GGM.professionRosterRefreshIssued)
@@ -324,7 +359,7 @@ T.test("guild chat routes message and sender only to profession provenance", fun
 
     withGlobals({
         CreateFrame = function() return frame end,
-        GuildGearMemoryDB = NIL,
+        TheGuildBookDB = NIL,
     }, function()
         local GGM = {}
         stubSnapshotUI(GGM)
@@ -342,8 +377,8 @@ T.test("guild chat routes message and sender only to profession provenance", fun
         GGM.StartLocalPlayerGearTracking = function() return {}, nil end
         GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
         onEvent(frame, "CHAT_MSG_GUILD", "|Htrade:abc|h[Alchemy]|h", "Alice-Silvermoon")
 
         T.assertTrue(observed.controller == GGM.professionLinkSave)
@@ -362,7 +397,7 @@ T.test("trade skill show only refreshes the local profession save control", func
 
     withGlobals({
         CreateFrame = function() return frame end,
-        GuildGearMemoryDB = NIL,
+        TheGuildBookDB = NIL,
     }, function()
         local GGM = {}
         stubSnapshotUI(GGM)
@@ -378,8 +413,8 @@ T.test("trade skill show only refreshes the local profession save control", func
         GGM.StartLocalPlayerGearTracking = function() return {}, nil end
         GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
         onEvent(frame, "TRADE_SKILL_SHOW")
 
         T.assertEqual(refreshCount, 1)
@@ -396,7 +431,7 @@ T.test("trade skill list update refreshes the local profession save control afte
 
     withGlobals({
         CreateFrame = function() return frame end,
-        GuildGearMemoryDB = NIL,
+        TheGuildBookDB = NIL,
     }, function()
         local GGM = {}
         stubSnapshotUI(GGM)
@@ -412,8 +447,8 @@ T.test("trade skill list update refreshes the local profession save control afte
         GGM.StartLocalPlayerGearTracking = function() return {}, nil end
         GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
         onEvent(frame, "TRADE_SKILL_LIST_UPDATE")
 
         T.assertEqual(refreshCount, 1)
@@ -435,7 +470,7 @@ T.test("main registers the snapshot slash command before addon loaded", function
         CreateFrame = function()
             return frame
         end,
-        GuildGearMemoryDB = NIL,
+        TheGuildBookDB = NIL,
     }, function()
         local GGM = {}
         GGM.InitializeDatabase = function(existing)
@@ -452,11 +487,11 @@ T.test("main registers the snapshot slash command before addon loaded", function
             registeredApi = api
         end)
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
         T.assertTrue(registeredApi == _G)
         T.assertEqual(registrationCount, 1)
 
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
 
         T.assertTrue(registeredApi == _G)
         T.assertEqual(registrationCount, 1)
@@ -476,7 +511,7 @@ T.test("addon loaded initializes the SavedVariables database", function()
         CreateFrame = function()
             return frame
         end,
-        GuildGearMemoryDB = NIL,
+        TheGuildBookDB = NIL,
     }, function()
         local GGM = {}
         stubSnapshotUI(GGM)
@@ -491,11 +526,11 @@ T.test("addon loaded initializes the SavedVariables database", function()
             return "ignored", nil
         end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
 
-        T.assertNotNil(_G.GuildGearMemoryDB)
-        T.assertTrue(GGM.db == _G.GuildGearMemoryDB)
+        T.assertNotNil(_G.TheGuildBookDB)
+        T.assertTrue(GGM.db == _G.TheGuildBookDB)
         T.assertNil(GGM.startupError)
     end)
 end)
@@ -515,7 +550,7 @@ T.test("unsupported saved schema blocks tracking instead of overwriting data", f
         CreateFrame = function()
             return frame
         end,
-        GuildGearMemoryDB = { schemaVersion = 99, characters = {} },
+        TheGuildBookDB = { schemaVersion = 99, characters = {} },
     }, function()
         local GGM = {
             DEFAULT_STABILITY_DELAY_SECONDS = 300,
@@ -532,8 +567,8 @@ T.test("unsupported saved schema blocks tracking instead of overwriting data", f
             return "ignored", nil
         end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
         onEvent(frame, "PLAYER_LOGIN")
 
         T.assertEqual(startCount, 0)
@@ -551,7 +586,7 @@ T.test("unsupported schema five SavedVariables remain untouched for manual reset
 
     withGlobals({
         CreateFrame = function() return frame end,
-        GuildGearMemoryDB = oldDB,
+        TheGuildBookDB = oldDB,
     }, function()
         local GGM = {}
         stubSnapshotUI(GGM)
@@ -560,11 +595,11 @@ T.test("unsupported schema five SavedVariables remain untouched for manual reset
             return nil, "unsupported-schema-version:5"
         end
 
-        T.loadAddonFile("GuildGearMemory/Main.lua", GGM)
-        onEvent(frame, "ADDON_LOADED", "GuildGearMemory")
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
 
-        T.assertTrue(_G.GuildGearMemoryDB == oldDB)
-        T.assertTrue(_G.GuildGearMemoryDB.characters.sentinel)
+        T.assertTrue(_G.TheGuildBookDB == oldDB)
+        T.assertTrue(_G.TheGuildBookDB.characters.sentinel)
         T.assertEqual(GGM.startupError, "unsupported-schema-version:5")
         T.assertNil(GGM.db)
     end)

@@ -44,15 +44,25 @@ function TestLib.loadAddonFile(path, namespace)
     chunk(path:match("^([^/]+)/"), namespace)
 end
 
+-- Immediate CTL completion for legacy fixtures; dedicated tests delay it.
+function TestLib.mockChatThrottle(api)
+    api.ChatThrottleLib = {
+        SendAddonMessage = function(_, priority, prefix, text, channel, target, queue, callback, arg)
+            local result = select(-1, api.C_ChatInfo.SendAddonMessage(prefix, text, channel, target))
+            callback(arg, result == 0 or result == true, result)
+        end,
+    }
+end
+
 -- Legacy unit fixtures exercise both domains in one namespace. Manifest tests
 -- separately verify actual addon load order and independent namespaces.
 function TestLib.loadUnitModule(name, namespace)
     local gear = { GearData = true, GearSnapshot = true, CharacterIdentity = true,
         StableGearTracker = true, LocalGearMemory = true, SyncProtocol = true,
         SyncTransport = true, GuildSync = true }
-    TestLib.loadAddonFile((gear[name] and "DysgearMemory/" or "GuildGearMemory/") .. name .. ".lua", namespace)
+    TestLib.loadAddonFile((gear[name] and "The Guild Book gear/" or "The Guild Book/") .. name .. ".lua", namespace)
     if name == "Constants" or name == "Storage" then
-        TestLib.loadAddonFile("DysgearMemory/" .. name .. ".lua", namespace)
+        TestLib.loadAddonFile("The Guild Book gear/" .. name .. ".lua", namespace)
     end
 end
 

@@ -5,6 +5,6 @@
 
 # Generated local addon packages and extracted installation copies
 /ui-concepts/*.zip
-/ui-concepts/GuildGearMemory-ArtisanJournal/
-/ui-concepts/GuildGearMemory-ArtisanJournal-v2/
+/ui-concepts/The-Guild-Book-ArtisanJournal/
+/ui-concepts/The-Guild-Book-ArtisanJournal-v2/
 /ui-concepts/__pycache__/

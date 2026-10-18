@@ -5,7 +5,7 @@ import zipfile
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-ADDON = ROOT / "GuildGearMemory"
+ADDON = ROOT / "The Guild Book"
 MEDIA = ADDON / "Media" / "ArtisanJournal"
 SOURCE = ROOT / "tests" / "Source"
 professions = ("alchemy", "blacksmithing", "enchanting", "engineering", "leatherworking", "tailoring")
@@ -23,7 +23,7 @@ for name, (source, size) in exports.items():
     manifest[name] = {"source": source, "source_size": list(original.size), "size": list(size)}
 (MEDIA / "reference-export.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
-archive = ROOT / "ui-concepts" / "GuildGearMemory-ArtisanJournal-v2.zip"
+archive = ROOT / "ui-concepts" / "The-Guild-Book-ArtisanJournal-v2.zip"
 files = sorted(p for p in ADDON.rglob("*") if p.is_file()
                and (p.suffix.lower() in {".lua", ".toc", ".tga", ".ttf", ".json", ".md"}
                     or p.name == "FONT-LICENSE.txt"))
@@ -33,11 +33,11 @@ with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
 with zipfile.ZipFile(archive) as bundle:
     assert bundle.testzip() is None
     names = set(bundle.namelist())
-    for line in (ADDON / "GuildGearMemory.toc").read_text().splitlines():
+    for line in (ADDON / "The Guild Book.toc").read_text().splitlines():
         if line.strip() and not line.startswith("#"):
-            assert "GuildGearMemory/" + line.strip() in names, line
+            assert "The Guild Book/" + line.strip() in names, line
     for name in exports:
-        assert f"GuildGearMemory/Media/ArtisanJournal/{name}.tga" in names
+        assert f"The Guild Book/Media/ArtisanJournal/{name}.tga" in names
     for name in ("journal-serif.ttf", "journal-serif-bold.ttf", "FONT-LICENSE.txt"):
-        assert f"GuildGearMemory/Media/ArtisanJournal/{name}" in names
+        assert f"The Guild Book/Media/ArtisanJournal/{name}" in names
 print(f"Verified {len(exports)} reference textures; packaged {len(files)} files: {archive}")

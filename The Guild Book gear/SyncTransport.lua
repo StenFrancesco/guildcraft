@@ -33,15 +33,6 @@ local function buildFrames(payload, messageID)
     return frames, nil
 end
 
-local function sendFrame(transport, frame)
-    local callOk, result = pcall(function()
-        return select(-1, transport.api.C_ChatInfo.SendAddonMessage(GGM.SYNC_PREFIX, frame, GGM.SYNC_CHAT_TYPE))
-    end)
-    if not callOk then return false, "send-addon-message-threw" end
-    if result ~= 0 then return false, "send-addon-message-failed:" .. resultName(SEND_RESULT_NAMES, result) end
-    return true, nil
-end
-
 local function finishOutboundGroup(group, sent, err)
     if not group or group.finished then return end
     group.finished = true
@@ -55,6 +46,7 @@ local function abortOutbound(transport, err, activeGroup)
         if type(queued) == "table" and queued.group then groups[queued.group] = true end
     end
     transport.outboundFrames = {}
+    transport.inFlight = nil
     transport.sendTimer = nil
     transport.lastSendError = err
     for group in pairs(groups) do finishOutboundGroup(group, false, err) end
@@ -62,38 +54,51 @@ end
 
 local pumpOutbound
 pumpOutbound = function(transport)
-    local activeGroup
-    -- Reserve the pump while completion callbacks run. A callback may enqueue
-    -- another logical message, but it must not send inside this frame's turn.
-    transport.sendTimer = true
-    while #transport.outboundFrames > 0 do
-        local queued = table.remove(transport.outboundFrames, 1)
-        local group = queued.group
+    if transport.sendTimer ~= nil or transport.inFlight then return true, nil end
+    while transport.outboundFrames[1] and transport.outboundFrames[1].group.cancelled do
+        table.remove(transport.outboundFrames, 1)
+    end
+    local queued = transport.outboundFrames[1]
+    if not queued then return true, nil end
+    local group = queued.group
+    transport.inFlight = queued
+    local completed, completionError = false, nil
+    local function onSent(_, didSend, result)
+        if completed or transport.inFlight ~= queued then return end
+        completed = true
+        transport.inFlight = nil
+        if result ~= 0 then
+            completionError = "send-addon-message-failed:" .. resultName(SEND_RESULT_NAMES, result)
+            abortOutbound(transport, completionError, group)
+            return
+        end
+        if transport.outboundFrames[1] == queued then table.remove(transport.outboundFrames, 1) end
+        -- Reserve the pump while completion callbacks enqueue more work.
+        transport.sendTimer = true
+        transport.lastSendError = nil
         if not group.cancelled then
-            local sent, sendErr = sendFrame(transport, queued.frame)
-            if not sent then abortOutbound(transport, sendErr, group); return false, sendErr end
-            transport.lastSendError = nil
             group.remaining = group.remaining - 1
             if group.remaining == 0 then finishOutboundGroup(group, true, nil) end
-            activeGroup = group
-            break
+        end
+        local timerOk, timer = pcall(transport.api.C_Timer.NewTimer, GGM.SYNC_SEND_INTERVAL_SECONDS, function()
+            transport.sendTimer = nil
+            pumpOutbound(transport)
+        end)
+        if not timerOk or timer == nil then
+            completionError = "sync-send-timer-create-failed"
+            abortOutbound(transport, completionError, group)
+        else
+            transport.sendTimer = timer
         end
     end
-    if not activeGroup then transport.sendTimer = nil; return true, nil end
-    -- Keep the interval even after the last frame. The timer itself sends
-    -- nothing unless a new event has actually queued another payload.
-    local timerOk, timerOrError = pcall(transport.api.C_Timer.NewTimer, GGM.SYNC_SEND_INTERVAL_SECONDS, function()
-        transport.sendTimer = nil
-        local _, asyncErr = pumpOutbound(transport)
-        if asyncErr then transport.lastSendError = asyncErr end
-    end)
-    if not timerOk or timerOrError == nil then
-        local err = "sync-send-timer-create-failed"
-        abortOutbound(transport, err, activeGroup)
-        return false, err
+    local ok = pcall(transport.api.ChatThrottleLib.SendAddonMessage, transport.api.ChatThrottleLib,
+        "BULK", GGM.SYNC_PREFIX, queued.frame, GGM.SYNC_CHAT_TYPE, nil, GGM.SYNC_PREFIX, onSent)
+    if not ok and not completed then
+        transport.inFlight = nil
+        completionError = "send-addon-message-threw"
+        abortOutbound(transport, completionError, group)
     end
-    transport.sendTimer = timerOrError
-    return true, nil
+    return completionError == nil, completionError
 end
 
 local function activeAssemblyCount(transport)
@@ -125,6 +130,9 @@ end
 
 function GGM.CreateSyncTransport(api, onLogicalPayload)
     if type(api) ~= "table" or type(api.C_ChatInfo) ~= "table" or type(api.C_ChatInfo.RegisterAddonMessagePrefix) ~= "function" or type(api.C_ChatInfo.SendAddonMessage) ~= "function" then return nil, "chat-info-api-unavailable" end
+    if type(api.ChatThrottleLib) ~= "table" or type(api.ChatThrottleLib.SendAddonMessage) ~= "function" then
+        return nil, "sync-chat-throttle-lib-unavailable"
+    end
     if type(api.C_Timer) ~= "table" or type(api.C_Timer.NewTimer) ~= "function" then return nil, "sync-timer-api-unavailable" end
     if type(api.GetTime) ~= "function" then return nil, "sync-time-api-unavailable" end
     if type(onLogicalPayload) ~= "function" then return nil, "sync-logical-handler-invalid" end

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render GuildGearMemory's live Lua journal pages into an off-game preview."""
+"""Render The Guild Book's live Lua journal pages into an off-game preview."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
-ADDON = PROJECT / "GuildGearMemory"
+ADDON = PROJECT / "The Guild Book"
 MEDIA = ADDON / "Media" / "ArtisanJournal"
 TESTS = PROJECT / "tests"
 CHARACTER_MODE = "--characters" in sys.argv

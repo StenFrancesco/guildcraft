@@ -2,11 +2,31 @@ local T = require("tests.testlib")
 
 local function loadModule()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionLinkSave.lua", GGM)
+    T.loadAddonFile("The Guild Book/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionLinkSave.lua", GGM)
     return GGM
 end
+
+T.test("successful profession save publishes changed hash after persistence without blocking local saves", function()
+    local G = loadModule()
+    local stored, published = false, false
+    G.professionSync = {}
+    G.GetProfessionSyncDigest = function() T.assertFalse(stored); return "before" end
+    G.CaptureLinkedProfessionSnapshot = function()
+        return { professionID = 164, recipes = {}, source = "player" }
+    end
+    G.SaveProfessionSnapshot = function() stored = true; return true end
+    G.PublishProfessionSyncSave = function(_, pid, before)
+        T.assertTrue(stored); T.assertEqual(pid, 164); T.assertEqual(before, "before")
+        published = true; return false, "throttled"
+    end
+    local controller = G.CreateProfessionLinkSaveController({}, {})
+    controller.activeSource = "player"
+    controller.activeIdentity = { key = "Alice-Realm", name = "Alice", realm = "Realm" }
+    T.assertEqual(G.SaveActiveLinkedProfession(controller), "saved")
+    T.assertTrue(published)
+end)
 
 T.test("extracts exact trade hyperlinks from guild chat text", function()
     local GGM = loadModule()
@@ -361,9 +381,9 @@ end)
 
 T.test("first player profession save activates and indexes the player after current roster confirms membership", function()
     local GGM = loadModule()
-    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionIndex.lua", GGM)
+    T.loadAddonFile("The Guild Book/Storage.lua", GGM)
     local db = assert(GGM.InitializeDatabase(nil))
     local api = {
         UnitFullName = function() return "Alice", "Silvermoon" end,

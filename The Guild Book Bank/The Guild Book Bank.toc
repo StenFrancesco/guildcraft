@@ -1,9 +1,9 @@
 ## Interface: 120000, 16001
-## Title: Dysbank Memory
+## Title: The Guild Book Bank
 ## Notes: Local, last-known character and guild bank snapshots
-## Author: Guild Gear Memory contributors
+## Author: The Guild Book contributors
 ## Version: 1.0.0
-## SavedVariables: DysbankMemoryDB
+## SavedVariables: TheGuildBookBankDB
 
 BankMemory.lua
 Main.lua

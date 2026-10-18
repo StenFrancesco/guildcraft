@@ -452,10 +452,15 @@ local function addRecipeMembership(index, professionID, recipe, localID)
             crafters = {},
         }
         profession[recipe.recipeID] = entry
-    elseif recipe.outputIcon ~= nil then
+    else
+        -- ID placeholders are missing metadata. A later complete observation
+        -- may supply the label even while other crafters retain this entry.
+        if entry.name == "Recipe " .. recipe.recipeID and recipe.name ~= entry.name then
+            entry.name = recipe.name
+        end
         -- Recipe output icons are stable metadata keyed by recipe ID. A new
         -- capture can fill the field for older cached memberships.
-        entry.outputIcon = recipe.outputIcon
+        if recipe.outputIcon ~= nil then entry.outputIcon = recipe.outputIcon end
     end
 
     insertCrafterID(entry.crafters, localID)

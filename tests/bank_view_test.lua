@@ -1,8 +1,8 @@
 local T = require("tests.testlib")
 local GGM = {}
-T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-local bankViewChunk = loadfile("GuildGearMemory/BankView.lua")
-if bankViewChunk then bankViewChunk("GuildGearMemory", GGM) end
+T.loadAddonFile("The Guild Book/Constants.lua", GGM)
+local bankViewChunk = loadfile("The Guild Book/BankView.lua")
+if bankViewChunk then bankViewChunk("The Guild Book", GGM) end
 
 local function characterRecord(name, realm, status, capturedAt)
     local key = name .. "-" .. realm

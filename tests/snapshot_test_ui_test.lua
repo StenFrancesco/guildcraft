@@ -3,23 +3,23 @@ local makeRecord, compactRecord
 
 local function loadUI()
     local GGM = {}
-    T.loadAddonFile("GuildGearMemory/Constants.lua", GGM)
-    T.loadAddonFile("DysgearMemory/Constants.lua", GGM)
-    T.loadAddonFile("DysgearMemory/GearData.lua", GGM)
-    T.loadAddonFile("DysgearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("DysgearMemory/GearSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionSnapshot.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/ProfessionIndex.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/Storage.lua", GGM)
-    T.loadAddonFile("DysgearMemory/Storage.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/SavedCharacterModel.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/RecipeDetails.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/RecipeDetailsUI.lua", GGM)
-    local bankView = loadfile("GuildGearMemory/BankView.lua")
-    if bankView then bankView("GuildGearMemory", GGM) end
-    local bankUI = loadfile("GuildGearMemory/BankUI.lua")
-    if bankUI then bankUI("GuildGearMemory", GGM) end
-    T.loadAddonFile("GuildGearMemory/SnapshotTestUI.lua", GGM)
+    T.loadAddonFile("The Guild Book/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/GearData.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/GearSnapshot.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionSnapshot.lua", GGM)
+    T.loadAddonFile("The Guild Book/ProfessionIndex.lua", GGM)
+    T.loadAddonFile("The Guild Book/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/Storage.lua", GGM)
+    T.loadAddonFile("The Guild Book/SavedCharacterModel.lua", GGM)
+    T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/RecipeDetailsUI.lua", GGM)
+    local bankView = loadfile("The Guild Book/BankView.lua")
+    if bankView then bankView("The Guild Book", GGM) end
+    local bankUI = loadfile("The Guild Book/BankUI.lua")
+    if bankUI then bankUI("The Guild Book", GGM) end
+    T.loadAddonFile("The Guild Book/SnapshotTestUI.lua", GGM)
     return GGM
 end
 
@@ -567,6 +567,48 @@ local function showBrowser(GGM, api, db)
     GGM.ShowGuildGearBrowserWindow(api, db)
     return GGM.guildGearBrowserFrame
 end
+
+T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
+    local G = loadUI()
+    local calls = {}
+    G.professionSync = {}
+    G.RequestProfessionSync = function(_, pid, reason)
+        calls[#calls + 1] = { pid = pid, reason = reason }; return true
+    end
+    G.GetProfessionSyncStatus = function() return "Comparing cached data" end
+    local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
+    T.assertEqual(#calls, 0)
+    T.assertNotNil(frame.professionSyncButton)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, 1)
+    T.assertEqual(calls[1].pid, 171)
+    T.assertEqual(calls[1].reason, "selection")
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, 1)
+    G.SelectProfession(frame, "Blacksmithing")
+    T.assertEqual(calls[2].pid, 164)
+    frame.professionSyncButton.scripts.OnClick(frame.professionSyncButton)
+    T.assertEqual(calls[3].reason, "manual")
+end)
+
+T.test("profession sync status has an opaque backing and readable text contrast", function()
+    local G = loadUI()
+    local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
+    T.assertNotNil(frame.professionSyncStatusBackground, "sync status needs a backing over the busy hero artwork")
+    local background = frame.professionSyncStatusBackground.color
+    T.assertNotNil(background)
+    T.assertEqual(background[4], 1, "artwork must not show through the status backing")
+    local function luminance(color)
+        local function linear(value)
+            return value <= 0.04045 and value / 12.92 or ((value + 0.055) / 1.055) ^ 2.4
+        end
+        return 0.2126 * linear(color[1]) + 0.7152 * linear(color[2]) + 0.0722 * linear(color[3])
+    end
+    local a, b = luminance(background), luminance(frame.professionSyncStatus.textColor)
+    T.assertTrue((math.max(a, b) + 0.05) / (math.min(a, b) + 0.05) >= 4.5,
+        "small sync status text must retain at least 4.5:1 contrast")
+end)
 
 T.test("character content stays within the journal's painted page borders", function()
     local GGM = loadUI()
@@ -1118,7 +1160,7 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     local frame = GGM.CreateGuildGearBrowserWindow(api)
     local separator = string.char(92)
     local mediaPath = table.concat({
-        "Interface", "AddOns", "GuildGearMemory", "Media", "ArtisanJournal", "",
+        "Interface", "AddOns", "The Guild Book", "Media", "ArtisanJournal", "",
     }, separator)
 
     T.assertEqual(frame.width, 1400)
@@ -1165,7 +1207,7 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(frame.professionButtons[1].background.texCoord[3], 0.23757)
     T.assertEqual(frame.professionButtons[1].background.texCoord[4], 0.76520)
     T.assertEqual(frame.professionButtons[1].label.font.path, GGM.UIJournalTextures.boldFont)
-    T.assertEqual(frame.professionSearchBox.width, 400)
+    T.assertEqual(frame.professionSearchBox.width, 310)
     T.assertEqual(frame.professionSearchBox.height, 27)
     T.assertEqual(frame.professionHeroArtwork, frame.professionDetailPanel.background)
     T.assertEqual(frame.professionHeroArtwork.texCoord[1], 0)
@@ -1184,7 +1226,7 @@ T.test("profession selection changes the full page artwork for each supported pr
     local frame = GGM.CreateGuildGearBrowserWindow(makeBrowserAPI())
     local separator = string.char(92)
     local mediaPath = table.concat({
-        "Interface", "AddOns", "GuildGearMemory", "Media", "ArtisanJournal", "",
+        "Interface", "AddOns", "The Guild Book", "Media", "ArtisanJournal", "",
     }, separator)
     local expected = {
         { key = "Alchemy", texture = mediaPath .. "alchemy-page.tga" },
@@ -1511,7 +1553,7 @@ T.test("gear browser explains missing or unavailable gear storage while other ta
         local frame = showBrowser(GGM, makeBrowserAPI(), db)
         local expected
         if reason == "gear-companion-missing" then
-            expected = "Install and enable DysgearMemory beside GuildGearMemory to save and view gear."
+            expected = "Install and enable The Guild Book gear beside The Guild Book to save and view gear."
         elseif reason:match("^gear%-backend%-") then
             expected = "Gear backend unavailable. Check /ggm status for details."
         else
@@ -1539,9 +1581,9 @@ T.test("gear backend status explains initialization failures without suggesting 
     api.SlashCmdList.GUILDGEARMEMORY("status")
 
     local output = table.concat(messages, "\n")
-    T.assertTrue(output:find("DysgearMemory could not provide a compatible gear backend", 1, true) ~= nil)
+    T.assertTrue(output:find("The Guild Book gear could not provide a compatible gear backend", 1, true) ~= nil)
     T.assertTrue(output:find("saved gear was left unchanged", 1, true) ~= nil)
-    T.assertTrue(output:find("DysgearMemory.lua", 1, true) == nil)
+    T.assertTrue(output:find("The Guild Book gear.lua", 1, true) == nil)
 end)
 
 T.test("guild gear browser hides the model stage when detail has no valid record", function()
@@ -1883,7 +1925,7 @@ T.test("unsupported schema status gives backup and removal guidance with cleared
     local output = table.concat(messages, "\n")
     T.assertTrue(output:find("No automatic migration", 1, true) ~= nil)
     T.assertTrue(output:find("back up", 1, true) ~= nil)
-    T.assertTrue(output:find("GuildGearMemory.lua", 1, true) ~= nil)
+    T.assertTrue(output:find("The Guild Book.lua", 1, true) ~= nil)
     T.assertTrue(output:find("Gear and bank companion databases are separate", 1, true) ~= nil)
     T.assertTrue(output:find("profession snapshots/index data", 1, true) ~= nil)
     T.assertTrue(output:find("local-character metadata", 1, true) ~= nil)
@@ -1901,8 +1943,8 @@ T.test("gear companion status points to its own SavedVariables file", function()
     api.SlashCmdList.GUILDGEARMEMORY("status")
     local output = table.concat(messages, "\n")
     T.assertTrue(output:find("Gear storage: unavailable", 1, true) ~= nil)
-    T.assertTrue(output:find("DysgearMemory.lua", 1, true) ~= nil)
-    T.assertTrue(output:find("DysgearMemoryDB", 1, true) ~= nil)
+    T.assertTrue(output:find("The Guild Book gear.lua", 1, true) ~= nil)
+    T.assertTrue(output:find("TheGuildBookGearDB", 1, true) ~= nil)
 end)
 
 T.test("snapshot slash command can explicitly request exactly one named character", function()
@@ -1986,6 +2028,34 @@ T.test("gear requests print readable failures and usage without opening the brow
     end
 end)
 
+T.test("status reports profession startup roster and transport failures without a database", function()
+    local G = loadUI()
+    local messages = {}
+    local api = { SlashCmdList = {}, print = function(message) messages[#messages + 1] = message end }
+    G.RegisterSnapshotTestSlashCommand(api)
+    G.lastProfessionSyncError = "profession-prefix-register-failed:MaxPrefixes"
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    local output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Profession sync: unavailable (GC_PROF3)", 1, true) ~= nil)
+    T.assertTrue(output:find("profession-prefix-register-failed:MaxPrefixes", 1, true) ~= nil)
+    messages = {}
+    G.professionSync = { registered = true, rosterReady = true,
+        lastError = "profession-sync-no-responder", transport = {} }
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Profession roster: ready", 1, true) ~= nil)
+    T.assertTrue(output:find("Profession sync error: profession-sync-no-responder", 1, true) ~= nil)
+    messages = {}
+    G.professionSync.rosterReady = false
+    G.lastProfessionIndexError = "profession-roster-incomplete"
+    G.professionSync.transport.lastSendError = "profession-send-addon-message-failed:NotInGuild"
+    api.SlashCmdList.GUILDGEARMEMORY("status")
+    output = table.concat(messages, "\n")
+    T.assertTrue(output:find("Profession roster: not ready", 1, true) ~= nil)
+    T.assertTrue(output:find("Profession roster error: profession-roster-incomplete", 1, true) ~= nil)
+    T.assertTrue(output:find("Profession sync error: profession-send-addon-message-failed:NotInGuild", 1, true) ~= nil)
+end)
+
 T.test("gear sync status reports prefix availability and async errors even without database", function()
     local GGM = loadUI()
     local messages = {}
@@ -2005,7 +2075,7 @@ end)
 
 T.test("journal Bank page selects cached entries, tabs, and slots and refreshes without losing selection", function()
     local GGM = loadUI()
-    local previousAPI, previousDB = _G.DysbankMemoryAPI, _G.DysbankMemoryDB
+    local previousAPI, previousDB = _G.DysbankMemoryAPI, _G.TheGuildBookBankDB
     _G.DysbankMemoryAPI = { schemaVersion = 1 }
     local function record(name, realm, tabCount)
         local tabs = {}
@@ -2044,7 +2114,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     end
     local characterBank = record("Alice", "Silvermoon", 12)
     local guildBank = record("Testers", "Silvermoon", 2)
-    _G.DysbankMemoryDB = {
+    _G.TheGuildBookBankDB = {
         schemaVersion = 1,
         characters = { [characterBank.identity.key] = characterBank },
         guilds = { [guildBank.identity.key] = guildBank },
@@ -2104,7 +2174,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     local refreshed = record("Alice", "Silvermoon", 12)
     refreshed.capturedAt = 1700000500
     refreshed.tabs[1].capturedAt = refreshed.capturedAt
-    _G.DysbankMemoryDB.characters[refreshed.identity.key] = refreshed
+    _G.TheGuildBookBankDB.characters[refreshed.identity.key] = refreshed
     _G.GuildGearMemoryBankChanged()
 
     T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
@@ -2119,9 +2189,9 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     local changedWhileHidden = record("Alice", "Silvermoon", 12)
     changedWhileHidden.capturedAt = 1700000600
     changedWhileHidden.tabs[1].capturedAt = changedWhileHidden.capturedAt
-    _G.DysbankMemoryDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
+    _G.TheGuildBookBankDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
     local addedWhileHidden = record("Beatrice", "Silvermoon", 1)
-    _G.DysbankMemoryDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
+    _G.TheGuildBookBankDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
     T.assertFalse(_G.GuildGearMemoryBankChanged(), "hidden Bank page should defer its visible refresh")
     GGM.ShowGuildGearBrowserWindow(api, frame.db)
 
@@ -2138,15 +2208,15 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
 
     page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
     T.assertTrue(tooltip.visible)
-    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = nil, nil
+    _G.DysbankMemoryAPI, _G.TheGuildBookBankDB = nil, nil
     _G.GuildGearMemoryBankChanged()
     T.assertEqual(page.tabStatus.text, "", "missing companion should clear the previously selected tab status")
     T.assertNil(page.selectedTabID)
     T.assertNil(page.selectedSlotID)
     T.assertFalse(tooltip.visible, "missing companion should close a tooltip from the previous snapshot")
-    T.assertTrue(page.slotsEmpty.text:find("_retail_/Interface/AddOns/DysbankMemory", 1, true) ~= nil,
+    T.assertTrue(page.slotsEmpty.text:find("_retail_/Interface/AddOns/The Guild Book Bank", 1, true) ~= nil,
         "missing companion state should include its installation path")
-    _G.DysbankMemoryAPI, _G.DysbankMemoryDB = previousAPI, previousDB
+    _G.DysbankMemoryAPI, _G.TheGuildBookBankDB = previousAPI, previousDB
 end)
 
 T.test("paper doll layout uses the requested left right and bottom slot order", function()

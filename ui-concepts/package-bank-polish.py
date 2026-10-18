@@ -4,8 +4,8 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from PIL import Image
 
 root = Path(__file__).resolve().parents[1]
-target = root / "ui-concepts" / "GuildGearMemory-ThreeFolders.zip"
-folders = ("GuildGearMemory", "DysbankMemory", "DysgearMemory")
+target = root / "ui-concepts" / "The-Guild-Book-Addons.zip"
+folders = ("The Guild Book", "The Guild Book Bank", "The Guild Book gear")
 files = sorted(p for folder in folders
                for p in (root / folder).rglob("*") if p.is_file())
 with ZipFile(target, "w", ZIP_DEFLATED) as archive:
@@ -19,7 +19,7 @@ with ZipFile(target) as archive:
         for line in (root / folder / (folder + ".toc")).read_text().splitlines():
             if line.strip() and not line.startswith("#"):
                 assert folder + "/" + line.strip() in archive.namelist()
-    assert "GuildGearMemory/Media/ArtisanJournal/bank-page.tga" in archive.namelist()
-with Image.open(root / "GuildGearMemory/Media/ArtisanJournal/bank-page.tga") as image:
+    assert "The Guild Book/Media/ArtisanJournal/bank-page.tga" in archive.namelist()
+with Image.open(root / "The Guild Book/Media/ArtisanJournal/bank-page.tga") as image:
     assert image.size == (1024, 1024) and image.mode == "RGB"
 print(f"Verified {len(files)} files, all three manifests and bank artwork: {target}")

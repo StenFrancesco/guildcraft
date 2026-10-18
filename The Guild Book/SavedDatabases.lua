@@ -40,25 +40,51 @@ local function runtimeDatabase(professions, gear, gearErr)
     -- Never save this view. Only the two concrete databases are SavedVariables.
     -- Keeping routing here lets presentation and profession membership use a view
     -- without duplicating gear in the profession SavedVariables.
-    return setmetatable({ gearUnavailableReason = gearErr }, {
+    local gearDatabase = gear
+    local gearUnavailableReason = gearErr
+    local view = {}
+    local function updateGearDatabase(database, unavailableReason)
+        gearDatabase = database
+        gearUnavailableReason = unavailableReason
+    end
+
+    setmetatable(view, {
         __index = function(_, key)
+            if key == "gearUnavailableReason" then
+                return gearUnavailableReason
+            end
             if key == "characters" or key == "localCharacters" then
-                return gear and gear[key] or nil
+                return gearDatabase and gearDatabase[key] or nil
             end
             return professions[key]
         end,
         __newindex = function(_, key, value)
+            if key == "gearUnavailableReason" then
+                gearUnavailableReason = value
+                return
+            end
             if key == "characters" or key == "localCharacters" then
-                if gear then gear[key] = value end
+                if gearDatabase then gearDatabase[key] = value end
             else
                 professions[key] = value
             end
         end,
     })
+    return view, updateGearDatabase
+end
+
+function GGM.RefreshGearDatabase(api)
+    local gear, gearErr = readGearDatabase(api or _G)
+    if type(GGM.updateRuntimeGearDatabase) == "function" then
+        GGM.updateRuntimeGearDatabase(gear, gearErr)
+    end
+    GGM.gearDB = gear
+    GGM.gearStartupError = gearErr
+    return gear, gearErr
 end
 
 function GGM.InitializeSavedDatabases(api)
-    local professions = api.GuildGearMemoryDB
+    local professions = api.TheGuildBookDB
     if professions == nil then
         local err
         professions, err = GGM.InitializeDatabase(nil)
@@ -75,5 +101,6 @@ function GGM.InitializeSavedDatabases(api)
     -- Only remove legacy fields after the profession schema passes validation.
     professions.characters = nil
     professions.localCharacters = nil
-    return runtimeDatabase(professions, gear, gearErr), nil, professions, gear, gearErr
+    local runtime, updateGearDatabase = runtimeDatabase(professions, gear, gearErr)
+    return runtime, nil, professions, gear, gearErr, updateGearDatabase
 end

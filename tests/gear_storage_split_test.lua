@@ -8,9 +8,9 @@ local function loadMainModules()
 
     local api = setmetatable({}, { __index = _G })
     api._G = api
-    local chunk = assert(loadfile("GuildGearMemory/GearBackend.lua"))
+    local chunk = assert(loadfile("The Guild Book/GearBackend.lua"))
     setfenv(chunk, api)
-    chunk("GuildGearMemory", GGM)
+    chunk("The Guild Book", GGM)
 
     for _, file in ipairs({
         "GearData", "GearSnapshot", "Storage", "SyncProtocol", "SyncTransport", "GuildSync",
@@ -24,7 +24,7 @@ end
 
 local function loadCompanion(saved)
     local handler
-    local api = setmetatable({ DysgearMemoryDB = saved }, { __index = _G })
+    local api = setmetatable({ TheGuildBookGearDB = saved }, { __index = _G })
     api._G = api
     api.CreateFrame = function()
         return {
@@ -34,30 +34,30 @@ local function loadCompanion(saved)
     end
     local backend = {}
     for _, file in ipairs({ "Constants", "CharacterIdentity", "GearData", "GearSnapshot", "Storage", "StableGearTracker", "LocalGearMemory", "SyncProtocol", "SyncTransport", "GuildSync", "Main" }) do
-        local chunk = assert(loadfile("DysgearMemory/" .. file .. ".lua"))
+        local chunk = assert(loadfile("The Guild Book gear/" .. file .. ".lua"))
         setfenv(chunk, api)
-        chunk("DysgearMemory", backend)
+        chunk("The Guild Book gear", backend)
     end
     handler(nil, "ADDON_LOADED", "OtherAddon")
     T.assertNil(rawget(api, "DysgearMemoryAPI"))
-    handler(nil, "ADDON_LOADED", "DysgearMemory")
+    handler(nil, "ADDON_LOADED", "The Guild Book gear")
     return api
 end
 
 T.test("gear companion initializes independent storage without equipment or network APIs", function()
     local api = loadCompanion()
-    T.assertEqual(api.DysgearMemoryDB.schemaVersion, 7)
-    T.assertEqual(type(api.DysgearMemoryDB.characters), "table")
-    T.assertEqual(type(api.DysgearMemoryDB.localCharacters), "table")
-    T.assertNil(api.DysgearMemoryDB.professions)
-    T.assertTrue(api.DysgearMemoryAPI.GetDatabase() == api.DysgearMemoryDB)
+    T.assertEqual(api.TheGuildBookGearDB.schemaVersion, 7)
+    T.assertEqual(type(api.TheGuildBookGearDB.characters), "table")
+    T.assertEqual(type(api.TheGuildBookGearDB.localCharacters), "table")
+    T.assertNil(api.TheGuildBookGearDB.professions)
+    T.assertTrue(api.DysgearMemoryAPI.GetDatabase() == api.TheGuildBookGearDB)
     T.assertNil(api.DysgearMemoryError)
 end)
 
 T.test("gear companion preserves unsupported and malformed saved databases", function()
     for _, saved in ipairs({ { schemaVersion = 99, sentinel = true }, { schemaVersion = 7, characters = false, localCharacters = {} } }) do
         local api = loadCompanion(saved)
-        T.assertTrue(api.DysgearMemoryDB == saved)
+        T.assertTrue(api.TheGuildBookGearDB == saved)
         T.assertNil(rawget(api, "DysgearMemoryAPI"))
         T.assertNotNil(api.DysgearMemoryError)
     end
@@ -70,12 +70,12 @@ T.test("split storage discards legacy gear while retaining professions and route
     legacy.localCharacters.old = true
     local professions, guids = legacy.professions, legacy.localCharacterGUIDs
     local api = loadCompanion()
-    api.GuildGearMemoryDB = legacy
+    api.TheGuildBookDB = legacy
     local runtime, err, saved, gear, gearErr = GGM.InitializeSavedDatabases(api)
     T.assertNil(err)
     T.assertNil(gearErr)
     T.assertTrue(saved == legacy)
-    T.assertTrue(gear == api.DysgearMemoryDB)
+    T.assertTrue(gear == api.TheGuildBookGearDB)
     T.assertTrue(runtime ~= saved)
     T.assertTrue(runtime.professions == professions)
     T.assertTrue(runtime.localCharacterGUIDs == guids)
@@ -100,7 +100,7 @@ T.test("missing gear companion leaves professions available without exposing leg
     local GGM = loadMainModules()
     local legacy = assert(T.initializeDatabase(GGM, nil))
     legacy.characters.old = { sentinel = true }
-    local runtime, err, saved, gear, gearErr = GGM.InitializeSavedDatabases({ GuildGearMemoryDB = legacy })
+    local runtime, err, saved, gear, gearErr = GGM.InitializeSavedDatabases({ TheGuildBookDB = legacy })
     T.assertNil(err)
     T.assertEqual(gearErr, "gear-companion-missing")
     T.assertNil(gear)
@@ -118,19 +118,19 @@ T.test("unavailable gear API preserves gear database and still initializes profe
     T.assertNil(gear)
     T.assertNotNil(gearErr)
     T.assertNil(runtime.characters)
-    T.assertTrue(api.DysgearMemoryDB.sentinel)
+    T.assertTrue(api.TheGuildBookGearDB.sentinel)
 end)
 
 T.test("invalid profession schema remains untouched by split startup", function()
     local GGM = loadMainModules()
     local legacy = { schemaVersion = 99, characters = { old = true } }
     local api = loadCompanion()
-    api.GuildGearMemoryDB = legacy
+    api.TheGuildBookDB = legacy
     local runtime, err = GGM.InitializeSavedDatabases(api)
     T.assertNil(runtime)
     T.assertEqual(err, "unsupported-schema-version:99")
     T.assertTrue(legacy.characters.old)
-    T.assertNil(next(api.DysgearMemoryDB.characters))
+    T.assertNil(next(api.TheGuildBookGearDB.characters))
 end)
 
 T.test("gear addon manifests load storage companion before main with separate saved globals", function()
@@ -140,10 +140,10 @@ T.test("gear addon manifests load storage companion before main with separate sa
         file:close()
         return content
     end
-    local companion = read("DysgearMemory/DysgearMemory.toc")
-    local main = read("GuildGearMemory/GuildGearMemory.toc")
-    T.assertTrue(companion:find("## SavedVariables: DysgearMemoryDB", 1, true) ~= nil)
-    T.assertTrue(main:find("## OptionalDeps: DysbankMemory, DysgearMemory", 1, true) ~= nil)
+    local companion = read("The Guild Book gear/The Guild Book gear.toc")
+    local main = read("The Guild Book/The Guild Book.toc")
+    T.assertTrue(companion:find("## SavedVariables: TheGuildBookGearDB", 1, true) ~= nil)
+    T.assertTrue(main:find("## OptionalDeps: The Guild Book Bank, The Guild Book gear", 1, true) ~= nil)
     T.assertTrue(main:find("Storage.lua", 1, true) < main:find("SavedDatabases.lua", 1, true))
 end)
 
@@ -152,7 +152,7 @@ T.test("real gear storage writes and sequence gaps persist only in the companion
     local api = loadCompanion()
     local runtime, err, professions, gear = GGM.InitializeSavedDatabases(api)
     T.assertNil(err)
-    api.GuildGearMemoryDB = professions
+    api.TheGuildBookDB = professions
     local identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1234-ABCDEF" }
     local slots = {}
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do
@@ -184,8 +184,8 @@ end)
 
 T.test("main startup with missing gear companion still registers professions and records ownership", function()
     local GGM = loadMainModules()
-    T.loadAddonFile("GuildGearMemory/CharacterIdentity.lua", GGM)
-    T.loadAddonFile("GuildGearMemory/LocalCharacterOwnership.lua", GGM)
+    T.loadAddonFile("The Guild Book/CharacterIdentity.lua", GGM)
+    T.loadAddonFile("The Guild Book/LocalCharacterOwnership.lua", GGM)
     local handler, professionController
     local api = setmetatable({}, { __index = _G })
     api._G = api
@@ -198,17 +198,17 @@ T.test("main startup with missing gear companion still registers professions and
     GGM.CreateProfessionLinkSaveController = function(_, db) professionController = { db = db }; return professionController end
     GGM.RegisterProfessionLinkSaveController = function() return true end
     GGM.CreateGuildSync = function() error("gear sync must not start") end
-    local main = assert(loadfile("GuildGearMemory/Main.lua"))
+    local main = assert(loadfile("The Guild Book/Main.lua"))
     setfenv(main, api)
-    main("GuildGearMemory", GGM)
-    handler(nil, "ADDON_LOADED", "GuildGearMemory")
+    main("The Guild Book", GGM)
+    handler(nil, "ADDON_LOADED", "The Guild Book")
     T.assertNil(GGM.startupError)
     T.assertEqual(GGM.gearStartupError, "gear-companion-missing")
     T.assertTrue(GGM.professionLinkSave == professionController)
-    T.assertTrue(api.GuildGearMemoryDB ~= GGM.db)
-    T.assertNil(api.GuildGearMemoryDB.characters)
+    T.assertTrue(api.TheGuildBookDB ~= GGM.db)
+    T.assertNil(api.TheGuildBookDB.characters)
     handler(nil, "PLAYER_LOGIN")
-    T.assertTrue(api.GuildGearMemoryDB.localCharacterGUIDs["Player-1234-ABCDEF"])
+    T.assertTrue(api.TheGuildBookDB.localCharacterGUIDs["Player-1234-ABCDEF"])
     T.assertNil(GGM.gearTracker)
     T.assertNil(GGM.guildSync)
 end)
@@ -233,7 +233,7 @@ T.test("profession saves and index updates through the runtime view persist in m
     T.assertNil(gear.professions)
     T.assertNil(gear.professionRecipeIndex)
     T.assertNil(gear.characters[identity.key])
-    api.GuildGearMemoryDB = professions
+    api.TheGuildBookDB = professions
     local reloaded = assert(GGM.InitializeSavedDatabases(api))
     local record = assert(GGM.GetProfessionRecord(reloaded, identity.key))
     T.assertEqual(record.snapshots[164].capturedAt, snapshot.capturedAt)
@@ -248,7 +248,7 @@ T.test("unsupported and failing gear APIs degrade gracefully without replacing s
         { schemaVersion = 2, GetBackend = function() return GGM end, GetDatabase = function() return { schemaVersion = 7, characters = false, localCharacters = {} } end, expected = "gear-database-invalid" },
     }) do
         local saved = { sentinel = true }
-        local runtime, err, professions, gear, gearErr = GGM.InitializeSavedDatabases({ DysgearMemoryAPI = companion, DysgearMemoryDB = saved })
+        local runtime, err, professions, gear, gearErr = GGM.InitializeSavedDatabases({ DysgearMemoryAPI = companion, TheGuildBookGearDB = saved })
         T.assertNil(err)
         T.assertNotNil(professions.professions)
         T.assertNil(runtime.characters)
@@ -276,8 +276,8 @@ T.test("unusable companion backends are rejected before accepting saved gear", f
         local databaseCalls = 0
         local professions = assert(GGM.InitializeDatabase(nil))
         local api = {
-            GuildGearMemoryDB = professions,
-            DysgearMemoryDB = savedGear,
+            TheGuildBookDB = professions,
+            TheGuildBookGearDB = savedGear,
             DysgearMemoryAPI = {
                 schemaVersion = 2,
                 GetBackend = case.getBackend,

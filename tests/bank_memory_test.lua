@@ -2,9 +2,9 @@ local T = require("tests.testlib")
 
 local function loadModule()
     local memory = {}
-    local chunk = loadfile("DysbankMemory/BankMemory.lua")
+    local chunk = loadfile("The Guild Book Bank/BankMemory.lua")
     if chunk then
-        chunk("DysbankMemory", memory)
+        chunk("The Guild Book Bank", memory)
     end
     return memory
 end
@@ -479,7 +479,7 @@ T.test("main controller registers bank lifecycle and contents update events", fu
     local registered = {}
     local handler
     api._G = api
-    api.DysbankMemory = memory
+    api["The Guild Book Bank"] = memory
     setmetatable(api, { __index = _G })
     api.CreateFrame = function()
         return {
@@ -489,14 +489,14 @@ T.test("main controller registers bank lifecycle and contents update events", fu
             end,
         }
     end
-    local chunk = loadfile("DysbankMemory/Main.lua")
+    local chunk = loadfile("The Guild Book Bank/Main.lua")
     if chunk then
         if setfenv then
             setfenv(chunk, api)
         elseif debug and debug.setupvalue then
             debug.setupvalue(chunk, 1, api)
         end
-        chunk("DysbankMemory", memory)
+        chunk("The Guild Book Bank", memory)
     end
 
     T.assertNotNil(handler)
@@ -511,8 +511,8 @@ T.test("main controller registers bank lifecycle and contents update events", fu
         T.assertTrue(registered[event] == true, "missing registered event " .. event)
     end
 
-    handler(nil, "ADDON_LOADED", "DysbankMemory")
-    T.assertEqual(api.DysbankMemoryDB.schemaVersion, 1)
+    handler(nil, "ADDON_LOADED", "The Guild Book Bank")
+    T.assertEqual(api.TheGuildBookBankDB.schemaVersion, 1)
     T.assertEqual(api.DysbankMemoryAPI.schemaVersion, 1)
     T.assertTrue(type(api.DysbankMemoryAPI.GetDatabase) == "function")
 end)
