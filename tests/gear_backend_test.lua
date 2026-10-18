@@ -49,6 +49,7 @@ local function client(saved)
         RegisterAddonMessagePrefix = function() c.registered = (c.registered or 0) + 1; return 0 end,
         SendAddonMessage = function(...) c.sent[#c.sent + 1] = { ... }; return 0 end,
     }
+    T.mockChatThrottle(api)
     function c:event(event, ...)
         for _, frame in ipairs(self.frames) do
             if frame.events[event] then frame.handler(frame, event, ...) end
@@ -123,7 +124,7 @@ T.test("gear backend rejects an unsupported database without mutating it", funct
     T.assertEqual(#c.sent, 0)
 end)
 
-T.test("display addon binds the same backend without a second tracker or sync registration", function()
+T.test("display addon binds the same gear backend and registers an independent profession sync", function()
     local c = client()
     local GGM = {}
     loadManifest("The Guild Book", c.api, GGM, true)
@@ -135,7 +136,8 @@ T.test("display addon binds the same backend without a second tracker or sync re
     c:event("ADDON_LOADED", "The Guild Book")
     c:event("PLAYER_LOGIN")
     c:advance(1)
-    T.assertEqual(c.registered, 1)
+    T.assertEqual(c.registered, 2)
+    T.assertNotNil(GGM.professionSync)
     T.assertTrue(GGM.gearTracker == c.backend.gearTracker)
     T.assertTrue(GGM.guildSync == c.backend.guildSync)
     T.assertTrue(GGM.db.characters == c.api.TheGuildBookGearDB.characters)
@@ -150,7 +152,7 @@ T.test("display addon binds the same backend without a second tracker or sync re
     T.assertNil(c.api.TheGuildBookDB.characters)
     local mainFrame = c.frames[#c.frames]
     T.assertNil(mainFrame.events.PLAYER_EQUIPMENT_CHANGED)
-    T.assertNil(mainFrame.events.CHAT_MSG_ADDON)
+    T.assertTrue(mainFrame.events.CHAT_MSG_ADDON)
 end)
 
 T.test("missing gear backend preserves the browser slot layout and status command", function()

@@ -2,10 +2,12 @@
 ## Interface: 120000, 16001
 ## Title: The Guild Book
 ## Notes: Local last-known gear memory for guild characters
-## Author: Guild Gear Memory contributors
+## Author: The Guild Book contributors
 ## Version: 0.5.0-blizzard-ui
 ## OptionalDeps: The Guild Book Bank, The Guild Book gear
 ## SavedVariables: TheGuildBookDB
+
+Libs/ChatThrottleLib/ChatThrottleLib.lua
 
 Constants.lua
 CharacterIdentity.lua
@@ -14,6 +16,9 @@ LocalCharacterOwnership.lua
 ProfessionSnapshot.lua
 ProfessionIndex.lua
 Storage.lua
+ProfessionSyncData.lua
+ProfessionTransport.lua
+ProfessionSync.lua
 SavedDatabases.lua
 SavedCharacterModel.lua
 RecipeDetails.lua

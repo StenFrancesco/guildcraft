@@ -7,10 +7,25 @@ local function loadModule()
     return GGM
 end
 
+T.test("profession capture refuses an unavailable server timestamp instead of using the local clock", function()
+    local G = loadModule()
+    local api = { time = function() return 1700004000 end, C_TradeSkillUI = {
+        IsTradeSkillLinked = function() return true end,
+        IsTradeSkillReady = function() return true end,
+        GetBaseProfessionInfo = function() return { professionID = 164, professionName = "Blacksmithing" } end,
+        GetAllRecipeIDs = function() return {} end,
+        GetRecipeInfo = function() return {} end,
+    } }
+    local snapshot, err = G.CaptureLinkedProfessionSnapshot(api)
+    T.assertNil(snapshot)
+    T.assertEqual(err, "profession-server-time-unavailable")
+end)
+
 T.test("captures only learned recipes from an open linked profession", function()
     local GGM = loadModule()
     local api = {
-        time = function() return 1700004000 end,
+        time = function() return 999 end,
+        GetServerTime = function() return 1700004000 end,
         C_TradeSkillUI = {
             IsTradeSkillLinked = function() return true end,
             IsTradeSkillReady = function() return true end,
@@ -53,7 +68,7 @@ end)
 T.test("successful profession capture is explicitly complete", function()
     local GGM = loadModule()
     local api = {
-        time = function() return 1700004000 end,
+        GetServerTime = function() return 1700004000 end,
         C_TradeSkillUI = {
             IsTradeSkillLinked = function() return true end,
             IsTradeSkillReady = function() return true end,
@@ -136,7 +151,7 @@ end)
 T.test("captures only learned recipes from the open player's profession", function()
     local GGM = loadModule()
     local api = {
-        time = function() return 1700004000 end,
+        GetServerTime = function() return 1700004000 end,
         C_TradeSkillUI = {
             IsTradeSkillLinked = function() return false end,
             IsTradeSkillReady = function() return true end,
@@ -187,6 +202,7 @@ end)
 T.test("profession capture ignores skill and maximum skill levels", function()
     local GGM = loadModule()
     local api = {
+        GetServerTime = function() return 1700004000 end,
         C_TradeSkillUI = {
             IsTradeSkillLinked = function() return false end,
             IsTradeSkillReady = function() return true end,
@@ -221,7 +237,7 @@ T.test("capture rejects an oversized learned recipe set", function()
     local GGM = loadModule()
     GGM.PROFESSION_MAX_RECIPES = 2
     local api = {
-        time = function() return 1700004000 end,
+        GetServerTime = function() return 1700004000 end,
         C_TradeSkillUI = {
             IsTradeSkillLinked = function() return true end,
             IsTradeSkillReady = function() return true end,

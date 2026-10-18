@@ -38,6 +38,33 @@ local function indexedMetadata(GGM, professionID)
     }
 end
 
+T.test("profession index replaces an ID placeholder when another crafter supplies a real label", function()
+    local GGM = loadModules()
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local first = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local second = indexedIdentity(GGM, "Bob-Silvermoon", "Player-1-B")
+    local fallback = indexedSnapshot(GGM, 164, 41234)
+    fallback.recipes[1].name = "Recipe 41234"
+    assert(GGM.SaveProfessionSnapshot(db, first, fallback, { guildMembershipVerified = true }))
+    local supplied = indexedSnapshot(GGM, 164, 41234)
+    supplied.recipes[1].name = "Copper Bracers"
+    supplied.recipes[1].outputIcon = 134400
+    assert(GGM.SaveProfessionSnapshot(db, second, supplied, { guildMembershipVerified = true }))
+    local entry = db.professionRecipeIndex[164][41234]
+    T.assertEqual(entry.name, "Copper Bracers")
+    T.assertEqual(entry.outputIcon, 134400)
+    T.assertEqual(#entry.crafters, 2)
+    T.assertEqual(entry.crafters[1], db.localCharacterIDByGUID[first.guid])
+    T.assertEqual(entry.crafters[2], db.localCharacterIDByGUID[second.guid])
+
+    -- Later ID fallbacks and foreign labels cannot replace a usable local label.
+    assert(GGM.SaveProfessionSnapshot(db, second, fallback, { guildMembershipVerified = true }))
+    T.assertEqual(db.professionRecipeIndex[164][41234].name, "Copper Bracers")
+    supplied.recipes[1].name = "Foreign label"
+    assert(GGM.SaveProfessionSnapshot(db, second, supplied, { guildMembershipVerified = true }))
+    T.assertEqual(db.professionRecipeIndex[164][41234].name, "Copper Bracers")
+end)
+
 T.test("profession browser reads saved recipes from the schema seven recipe index", function()
     local GGM = loadModules()
     local db = assert(T.initializeDatabase(GGM, nil))

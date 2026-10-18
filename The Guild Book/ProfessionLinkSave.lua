@@ -171,10 +171,19 @@ function GGM.SaveActiveLinkedProfession(controller)
             return nil, playerGuildErr
         end
     end
+    local beforeHash
+    if GGM.professionSync and type(GGM.GetProfessionSyncDigest) == "function" then
+        beforeHash = GGM.GetProfessionSyncDigest(controller.db, snapshot.professionID)
+    end
     local saved, saveErr = GGM.SaveProfessionSnapshot(
         controller.db, identity, snapshot, saveOptions
     )
     if not saved then return nil, saveErr end
+    if GGM.professionSync and type(GGM.PublishProfessionSyncSave) == "function" then
+        local ok, _, syncErr = pcall(GGM.PublishProfessionSyncSave, GGM.professionSync, snapshot.professionID, beforeHash)
+        GGM.lastProfessionSyncError = ok and syncErr or "profession-sync-save-unavailable"
+    end
+    if type(GGM.RefreshVisibleProfessionCatalog) == "function" then GGM.RefreshVisibleProfessionCatalog() end
     return "saved", nil
 end
 

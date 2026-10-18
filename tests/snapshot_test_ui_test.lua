@@ -568,6 +568,30 @@ local function showBrowser(GGM, api, db)
     return GGM.guildGearBrowserFrame
 end
 
+T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
+    local G = loadUI()
+    local calls = {}
+    G.professionSync = {}
+    G.RequestProfessionSync = function(_, pid, reason)
+        calls[#calls + 1] = { pid = pid, reason = reason }; return true
+    end
+    G.GetProfessionSyncStatus = function() return "Comparing cached data" end
+    local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
+    T.assertEqual(#calls, 0)
+    T.assertNotNil(frame.professionSyncButton)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, 1)
+    T.assertEqual(calls[1].pid, 171)
+    T.assertEqual(calls[1].reason, "selection")
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, 1)
+    G.SelectProfession(frame, "Blacksmithing")
+    T.assertEqual(calls[2].pid, 164)
+    frame.professionSyncButton.scripts.OnClick(frame.professionSyncButton)
+    T.assertEqual(calls[3].reason, "manual")
+end)
+
 T.test("character content stays within the journal's painted page borders", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
@@ -1165,7 +1189,7 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(frame.professionButtons[1].background.texCoord[3], 0.23757)
     T.assertEqual(frame.professionButtons[1].background.texCoord[4], 0.76520)
     T.assertEqual(frame.professionButtons[1].label.font.path, GGM.UIJournalTextures.boldFont)
-    T.assertEqual(frame.professionSearchBox.width, 400)
+    T.assertEqual(frame.professionSearchBox.width, 310)
     T.assertEqual(frame.professionSearchBox.height, 27)
     T.assertEqual(frame.professionHeroArtwork, frame.professionDetailPanel.background)
     T.assertEqual(frame.professionHeroArtwork.texCoord[1], 0)

@@ -62,8 +62,33 @@ local function makeApi(sendResults)
         end
     end
 
+    T.mockChatThrottle(api)
     return api, timers, sendCalls, setRegisterResult, drainTimers
 end
+
+T.test("gear waits for throttle completion before advancing frames", function()
+    local G = loadModules()
+    local api, timers, calls = makeApi()
+    local pending = {}
+    api.ChatThrottleLib.SendAddonMessage = function(_, priority, prefix, frame, channel, target, queue, callback, arg)
+        T.assertEqual(priority, "BULK")
+        pending[#pending + 1] = function(result) callback(arg, result == 0, result) end
+    end
+    local done = 0
+    local transport = assert(G.CreateSyncTransport(api, function() end))
+    T.assertTrue(G.SendSyncPayload(transport, string.rep("x", 500), function() done = done + 1 end))
+    T.assertEqual(#calls, 0)
+    T.assertEqual(#pending, 1)
+    T.assertEqual(#timers, 0)
+    T.assertEqual(done, 0)
+    pending[1](0)
+    T.assertEqual(#timers, 1)
+    timers[1]:Fire()
+    T.assertEqual(#pending, 2)
+    pending[2](12)
+    T.assertEqual(done, 1)
+    T.assertEqual(#transport.outboundFrames, 0)
+end)
 
 T.test("transport registers the addon prefix and treats non-success as failure", function()
     local GGM = loadModules()

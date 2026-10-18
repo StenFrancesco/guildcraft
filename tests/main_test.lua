@@ -104,7 +104,7 @@ T.test("main registers display and profession events without gear backend events
         T.assertTrue(registered.ADDON_LOADED == true)
         T.assertTrue(registered.PLAYER_LOGIN == true)
         T.assertNil(registered.PLAYER_EQUIPMENT_CHANGED)
-        T.assertNil(registered.CHAT_MSG_ADDON)
+        T.assertTrue(registered.CHAT_MSG_ADDON == true)
         T.assertTrue(registered.CHAT_MSG_GUILD == true)
         T.assertTrue(registered.TRADE_SKILL_SHOW == true)
         T.assertTrue(registered.TRADE_SKILL_CLOSE == true)
@@ -113,6 +113,41 @@ T.test("main registers display and profession events without gear backend events
         T.assertTrue(registered.PLAYER_ENTERING_WORLD == true)
         T.assertFalse(GGM.professionRosterMembershipCurrent)
         T.assertNotNil(onEvent)
+    end)
+end)
+
+T.test("main profession sync waits for reconciled roster and routes addon messages independently of gear", function()
+    local onEvent, logins, received, cancelled = nil, 0, 0, 0
+    local frame = { RegisterEvent = function() end, SetScript = function(_, _, fn) onEvent = fn end }
+    withGlobals({ CreateFrame = function() return frame end, TheGuildBookDB = NIL,
+        IsInGuild = function() return true end, C_GuildInfo = { GuildRoster = function() return true end },
+    }, function()
+        local G = {}
+        stubSnapshotUI(G)
+        G.InitializeDatabase = function() return { schemaVersion = 7, professions = {} } end
+        G.CreateProfessionSync = function(_, db) return { db = db } end
+        G.RegisterProfessionSync = function() return true end
+        G.RefreshProfessionSyncRoster = function() return true end
+        G.LoginProfessionSync = function() logins = logins + 1; return true end
+        G.CancelProfessionSync = function() cancelled = cancelled + 1 end
+        G.HandleProfessionSyncAddonMessage = function(_, prefix, message, channel, sender)
+            T.assertEqual(prefix, "GC_PROF"); T.assertEqual(sender, "Alice-Realm")
+            received = received + 1; return "ignored"
+        end
+        G.RecordLocalPlayerOwnership = function() return true end
+        G.ReconcileProfessionGuildRoster = function() G.professionRosterMembershipCurrent = true; return true end
+        T.loadAddonFile("The Guild Book/Main.lua", G)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
+        T.assertNotNil(G.professionSync)
+        onEvent(frame, "PLAYER_LOGIN")
+        T.assertEqual(logins, 0)
+        onEvent(frame, "PLAYER_ENTERING_WORLD")
+        onEvent(frame, "GUILD_ROSTER_UPDATE")
+        T.assertEqual(logins, 1)
+        onEvent(frame, "CHAT_MSG_ADDON", "GC_PROF", "frame", "GUILD", "Alice-Realm")
+        T.assertEqual(received, 1)
+        onEvent(frame, "PLAYER_GUILD_UPDATE")
+        T.assertTrue(cancelled > 0)
     end)
 end)
 

@@ -153,10 +153,11 @@ function GGM.CaptureLinkedProfessionSnapshot(api, source)
     table.sort(recipes, function(left, right) return left.recipeID < right.recipeID end)
 
     local capturedAt = 0
-    if type(api.time) == "function" then
-        local timeOk, value = pcall(api.time)
+    if type(api.GetServerTime) == "function" then
+        local timeOk, value = pcall(api.GetServerTime)
         if timeOk and nonNegativeInteger(value) then capturedAt = value end
     end
+    if capturedAt <= 0 then return nil, "profession-server-time-unavailable" end
 
     local snapshot = {
         complete = true,

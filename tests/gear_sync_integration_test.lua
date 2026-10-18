@@ -79,6 +79,7 @@ local function guild()
             end)
             return 0
         end
+        T.mockChatThrottle(api)
         local gearDB = { schemaVersion = G.SCHEMA_VERSION, characters = {}, localCharacters = {} }
         api.DysgearMemoryAPI = { schemaVersion = 2, GetDatabase = function() return gearDB end, GetBackend = function() return G end }
         local db, startupErr, professionDB = G.InitializeSavedDatabases(api)

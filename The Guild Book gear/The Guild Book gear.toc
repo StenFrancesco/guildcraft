@@ -1,9 +1,11 @@
 ## Interface: 120000, 16001
 ## Title: The Guild Book gear
 ## Notes: Gear capture, storage, and synchronization backend for The Guild Book
-## Author: Guild Gear Memory contributors
+## Author: The Guild Book contributors
 ## Version: 1.1.0
 ## SavedVariables: TheGuildBookGearDB
+
+Libs/ChatThrottleLib/ChatThrottleLib.lua
 
 Constants.lua
 CharacterIdentity.lua
