@@ -101,6 +101,26 @@ function GGM.ExtractItemString(itemLink)
     end
     local itemString = itemLink:match("|H(item:[^|]+)|h.-|h")
     if not itemString then return nil, nil, "item-link-invalid" end
+
+    -- Crafted links can append opaque numeric and player metadata before the
+    -- crafter identifier. Keep only the item payload that this parser validates.
+    local metadataStart = itemString:find(":Player-", 1, true)
+        or itemString:find(":Player}", 1, true)
+    if metadataStart then
+        local itemPayload = itemString:sub(1, metadataStart - 1)
+        if not GGM.ParseItemString(itemPayload) then
+            -- Crafted item links can include this opaque sentinel before the
+            -- crafter identifier; it is outside the supported item fields.
+            local opaqueValueStart = itemPayload:find(":-2147480301", 1, true)
+            if opaqueValueStart then
+                itemPayload = itemPayload:sub(1, opaqueValueStart - 1)
+            end
+        end
+        if GGM.ParseItemString(itemPayload) then
+            itemString = itemPayload
+        end
+    end
+
     local itemID, itemErr = GGM.ParseItemString(itemString)
     if not itemID then return nil, nil, itemErr end
     return itemString, itemID, nil
