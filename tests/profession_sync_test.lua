@@ -240,6 +240,141 @@ local function receiveLegacyAnnouncement(sender, receiver, reason)
     return receiver.sync.transport.onPayload(payload, sender.identity.key, "GUILD")
 end
 
+T.test("directed profession sync completes without an election wait or duplicate selection", function()
+    local bus = guild()
+    local requester, provider = bus:client("Alice"), bus:client("Zulu")
+    for index = 1, 998 do bus:member("Member" .. index) end
+    provider:save(provider.identity, { 3, 8, 9 })
+    requester:ready(); provider:ready()
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual", provider.identity.key:lower()))
+    bus:advance(1.9)
+    T.assertNotNil(requester.G.GetProfessionSyncRecord(requester.db, provider.identity.guid, 164),
+        "a directed responder must not wait for its roster slot or election deadline")
+    T.assertNil(requester.sync.manualOperation)
+    T.assertEqual(bus:count("S"), 1)
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames, "old deadline callbacks must not restart a finished exchange")
+end)
+
+T.test("a saved three-recipe update automatically reaches the other user within four seconds", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    local ids = {}
+    for index = 1, 300 do ids[index] = index end
+    a:save(a.identity, ids); b:save(a.identity, ids)
+    a:ready(); b:ready()
+    local before = assert(a.G.GetProfessionSyncDigest(a.db, 164))
+    for index = 301, 303 do ids[index] = index end
+    a:save(a.identity, ids, 1700000001)
+    assert(a.G.PublishProfessionSyncSave(a.sync, 164, before))
+    bus:advance(4)
+    local received = assert(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+    T.assertEqual(#received.recipes, 303)
+    T.assertEqual(received.capturedAt, 1700000001)
+    T.assertEqual(bus:count("D"), 1)
+end)
+
+T.test("discovery includes the last responder in a thousand-member roster within two seconds", function()
+    local bus = guild()
+    local requester = bus:client("ARequester")
+    for index = 1, 998 do bus:member("Member" .. index) end
+    local provider = bus:client("ZResponder")
+    provider:save(provider.identity, { 3 })
+    requester:ready(); provider:ready()
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "selection"))
+    bus:advance(1.99)
+    T.assertEqual(bus:count("D"), 0, "untargeted discovery must collect claims for its full window")
+    bus:advance(0.02)
+    T.assertNotNil(requester.G.GetProfessionSyncRecord(requester.db, provider.identity.guid, 164),
+        "the last roster slot must fit within the shortened discovery window")
+    T.assertEqual(bus:count("C"), 1)
+    T.assertEqual(bus:count("S"), 1)
+end)
+
+T.test("discovery still suppresses redundant claims and selects one responder", function()
+    local bus = guild()
+    local requester, a, b = bus:client("Requester"), bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }); b:save(a.identity, { 3 })
+    requester:ready(); a:ready(); b:ready()
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "selection"))
+    bus:advance(2.1)
+    T.assertEqual(bus:count("C"), 1)
+    T.assertEqual(bus:count("S"), 1)
+    T.assertEqual(bus:count("D"), 1)
+end)
+
+T.test("a late legacy discovery claim starts immediately after the short window", function()
+    local bus = guild()
+    local requester, provider = bus:client("Alice"), bus:client("Zulu")
+    provider:save(provider.identity, { 3 })
+    requester:ready(); provider:ready()
+    local newTimer = provider.api.C_Timer.NewTimer
+    provider.api.C_Timer.NewTimer = function(delay, fn)
+        if delay > 0 and delay < 2 then delay = 25 end
+        return newTimer(delay, fn)
+    end
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "selection"))
+    bus:advance(24.9)
+    T.assertEqual(bus:count("D"), 0)
+    bus:advance(0.2)
+    T.assertNotNil(requester.G.GetProfessionSyncRecord(requester.db, provider.identity.guid, 164),
+        "an old responder's late claim must remain usable without another election wait")
+end)
+
+T.test("directed fast selection rejects another peer's claim", function()
+    local bus = guild()
+    local requester, target, other = bus:client("Requester"), bus:client("Target"), bus:client("Other")
+    requester:ready(); target:ready(); other:ready()
+    target.drop = true
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual", target.identity.key:lower()))
+    bus:advance(0)
+    local session = requester.sync.active
+    local digest = assert(other.G.GetProfessionSyncDigest(other.db, 164))
+    local payload = "P3|C|" .. requester.sync.selfKey .. "|" .. session.id .. "|164|" .. requester.sync.selfKey .. ";" .. digest
+    T.assertEqual(requester.sync.transport.onPayload(payload, other.identity.key, "GUILD"), "ignored")
+    T.assertNil(session.selected)
+    T.assertEqual(bus:count("S"), 0)
+end)
+
+T.test("directed sync accepts an old responder's delayed claim without a second wait", function()
+    local bus = guild()
+    local requester, provider = bus:client("Alice"), bus:client("Zulu")
+    provider:save(provider.identity, { 3 })
+    requester:ready(); provider:ready()
+    local newTimer, delayed = provider.api.C_Timer.NewTimer, false
+    provider.api.C_Timer.NewTimer = function(delay, fn)
+        if delay == 0 and not delayed then delay, delayed = 25, true end
+        return newTimer(delay, fn)
+    end
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "manual", provider.sync.selfKey))
+    bus:advance(24.9)
+    T.assertEqual(bus:count("D"), 0)
+    bus:advance(0.2)
+    T.assertNotNil(requester.G.GetProfessionSyncRecord(requester.db, provider.identity.guid, 164))
+    T.assertEqual(bus:count("S"), 1)
+end)
+
+T.test("unanswered discovery stops at its compatibility deadline and ignores late claims", function()
+    local bus = guild()
+    local requester, provider = bus:client("Alice"), bus:client("Zulu")
+    requester:ready(); provider:ready()
+    provider.drop = true
+    assert(requester.G.RequestProfessionSync(requester.sync, 164, "selection"))
+    local session = requester.sync.active
+    bus:advance(26.9)
+    T.assertNotNil(requester.sync.active)
+    bus:advance(0.2)
+    T.assertNil(requester.sync.active)
+    T.assertEqual(requester.G.GetProfessionSyncStatus(requester.sync, 164), "Sync unavailable")
+    local digest = assert(provider.G.GetProfessionSyncDigest(provider.db, 164))
+    local payload = "P3|C|" .. requester.sync.selfKey .. "|" .. session.id .. "|164|" .. requester.sync.selfKey .. ";" .. digest
+    T.assertEqual(requester.sync.transport.onPayload(payload, provider.identity.key, "GUILD"), "ignored")
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames)
+end)
+
 T.test("profession login and idle time create no traffic", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
@@ -1049,7 +1184,9 @@ T.test("profession details and timestamp-only manifests are delivered only to th
     local bus = guild()
     local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     a:save(a.identity, { 3 }); a:ready(); b:ready(); c:ready()
-    assert(b.G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(65)
+    -- Use one discovery exchange: a manual operation intentionally compares
+    -- the next peer after cooldown and now reaches it before 65 seconds.
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection")); bus:advance(3)
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
     T.assertNil(c.G.GetProfessionSyncRecord(c.db, a.identity.guid, 164))
     T.assertEqual(bus:count("K"), 1)

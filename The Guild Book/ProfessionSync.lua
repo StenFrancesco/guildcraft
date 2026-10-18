@@ -8,7 +8,8 @@ local MAX_RECORDS, MAX_PAGES, PAGE_SIZE = 4, 4, 32
 local COOLDOWN, TTL, MAX_MANUAL_PEERS = 60, 300, 4
 -- Leave one session TTL and cooldown for each of the four allowed peers.
 local MANUAL_OPERATION_SECONDS = MAX_MANUAL_PEERS * (TTL + COOLDOWN)
-local CLAIM_SLOT_SECONDS, ELECTION_SECONDS = 0.025, 27
+local CLAIM_START_SECONDS, CLAIM_SPREAD_SECONDS = 0.1, 1
+local ELECTION_SECONDS, RESPONSE_DEADLINE_SECONDS = 2, 27
 local PRESENCE_EVIDENCE_SECONDS, CATALOG_REFRESH_DELAY = 60, 5
 local MAX_KNOWN_RECIPE_IDS, BLOOM_BITS_PER_ID = 2048, 8
 local BLOOM_MAX_BITS, BLOOM_PROBES = MAX_KNOWN_RECIPE_IDS * BLOOM_BITS_PER_ID, 5
@@ -675,6 +676,26 @@ local function yieldUnselectedComparison(sync, sender, reason)
     return true
 end
 
+local function selectResponder(sync, session)
+    if session.finished or sync.active ~= session or session.selected then return false end
+    if not session.preferredPeer and not session.electionReady then return false end
+    local chosen
+    for candidate in pairs(session.claims) do
+        if not chosen or candidate < chosen then chosen = candidate end
+    end
+    if not chosen then return false end
+    sync.lastError = nil
+    session.selected = chosen
+    if session.claims[chosen] == session.digest
+        and GGM.GetProfessionSyncDigest(sync.db, session.professionID, sync.members) == session.digest then
+        send(sync, "F", "*", session.id, session.professionID, "Cache hashes match")
+        finish(sync, session, "Cache hashes match")
+    elseif send(sync, "S", chosen, session.id, session.professionID, "") then
+        sendManifest(sync, session)
+    end
+    return true
+end
+
 local function logical(sync, payload, rawSender, channel)
     if not safe(sync) then return "ignored" end
     local sender = key(rawSender)
@@ -746,12 +767,18 @@ local function logical(sync, payload, rawSender, channel)
         -- Reserve the comparison we yielded to, including its response window.
         -- Pending work must not occupy the slot before selection arrives.
         if yielded then sync.active = session end
-        local order = 0
-        for candidate in pairs(sync.senders) do if candidate < sync.selfKey then order = order + 1 end end
-        timer(sync, 1 + order * CLAIM_SLOT_SECONDS, function()
+        local order, rosterCount = 0, 0
+        for candidate in pairs(sync.senders) do
+            rosterCount = rosterCount + 1
+            if candidate < sync.selfKey then order = order + 1 end
+        end
+        -- Directed requests already name the sole responder. Discovery slots
+        -- fit every supported roster size inside the two-second window.
+        local claimDelay = preferredPeer and 0
+            or CLAIM_START_SECONDS + CLAIM_SPREAD_SECONDS * order / rosterCount
+        timer(sync, claimDelay, function()
             if session.finished or session.selected or (sync.active and sync.active ~= session) then return end
-            -- A yielded query can still be waiting in CTL. Queue this one
-            -- response behind it instead of silently missing the claim window.
+            -- Preserve yielded-query admission while CTL drains its backlog.
             if #sync.transport.outboundFrames > 0 and not yielded then return end
             if next(session.claims) then return end
             session.claims[sync.selfKey] = digest
@@ -771,6 +798,7 @@ local function logical(sync, payload, rawSender, channel)
             or (session.preferredPeer and session.preferredPeer ~= sender) then return "ignored" end
         acceptPeerMessage(sync, sender)
         session.claims[sender] = bits[2]
+        selectResponder(sync, session)
         return "claimed"
     elseif kind == "S" then
         if sender ~= session.initiator or not session.claims[recipient] or body ~= "" or session.selected then return "ignored" end
@@ -1063,23 +1091,20 @@ local function startProfessionComparison(sync, professionID, reason, preferredPe
     notify(sync, professionID, "Comparing cached data")
     local sent = send(sync, "Q", "*", id, professionID, digest .. ";" .. reason .. ";" .. startGUID .. ";" .. (preferredPeer or ""), function(success)
         if not success or session.finished then return end
-        timer(sync, ELECTION_SECONDS, function()
-            if session.finished or sync.active ~= session then return end
-            local chosen
-            for candidate in pairs(session.claims) do if not chosen or candidate < chosen then chosen = candidate end end
-            if not chosen then
+        if not preferredPeer then
+            timer(sync, ELECTION_SECONDS, function()
+                session.electionReady = true
+                selectResponder(sync, session)
+            end)
+        end
+        -- Old clients may still use roster slots extending to 26 seconds.
+        -- This is only a no-response bound, never a wait after a usable claim.
+        timer(sync, RESPONSE_DEADLINE_SECONDS, function()
+            if session.finished or sync.active ~= session or session.selected then return end
+            if not selectResponder(sync, session) then
                 sync.lastError = "profession-sync-no-responder"
                 finish(sync, session, "Sync unavailable")
-                return
             end
-            sync.lastError = nil
-            session.selected = chosen
-            if session.claims[chosen] == digest and GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members) == digest then
-                send(sync, "F", "*", id, professionID, "Cache hashes match")
-                finish(sync, session, "Cache hashes match")
-                return
-            end
-            if send(sync, "S", chosen, id, professionID, "") then sendManifest(sync, session) end
         end)
     end)
     return sent, sent and nil or sync.lastError
