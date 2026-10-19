@@ -38,6 +38,117 @@ local function indexedMetadata(GGM, professionID)
     }
 end
 
+T.test("profession library filter returns only complete professions owned by the selected character", function()
+    local GGM = loadModules()
+    local entries = {
+        { key = "Alchemy", professionID = 171 },
+        { key = "Blacksmithing", professionID = 164 },
+        { key = "Enchanting", professionID = 333 },
+    }
+    local alice = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local db = {
+        schemaVersion = GGM.SCHEMA_VERSION,
+        professions = {
+            [alice.key] = {
+                identity = alice,
+                snapshots = {
+                    [171] = indexedMetadata(GGM, 171),
+                    [164] = indexedMetadata(GGM, 164),
+                },
+            },
+        },
+    }
+    local beforeEntries = entries
+    local beforeDB = db
+
+    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, alice.key)
+
+    T.assertEqual(#filtered, 2)
+    T.assertTrue(filtered[1] == entries[1])
+    T.assertTrue(filtered[2] == entries[2])
+    T.assertTrue(GGM.FilterProfessionLibraryEntries(entries, db, "Missing-Silvermoon") ~= nil)
+    T.assertTrue(entries == beforeEntries)
+    T.assertTrue(db == beforeDB)
+    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, "Missing-Silvermoon"), 0)
+end)
+
+T.test("profession library filter rejects invalid identity fields", function()
+    local GGM = loadModules()
+    local entries = { { key = "Alchemy", professionID = 171 } }
+    local alice = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local db = {
+        schemaVersion = GGM.SCHEMA_VERSION,
+        professions = {
+            [alice.key] = {
+                identity = { key = alice.key, name = "", realm = alice.realm, guid = alice.guid },
+                snapshots = { [171] = indexedMetadata(GGM, 171) },
+            },
+        },
+    }
+
+    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, alice.key), 0)
+
+    db.professions[alice.key].identity = {
+        key = "Other-Silvermoon",
+        name = "Alice",
+        realm = alice.realm,
+        guid = alice.guid,
+    }
+    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, alice.key), 0)
+end)
+
+T.test("profession library filter rejects a malformed unrelated snapshot", function()
+    local GGM = loadModules()
+    local entries = {
+        { key = "Alchemy", professionID = 171 },
+        { key = "Blacksmithing", professionID = 164 },
+    }
+    local alice = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local db = {
+        schemaVersion = GGM.SCHEMA_VERSION,
+        professions = {
+            [alice.key] = {
+                identity = alice,
+                snapshots = {
+                    [171] = indexedMetadata(GGM, 171),
+                    [164] = { professionID = 164, complete = false },
+                },
+            },
+        },
+    }
+
+    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, alice.key)
+
+    T.assertEqual(#filtered, 0)
+end)
+
+T.test("profession library filter does not mutate nested inputs", function()
+    local GGM = loadModules()
+    local entries = {
+        { key = "Alchemy", professionID = 171, metadata = { label = "Alchemy" } },
+    }
+    local identity = indexedIdentity(GGM, "Alice-Silvermoon", "Player-1-A")
+    local snapshot = indexedMetadata(GGM, 171)
+    local db = {
+        schemaVersion = GGM.SCHEMA_VERSION,
+        professions = {
+            [identity.key] = { identity = identity, snapshots = { [171] = snapshot } },
+        },
+    }
+    local originalEntryMetadata = entries[1].metadata
+    local originalIdentity = db.professions[identity.key].identity
+    local originalSnapshot = db.professions[identity.key].snapshots[171]
+
+    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, identity.key)
+
+    T.assertTrue(filtered[1] == entries[1])
+    T.assertTrue(entries[1].metadata == originalEntryMetadata)
+    T.assertTrue(db.professions[identity.key].identity == originalIdentity)
+    T.assertTrue(db.professions[identity.key].snapshots[171] == originalSnapshot)
+    T.assertEqual(identity.name, "Alice")
+    T.assertEqual(snapshot.professionName, "Alchemy")
+end)
+
 T.test("profession index replaces an ID placeholder when another crafter supplies a real label", function()
     local GGM = loadModules()
     local db = assert(T.initializeDatabase(GGM, nil))
