@@ -2,6 +2,13 @@ local T = require("tests.testlib")
 
 local guild = require("tests.profession_sync_fixture")
 
+local function automatic(client)
+    T.loadAddonFile("The Guild Book/AutomaticSync.lua", client.G)
+    T.loadAddonFile("The Guild Book/ProfessionAutomaticSync.lua", client.G)
+    client.api.IsResting = function() return true end
+    client.api.C_Map = { GetBestMapForUnit = function() return 84 end }
+end
+
 T.test("tailor can manually receive engineering from the only other online guild member", function()
     local bus = guild()
     local tailor, engineer = bus:client("Tailor"), bus:client("Engineer")
@@ -30,7 +37,8 @@ end)
 
 T.test("simultaneous profession comparisons elect one initiator and still exchange recipes", function()
     for _, reasons in ipairs({ { "selection", "selection" }, { "selection", "manual" },
-        { "manual", "selection" }, { "manual", "manual" } }) do
+        { "manual", "selection" }, { "manual", "manual" }, { "login", "manual" },
+        { "manual", "login" }, { "login", "selection" }, { "selection", "login" } }) do
         for _, firstName in ipairs({ "Alice", "Zelda" }) do
             local bus = guild()
             local a, b = bus:client(firstName), bus:client("Bob")
@@ -278,7 +286,7 @@ T.test("unanswered discovery stops at its compatibility deadline and ignores lat
     T.assertEqual(#bus.frames, frames)
 end)
 
-T.test("profession login and idle time create no traffic", function()
+T.test("profession login waits for roster readiness and idle readiness creates no traffic", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     T.assertEqual(#bus.frames, 0)
@@ -572,21 +580,131 @@ T.test("separate manual requests rotate the four-peer window to a newer fifth pe
     T.assertEqual(#bus.frames, frameCount, "rotation advances only on a later manual request")
 end)
 
-T.test("login and idle roster readiness create no profession network traffic", function()
+T.test("login sync exchanges cached data once without opening the addon", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3, 8 }); b:save(b.identity, { 9 })
+    a:ready(); b:ready(); automatic(a); automatic(b)
+    T.assertTrue(a.G.LoginProfessionSync(a.sync))
+    T.assertTrue(a.G.LoginProfessionSync(a.sync), "repeated login scheduling is idempotent")
+    bus:advance(240)
+    T.assertNotNil(a.G.GetProfessionSyncRecord(a.db, b.identity.guid, 164))
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+    T.assertEqual(bus:count("Q", a.identity.key), 6, "one discovery per supported profession")
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames, "idle time must not restart login sync")
+end)
+
+T.test("login discovery collects replies for 27 seconds", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3, 8 })
+    a:ready(); b:ready()
+    T.assertTrue(a.G.RequestProfessionSync(a.sync, 164, "login"))
+    bus:advance(26.9)
+    T.assertTrue(bus:count("C") > 0)
+    T.assertEqual(bus:count("D"), 0)
+    T.assertEqual(bus:count("S"), 0)
+    bus:advance(2)
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+end)
+
+T.test("unselected login responder reservations expire after discovery", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:ready(); b:ready()
-    T.assertFalse(a.G.LoginProfessionSync(a.sync))
-    bus:advance(3600)
-    T.assertEqual(#bus.frames, 0)
+    T.assertTrue(a.G.RequestProfessionSync(a.sync, 164, "login"))
+    bus:advance(0)
+    local reservation = b.sync.active
+    T.assertNotNil(reservation, "the responder reserves its slot while collecting login claims")
+    T.assertEqual(reservation.reason, "login")
+
+    -- The initiator no longer receives the responder's claim, so it cannot
+    -- select this peer or send S to release it explicitly.
+    a.drop = true
+    bus:advance(29)
+    T.assertNil(b.sync.active, "an unselected login reservation must not block peers for the 300-second TTL")
+    T.assertNil(b.sync.sessions[reservation.initiator .. ":" .. reservation.id])
 end)
 
-T.test("legacy login and background announcements are hints and their queries are ignored", function()
+T.test("manual button still exchanges records within two seconds", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3, 8 })
+    a:ready(); b:ready()
+    T.assertTrue(b.G.RequestProfessionSync(b.sync, 164, "manual"))
+    bus:advance(2)
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+end)
+
+T.test("simultaneous login syncs exchange data and leave no recurring traffic", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }); b:save(b.identity, { 8 })
+    a:ready(); b:ready(); automatic(a); automatic(b)
+    T.assertTrue(a.G.LoginProfessionSync(a.sync))
+    T.assertTrue(b.G.LoginProfessionSync(b.sync))
+    bus:advance(600)
+    T.assertNotNil(a.G.GetProfessionSyncRecord(a.db, b.identity.guid, 164))
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames)
+end)
+
+T.test("login comparison yielded to a different profession resumes once", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3, 8 })
+    a:ready(); b:ready()
+    T.assertTrue(a.G.RequestProfessionSync(a.sync, 165, "login"))
+    T.assertTrue(b.G.RequestProfessionSync(b.sync, 164, "login"))
+    bus:advance(180)
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164),
+        "yielding to another profession must not drop the login comparison")
+    T.assertEqual(bus:count("Q", b.identity.key), 2)
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames, "a yielded job must not create recurring retries")
+end)
+
+T.test("login discovery without peers finishes its finite pass", function()
+    local bus = guild()
+    local a = bus:client("Alice")
+    a:ready(); automatic(a)
+    T.assertTrue(a.G.LoginProfessionSync(a.sync))
+    bus:advance(240)
+    T.assertNil(a.sync.active)
+    T.assertNil(next(a.sync.pending))
+    T.assertEqual(bus:count("Q"), 0, "no eligible peer requires no discovery")
+    T.assertFalse(a.sync.automaticController.pending)
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames)
+end)
+
+T.test("cancelling login sync clears the remaining automatic work", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready(); automatic(a); automatic(b)
+    T.assertTrue(a.G.LoginProfessionSync(a.sync))
+    bus:advance(2)
+    a.G.StopAutomaticSync(a.sync.automaticController)
+    a.G.CancelProfessionSync(a.sync)
+    local frames = #bus.frames
+    bus:advance(3600)
+    T.assertEqual(#bus.frames, frames)
+    T.assertNil(a.sync.active)
+    T.assertNil(next(a.sync.pending))
+end)
+
+T.test("legacy background announcements are hints and their queries are ignored", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:ready(); b:ready()
     local digest = assert(a.G.GetProfessionSyncDigest(a.db, 164, a.sync.members))
-    for _, reason in ipairs({ "login", "background" }) do
+    for _, reason in ipairs({ "background" }) do
         local announcement = "P4|A|*|123-1|0|164," .. digest .. "," .. reason
         T.assertEqual(b.sync.transport.onPayload(announcement, a.identity.key, "GUILD"), "announced")
         local query = "P4|Q|*|123-2|164|" .. digest .. ";" .. reason .. ";;"
@@ -749,6 +867,7 @@ T.test("real profession event startup does not require the gear companion", func
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:save(a.identity, { 3 }); a:ready()
+    automatic(b)
     local G, api, onEvent = b.G, b.api, nil
     api._G = api; setmetatable(api, { __index = _G })
     api.CreateFrame = function() return { RegisterEvent = function() end, SetScript = function(_, _, fn) onEvent = fn end } end
@@ -757,6 +876,7 @@ T.test("real profession event startup does not require the gear companion", func
     G.RegisterSnapshotTestSlashCommand = function() end
     G.InitializeSavedDatabases = function() return b.db, nil, b.db end
     G.CreateProfessionLinkSaveController = function() return {} end
+    G.TryAutoSaveProfession = function() return "ignored" end
     G.RegisterProfessionLinkSaveController = function() return true end
     G.RecordLocalPlayerOwnership = function() return G.MarkLocalCharacterGUID(b.db, b.identity.guid) end
     local chunk = assert(loadfile("The Guild Book/Main.lua")); setfenv(chunk, api); chunk("The Guild Book", G)
@@ -767,9 +887,10 @@ T.test("real profession event startup does not require the gear companion", func
     onEvent(nil, "PLAYER_LOGIN")
     onEvent(nil, "PLAYER_ENTERING_WORLD")
     onEvent(nil, "GUILD_ROSTER_UPDATE")
-    bus:advance(80)
-    T.assertNil(G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
-    T.assertEqual(#bus.frames, 0, "startup events alone must not create network traffic")
+    T.assertTrue(G.professionLoginSyncIssued)
+    bus:advance(240)
+    T.assertNotNil(G.GetProfessionSyncRecord(b.db, a.identity.guid, 164),
+        "login must sync after roster readiness without opening the addon")
     assert(G.RequestProfessionSync(b.sync, 164, "manual")); bus:advance(80)
     T.assertNotNil(G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
     onEvent(nil, "GUILD_ROSTER_UPDATE"); onEvent(nil, "PLAYER_ENTERING_WORLD")

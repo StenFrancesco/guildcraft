@@ -10,6 +10,7 @@ local suites = {
     "tests.gear_data_test",
     "tests.gear_snapshot_test",
     "tests.storage_test",
+    "tests.gear_freshness_test",
     "tests.gear_storage_split_test",
     "tests.local_gear_memory_test",
     "tests.bank_memory_test",
@@ -28,7 +29,9 @@ local suites = {
     "tests.profession_automatic_sync_test",
     "tests.profession_index_test",
     "tests.profession_link_save_test",
+    "tests.profession_auto_save_test",
     "tests.main_test",
+    "tests.inspect_gear_test",
     "tests.saved_character_model_test",
     "tests.recipe_details_test",
 }

@@ -2,21 +2,21 @@ local ADDON_NAME, GearMemory = ...
 local api = _G
 
 local frame = CreateFrame("Frame")
-for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "CHAT_MSG_ADDON",
+for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "CHAT_MSG_ADDON", "INSPECT_READY",
     "GUILD_ROSTER_UPDATE", "PLAYER_GUILD_UPDATE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA",
     "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "PLAYER_UPDATE_RESTING", "PLAYER_REGEN_ENABLED" }) do
     frame:RegisterEvent(event)
 end
 
-local function notifyDisplay()
-    if type(api.GuildGearMemoryGearChanged) == "function" then pcall(api.GuildGearMemoryGearChanged) end
+local function notifyDisplay(dataChanged)
+    if type(api.GuildGearMemoryGearChanged) == "function" then pcall(api.GuildGearMemoryGearChanged, dataChanged == true) end
 end
 
 local function publishConfirmedSlot(...)
-    if not GearMemory.guildSync then return end
+    if not GearMemory.guildSync then notifyDisplay(true); return end
     local queued, err = GearMemory.PublishConfirmedSlot(GearMemory.guildSync, ...)
     if queued then GearMemory.lastSyncError = nil else GearMemory.lastSyncError = err end
-    notifyDisplay()
+    notifyDisplay(true)
 end
 
 frame:SetScript("OnEvent", function(_, event, ...)
@@ -41,14 +41,32 @@ frame:SetScript("OnEvent", function(_, event, ...)
         local sync, syncErr = GearMemory.CreateGuildSync(api, database)
         if sync then
             local registered, registerErr = GearMemory.RegisterGuildSync(sync)
-            if registered then GearMemory.guildSync = sync else syncErr = registerErr end
+            if registered then
+                GearMemory.guildSync = sync
+                sync.onChanged = notifyDisplay
+            else syncErr = registerErr end
         end
         GearMemory.lastSyncError = syncErr
+        if type(GearMemory.InstallInspectGearCapture) == "function" then
+            local inspectCapture, inspectErr = GearMemory.InstallInspectGearCapture(api, database, function()
+                notifyDisplay(true)
+            end)
+            GearMemory.inspectGearCapture = inspectCapture
+            GearMemory.lastInspectCaptureError = inspectErr
+        end
         notifyDisplay()
         return
     end
 
     if not GearMemory.db or GearMemory.startupError then return end
+
+    if event == "INSPECT_READY" then
+        if type(GearMemory.HandleInspectGearReady) ~= "function" or not GearMemory.inspectGearCapture then return end
+        local _, inspectErr = GearMemory.HandleInspectGearReady(GearMemory.inspectGearCapture, arg1)
+        if inspectErr then GearMemory.lastInspectCaptureError = inspectErr
+        else GearMemory.lastInspectCaptureError = nil end
+        return
+    end
 
     if event == "PLAYER_LOGIN" then
         if GearMemory.guildSync and type(GearMemory.LoginGearSync) == "function" then GearMemory.LoginGearSync(GearMemory.guildSync) end
@@ -64,7 +82,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             if GearMemory.guildSync then GearMemory.guildSync.localGearTracker = tracker end
             GearMemory.lastGearTrackingError = err
             GearMemory.lastCaptureError = err
-            notifyDisplay()
+            notifyDisplay(true)
         end)
         return
     end

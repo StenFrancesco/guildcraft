@@ -43,6 +43,26 @@ local function refreshProfessionSyncRoster()
     end
 end
 
+local function requestProfessionAutoSave()
+    local controller = GGM.professionLinkSave
+    if not controller or controller.panelOpen ~= true or GGM.startupError then return end
+    local request = {}
+    controller.autoSaveRequest = request
+    local function save()
+        if controller.autoSaveRequest ~= request then return end
+        controller.autoSaveRequest = nil
+        local _, err = GGM.TryAutoSaveProfession(controller)
+        GGM.lastProfessionSaveError = err
+    end
+    -- SetItemRef is observed by a post-hook. Let it establish the new owner
+    -- before handling synchronous panel events raised while opening the link.
+    if type(_G.C_Timer) == "table" and type(_G.C_Timer.After) == "function" then
+        _G.C_Timer.After(0, save)
+    else
+        save()
+    end
+end
+
 frame:SetScript("OnEvent", function(_, event, ...)
     local arg1 = ...
 
@@ -146,12 +166,18 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     if event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" then
         if GGM.professionLinkSave and not GGM.startupError then
+            if event == "TRADE_SKILL_SHOW" then GGM.professionLinkSave.panelOpen = true end
             GGM.RefreshProfessionSaveButton(GGM.professionLinkSave)
+            requestProfessionAutoSave()
         end
         return
     end
 
     if event == "TRADE_SKILL_CLOSE" then
+        if GGM.guildGearBrowserFrame then
+            GGM.guildGearBrowserFrame.craftingContextSkillLineID = nil
+            GGM.guildGearBrowserFrame.craftingContextOpenedByGuildBook = nil
+        end
         if GGM.professionLinkSave then
             GGM.ClearProfessionSaveContext(GGM.professionLinkSave)
         end
@@ -216,6 +242,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
         refreshProfessionSyncRoster()
         refreshVisibleProfessionCatalog()
+        requestProfessionAutoSave()
         return
     end
 

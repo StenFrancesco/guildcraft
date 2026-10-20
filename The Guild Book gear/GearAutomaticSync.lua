@@ -117,7 +117,7 @@ local function run(sync, done)
             end
             local target = verified.members[key]
             local sent, _, requestID
-            if target then sent, _, requestID = GGM.RequestCompleteSnapshot(sync, target, job.callback) end
+            if target then sent, _, requestID = GGM.RequestCompleteSnapshot(sync, target, nil, nil, job.callback) end
             job.id = requestID
             if not sent then job.callback(false)
             else

@@ -77,7 +77,7 @@ function GGM.AttachGearBackend(backend)
     return true, nil
 end
 
-function GGM.RefreshGearBackendState()
+function GGM.RefreshGearBackendState(dataChanged)
     local attachedLate = false
     if GGM.gearStartupError == "gear-companion-missing"
         and type(rawget(_G, "DysgearMemoryAPI")) == "table"
@@ -94,7 +94,9 @@ function GGM.RefreshGearBackendState()
     GGM.lastGearTrackingError = backend and backend.lastGearTrackingError or GGM.gearStartupError
     GGM.lastCaptureError = backend and backend.lastCaptureError or nil
 
-    if attachedLate and type(GGM.RefreshVisibleGuildGearBrowser) == "function" then
+    if type(GGM.RefreshVisibleGearSyncStatus) == "function" then GGM.RefreshVisibleGearSyncStatus(dataChanged) end
+
+    if (attachedLate or dataChanged == true) and type(GGM.RefreshVisibleGuildGearBrowser) == "function" then
         GGM.RefreshVisibleGuildGearBrowser()
     end
 end

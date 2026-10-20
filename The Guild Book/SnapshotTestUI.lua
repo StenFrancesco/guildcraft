@@ -1,4 +1,5 @@
 local _, GGM = ...
+local REQUEST_ERRORS
 
 local function gearUnavailableMessage(db)
     local reason = type(db) == "table" and db.gearUnavailableReason or nil
@@ -187,12 +188,13 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         local icon = slotTexture
         if itemID then icon = getItemIcon(api, itemID) or slotTexture end
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
-        local displayName = slotDisplayNames[trackedSlot.key]
+        local displayName = itemLink and itemLink:match("|h%[(.-)%]|h") or slotDisplayNames[trackedSlot.key]
         table.insert(slots, {
             key = trackedSlot.key,
             inventorySlotID = state.inventorySlotID,
             itemID = itemID,
             itemLink = itemLink,
+            itemString = state.itemString,
             empty = empty,
             unavailable = unavailable,
             valueText = unavailable and "No data" or nil,
@@ -401,7 +403,7 @@ local UI = {
     characterDetailHeight = 510,
     characterDetailWidth = 721,
     professionLibraryX = 314,
-    professionLibraryTop = 109,
+    professionLibraryTop = 145,
     professionDetailX = 629,
     professionSidebarWidth = 297,
     professionRowWidth = 244,
@@ -601,28 +603,6 @@ local function createSectionLabel(parent, text)
     return label
 end
 
-local function createStatusBadge(api, parent)
-    local badge = createSurface(api, parent, THEME.panelRaised, THEME.borderSoft)
-    badge:SetSize(126, 24)
-    badge.dot = badge:CreateTexture(nil, "ARTWORK")
-    badge.dot:SetSize(6, 6)
-    badge.dot:SetPoint("LEFT", badge, "LEFT", 10, 0)
-    badge.text = createText(badge, "OVERLAY", "GameFontHighlightSmall")
-    badge.text:SetPoint("LEFT", badge.dot, "RIGHT", 7, 0)
-    badge.text:SetPoint("RIGHT", badge, "RIGHT", -8, 0)
-    badge.text:SetJustifyH("LEFT")
-    return badge
-end
-
-local function setStatusBadge(badge, text, tone)
-    if not badge then return end
-    local color = tone == "success" and THEME.success or (tone == "warning" and THEME.warning) or THEME.muted
-    badge.text:SetText(text or "")
-    setTextColor(badge.text, color)
-    setColor(badge.dot, color)
-    recolorBorder(badge.border, { color[1], color[2], color[3], 0.48 })
-end
-
 local function createEmptyStateCard(api, parent, iconPath, title, body)
     local card = createSurface(api, parent, THEME.panelAlt, THEME.borderSoft, true)
     card:SetSize(390, 190)
@@ -649,6 +629,46 @@ local function createEmptyStateCard(api, parent, iconPath, title, body)
     return card
 end
 
+local function refreshGearSyncControls(frame)
+    if not frame.gearSyncButton then return end
+    local entry = frame.selectedEntry
+    local visible = frame.activeTab == "Character" and entry ~= nil
+    if not visible then frame.gearSyncButton:Hide(); frame.gearSyncStatus:Hide(); return end
+    frame.gearSyncButton:Show()
+    frame.gearSyncStatus:Show()
+    local status, busy, err = "", false, nil
+    if type(GGM.GetGearSyncStatus) == "function" then
+        status, busy, err = GGM.GetGearSyncStatus(GGM.guildSync, entry.key)
+    end
+    local localError = frame.gearSyncError
+    if localError and localError.targetKey == entry.key then
+        err = localError.error
+        if busy then frame.gearSyncError = nil; err = nil end
+    end
+    if err then status = REQUEST_ERRORS[err] or "Gear sync failed. Try again." end
+    frame.gearSyncStatus:SetText(status)
+    if frame.gearSyncButton.SetEnabled then frame.gearSyncButton:SetEnabled(not busy) end
+end
+
+function GGM.SyncSelectedGear(frame)
+    local entry = frame and frame.selectedEntry
+    if not entry or frame.activeTab ~= "Character" then return false end
+    local ok, err = false, "sync-unavailable"
+    if GGM.guildSync and type(GGM.RequestCompleteSnapshot) == "function" then
+        ok, err = GGM.RequestCompleteSnapshot(GGM.guildSync, entry.record.identity)
+    end
+    frame.gearSyncError = not ok and { targetKey = entry.key, error = err } or nil
+    GGM.lastSyncError = err
+    refreshGearSyncControls(frame)
+    return ok, err
+end
+
+function GGM.RefreshVisibleGearSyncStatus(dataChanged)
+    local frame = GGM.guildGearBrowserFrame
+    if frame and dataChanged == true then frame.gearSyncError = nil end
+    if frame and frame:IsShown() then refreshGearSyncControls(frame) end
+end
+
 local function renderBrowserDetail(frame, entry, api)
     if type(GGM.ClearSavedCharacterModel) == "function" then
         GGM.ClearSavedCharacterModel(frame.characterModelView)
@@ -657,10 +677,10 @@ local function renderBrowserDetail(frame, entry, api)
     end
     if frame.modelUnavailableLabel then frame.modelUnavailableLabel:Hide() end
     frame.detailModel = nil
-    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do
+    refreshGearSyncControls(frame)
+    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine }) do
         if control then control:Hide() end
     end
-    if frame.completenessBadge then frame.completenessBadge:Hide() end
     if frame.snapshotCaption then frame.snapshotCaption:Hide() end
     frame.detailEmpty:Hide()
     if frame.modelStage then frame.modelStage:Hide() end
@@ -705,12 +725,7 @@ local function renderBrowserDetail(frame, entry, api)
     setText(frame.characterLine, model.characterName)
     setText(frame.realmLine, model.realm)
     setText(frame.capturedLine, model.capturedAtText)
-    setText(frame.completenessLine, model.completenessText)
     if frame.snapshotCaption then frame.snapshotCaption:Show() end
-
-    local statusTone = model.complete and "success" or "warning"
-    setStatusBadge(frame.completenessBadge, model.completenessText, statusTone)
-    frame.completenessBadge:Show()
 
     for index, slot in ipairs(model.slots) do
         local button = frame.slotButtons[index]
@@ -724,6 +739,8 @@ local function renderBrowserDetail(frame, entry, api)
             if not slot.empty and not slot.unavailable then button.glow:Show() else button.glow:Hide() end
         end
         button.label:SetText(slot.displayName)
+        button.label:SetHeight(slot.itemID and 32 or 14)
+        button.pendingItemString = slot.itemID and slot.displayName == "Item " .. tostring(slot.itemID) and slot.itemString or nil
         setText(button.status, slot.statusText)
         button.empty = slot.empty
         button.unavailable = slot.unavailable
@@ -751,6 +768,7 @@ local function renderBrowserDetail(frame, entry, api)
 end
 
 local function setBrowserContentVisible(frame, visible)
+    refreshGearSyncControls(frame)
     for _, control in ipairs({ frame.searchPanel, frame.listPanel, frame.gearPanel }) do
         if control then if visible then control:Show() else control:Hide() end end
     end
@@ -822,6 +840,73 @@ function GGM.FilterProfessionRecipeBrowserEntries(entries, query)
     return filtered
 end
 
+function GGM.HideBlizzardProfessionPanel(api, professionFrame)
+    if type(api) ~= "table" or not professionFrame then return false end
+    if type(api.HideUIPanel) ~= "function" then return false end
+
+    local getScript = professionFrame.GetScript
+    local setScript = professionFrame.SetScript
+    local originalOnHide
+    local canTemporarilySuppress = type(getScript) == "function" and type(setScript) == "function"
+    if canTemporarilySuppress then
+        local scriptOK, script = pcall(getScript, professionFrame, "OnHide")
+        if not scriptOK then return false end
+        originalOnHide = script
+        local clearOK = pcall(setScript, professionFrame, "OnHide", nil)
+        if not clearOK then return false end
+    end
+
+    local hideOK = pcall(api.HideUIPanel, professionFrame)
+    if canTemporarilySuppress then
+        pcall(setScript, professionFrame, "OnHide", originalOnHide)
+    end
+    return hideOK
+end
+
+function GGM.CloseBlizzardProfessionPanel(api, professionFrame)
+    if type(api) ~= "table" then return false end
+    local trade = api.C_TradeSkillUI
+    local closedContext = false
+    if type(trade) == "table" and type(trade.CloseTradeSkill) == "function" then
+        closedContext = pcall(trade.CloseTradeSkill)
+    end
+    local hiddenFrame = false
+    if professionFrame and type(professionFrame.Hide) == "function" then
+        hiddenFrame = pcall(professionFrame.Hide, professionFrame)
+    end
+    return closedContext or hiddenFrame
+end
+
+local function openSelectedProfessionContext(frame, skillLineID)
+    if frame.professionLibraryMode ~= "Own" then return false end
+    local trade = frame.api and frame.api.C_TradeSkillUI
+    if type(trade) ~= "table" or type(trade.OpenTradeSkill) ~= "function" then return false end
+    local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
+    local frameWasShown = false
+    if professionFrame and type(professionFrame.IsShown) == "function" then
+        local shownOK, wasShown = pcall(professionFrame.IsShown, professionFrame)
+        frameWasShown = not shownOK or wasShown == true
+    end
+    local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
+    if not openOK or opened == false then return false end
+    frame.craftingContextSkillLineID = skillLineID
+    frame.craftingContextOpenedByGuildBook = not frameWasShown
+    if professionFrame then
+        if type(GGM.HideBlizzardProfessionPanel) == "function" then
+            GGM.HideBlizzardProfessionPanel(frame.api, professionFrame)
+        elseif type(professionFrame.Hide) == "function" then
+            pcall(professionFrame.Hide, professionFrame)
+        end
+        if type(professionFrame.SetFrameStrata) == "function" then
+            pcall(professionFrame.SetFrameStrata, professionFrame, "MEDIUM")
+        end
+        if type(professionFrame.SetFrameLevel) == "function" then
+            pcall(professionFrame.SetFrameLevel, professionFrame, 1)
+        end
+    end
+    return true
+end
+
 function GGM.SelectProfession(frame, selectedKey)
     local selectedProfession
     for _, profession in ipairs(PROFESSIONS) do if profession.key == selectedKey then selectedProfession = profession; break end end
@@ -829,6 +914,7 @@ function GGM.SelectProfession(frame, selectedKey)
     local changed = frame.selectedProfession ~= selectedKey
     if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.selectedProfession = selectedKey
+    frame.selectedProfessionID = selectedProfession.professionID
     frame.professionHeading:SetText(selectedKey)
     updateProfessionSubtitle(frame, selectedKey)
     if frame.professionHeroIcon then frame.professionHeroIcon:SetTexture(selectedProfession.icon) end
@@ -842,7 +928,61 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, selectedProfession.professionID, selectedProfession.key, frame.api)
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
     end
+    frame.craftingContextSkillLineID = nil
+    frame.craftingContextOpenedByGuildBook = nil
+    if frame.professionLibraryMode == "Own" then
+        openSelectedProfessionContext(frame, selectedProfession.professionID)
+    end
     if frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
+    return true
+end
+
+function GGM.RefreshVisibleProfessionLibrary(frame)
+    frame = frame or GGM.guildGearBrowserFrame
+    if not frame or type(frame.professionButtons) ~= "table" then return false end
+
+    local visibleEntries = {}
+    if frame.professionLibraryMode == "Own" then
+        local identity = nil
+        if type(GGM.BuildPlayerIdentity) == "function" then
+            local identityOk, playerIdentity = pcall(GGM.BuildPlayerIdentity, frame.api)
+            if identityOk then identity = playerIdentity end
+        end
+        local characterKey = identity and identity.key or nil
+        local characterGUID = identity and identity.guid or nil
+        visibleEntries = GGM.FilterProfessionLibraryEntries(
+            frame.professionButtons, frame.db, characterKey, characterGUID)
+    else
+        for _, button in ipairs(frame.professionButtons) do visibleEntries[#visibleEntries + 1] = button end
+    end
+
+    local visibleByKey = {}
+    for index, button in ipairs(visibleEntries) do
+        visibleByKey[button.key] = true
+        button:ClearAllPoints()
+        button:SetPoint("TOPLEFT", frame.professionSidebar, "TOPLEFT", 34,
+            -(62 + (index - 1) * UI.professionRowPitch))
+        button:Show()
+    end
+    for _, button in ipairs(frame.professionButtons) do
+        if not visibleByKey[button.key] then button:Hide() end
+    end
+
+    frame.visibleProfessionEntries = visibleEntries
+    if frame.professionLibraryEmpty then
+        if frame.professionLibraryMode == "Own" and #visibleEntries == 0 then
+            frame.professionLibraryEmpty:Show()
+        else
+            frame.professionLibraryEmpty:Hide()
+        end
+    end
+    if frame.professionLibraryToggle then
+        local own = frame.professionLibraryMode == "Own"
+        frame.professionLibraryToggle.allRadio:SetChecked(not own)
+        frame.professionLibraryToggle.ownRadio:SetChecked(own)
+        setTextColor(frame.professionLibraryToggle.allRadio.label, own and THEME.muted or THEME.text)
+        setTextColor(frame.professionLibraryToggle.ownRadio.label, own and THEME.text or THEME.muted)
+    end
     return true
 end
 
@@ -939,7 +1079,63 @@ local function createProfessionsPage(api, frame)
     sidebar.owner = frame
     frame.professionSidebar = sidebar
 
+    frame.professionLibraryMode = "All"
+    local toggle = api.CreateFrame("Button", nil, page)
+    toggle:SetSize(170, 28)
+    local function createProfessionRadio(label, x)
+        local radio = api.CreateFrame("CheckButton", nil, toggle)
+        radio:SetSize(82, 28)
+        radio:SetPoint("TOPLEFT", toggle, "TOPLEFT", x, 0)
+        radio.checkedTexture = radio:CreateTexture(nil, "ARTWORK")
+        radio.checkedTexture:SetSize(32, 32)
+        radio.checkedTexture:SetPoint("LEFT", radio, "LEFT", 0, 0)
+        radio.checkedTexture:SetTexture("Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-radio-checked")
+        radio.uncheckedTexture = radio:CreateTexture(nil, "ARTWORK")
+        radio.uncheckedTexture:SetSize(32, 32)
+        radio.uncheckedTexture:SetPoint("LEFT", radio, "LEFT", 0, 0)
+        radio.uncheckedTexture:SetTexture("Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-radio-unchecked")
+        radio:SetCheckedTexture(radio.checkedTexture)
+        radio:SetNormalTexture(radio.uncheckedTexture)
+        radio.label = createText(radio, "OVERLAY", "GameFontHighlight")
+        GGM.ApplyJournalFont(radio.label, 16, "bold")
+        radio.label:SetText(label)
+        radio.label:SetPoint("LEFT", radio, "LEFT", 30, 0)
+        radio.label:SetWidth(52)
+        radio:RegisterForClicks("LeftButtonUp")
+        return radio
+    end
+    toggle.allRadio = createProfessionRadio("ALL", 0)
+    toggle.ownRadio = createProfessionRadio("OWN", 88)
+    frame.professionLibraryToggle = toggle
+    frame.professionLibraryToggle:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, 34)
+    local function selectProfessionLibraryMode(mode)
+        local changed = frame.professionLibraryMode ~= mode
+        if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
+        frame.professionLibraryMode = mode
+        GGM.RefreshVisibleProfessionLibrary(frame)
+        if changed and mode == "Own" then
+            for _, profession in ipairs(frame.visibleProfessionEntries or {}) do
+                if profession.key == frame.selectedProfession then
+                    GGM.SelectProfession(frame, frame.selectedProfession)
+                    break
+                end
+            end
+        end
+    end
+    toggle.allRadio:SetScript("OnClick", function() selectProfessionLibraryMode("All") end)
+    toggle.ownRadio:SetScript("OnClick", function() selectProfessionLibraryMode("Own") end)
+    toggle.allRadio:SetChecked(true)
+    toggle.ownRadio:SetChecked(false)
+    frame.professionLibraryEmpty = createText(sidebar, "OVERLAY", "GameFontHighlight")
+    frame.professionLibraryEmpty:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -62)
+    frame.professionLibraryEmpty:SetWidth(UI.professionRowWidth)
+    frame.professionLibraryEmpty:SetJustifyH("CENTER")
+    frame.professionLibraryEmpty:SetText("No captured professions for this character.")
+    setTextColor(frame.professionLibraryEmpty, THEME.muted)
+    frame.professionLibraryEmpty:Hide()
+
     local eyebrow = createText(sidebar, "OVERLAY", "GameFontNormal")
+    frame.professionLibraryHeading = eyebrow
     GGM.ApplyJournalFont(eyebrow, 16, "bold")
     eyebrow:SetText("PROFESSION LIBRARY")
     setTextColor(eyebrow, THEME.text)
@@ -1062,6 +1258,7 @@ local function createProfessionsPage(api, frame)
     end)
 
     frame.professionsPage = page
+    GGM.RefreshVisibleProfessionLibrary(frame)
     GGM.SelectProfession(frame, "Alchemy")
 end
 
@@ -1097,7 +1294,9 @@ updateProfessionRecipeBrowser = function(frame)
         if not row then
             row = frame.api.CreateFrame("Button", nil, frame.professionRecipeContent)
             row:RegisterForClicks("LeftButtonUp")
-            row:SetScript("OnClick", function(self) GGM.ShowRecipeDetailsWindow(frame, self.recipe) end)
+            row:SetScript("OnClick", function(self)
+                GGM.ShowRecipeDetailsWindow(frame, self.recipe)
+            end)
             if row.SetHighlightTexture then row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD") end
             row.outputIcon = row:CreateTexture(nil, "ARTWORK")
             row.outputIcon:SetSize(30, 30)
@@ -1206,6 +1405,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     local showCharacter = selectedKey == "Character"
     if selectedKey == "Professions" then
         frame.professionsPage:Show()
+        frame.professionLibraryToggle:Show()
         GGM.SyncSelectedProfession(frame, false)
         if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
             local profession
@@ -1215,7 +1415,10 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
                 updateProfessionRecipeBrowser(frame)
             end
         end
-    else frame.professionsPage:Hide() end
+    else
+        frame.professionsPage:Hide()
+        frame.professionLibraryToggle:Hide()
+    end
     for pageKey, page in pairs(frame.placeholderPages) do if pageKey == selectedKey then page:Show() else page:Hide() end end
     if frame.bankPage then
         if selectedKey == "Bank" then
@@ -1349,6 +1552,7 @@ updateBrowserList = function(frame, api)
     else frame.listEmpty:Hide() end
 
     updateSearchHint(frame)
+    GGM.RefreshVisibleProfessionLibrary(frame)
     renderBrowserDetail(frame, frame.selectedEntry, api)
     if frame.activeTab ~= "Character" then setBrowserContentVisible(frame, false) end
 end
@@ -1480,6 +1684,8 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
 
     button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
     button.label:SetText(slotDisplayNames[trackedSlot.key])
+    GGM.ApplyJournalFont(button.label, 12)
+    if button.label.SetWordWrap then button.label:SetWordWrap(true) end
     setTextColor(button.label, THEME.textSoft)
     button.status = createText(button, "OVERLAY", "GameFontDisableSmall")
     setTextColor(button.status, THEME.muted)
@@ -1493,10 +1699,10 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     end
 
     if layout.group == "left" then
-        button.label:SetWidth(98); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
+        button.label:SetWidth(146); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
         button.status:SetWidth(98); button.status:SetJustifyH("LEFT"); button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -2)
     elseif layout.group == "right" then
-        button.label:SetWidth(98); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -9, 5)
+        button.label:SetWidth(146); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -9, 5)
         button.status:SetWidth(98); button.status:SetJustifyH("RIGHT"); button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -2)
     else
         button.label:SetWidth(92); button.label:SetJustifyH("CENTER"); button.label:SetPoint("TOP", button, "BOTTOM", 0, -5)
@@ -1523,6 +1729,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     local frame = api.CreateFrame("Frame", frameName, api.UIParent)
     frame:SetSize(UI.windowWidth, UI.windowHeight)
+    if frame.SetFrameStrata then frame:SetFrameStrata("DIALOG") end
     local screen = api.UIParent
     if frame.SetScale and screen and type(screen.GetWidth) == "function" and type(screen.GetHeight) == "function" then
         local screenWidth, screenHeight = screen:GetWidth(), screen:GetHeight()
@@ -1537,6 +1744,19 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.api = api
     frame:SetScript("OnHide", function(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
+        if self.craftingContextSkillLineID and self.craftingContextOpenedByGuildBook then
+            local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
+            if type(GGM.CloseBlizzardProfessionPanel) == "function" then
+                GGM.CloseBlizzardProfessionPanel(self.api, professionFrame)
+            elseif professionFrame and type(professionFrame.Hide) == "function" then
+                pcall(professionFrame.Hide, professionFrame)
+            end
+        end
+        self.professionLibraryMode = "All"
+        self.selectedProfession = nil
+        self.selectedProfessionID = nil
+        self.craftingContextSkillLineID = nil
+        self.craftingContextOpenedByGuildBook = nil
     end)
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
     frame.browserView = "Guild"
@@ -1670,6 +1890,34 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.listEmpty:Hide()
 
     frame.gearPanel = createGearPanel(api, frame)
+    frame.gearSyncButton = GGM.CreateFlatButton(api, frame.gearPanel, "Sync gear", 112, 27, "secondary")
+    frame.gearSyncButton:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
+    frame.gearSyncButton:SetScript("OnClick", function() GGM.SyncSelectedGear(frame) end)
+    frame.gearSyncStatus = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
+    GGM.ApplyJournalFont(frame.gearSyncStatus, 12)
+    frame.gearSyncStatus:SetPoint("LEFT", frame.gearSyncButton, "RIGHT", 12, 0)
+    frame.gearSyncStatus:SetSize(230, 30)
+    frame.gearSyncStatus:SetJustifyH("LEFT")
+    setTextColor(frame.gearSyncStatus, THEME.textSoft)
+    frame.gearSyncButton:Hide()
+    frame.gearSyncStatus:Hide()
+    frame.gearSyncButton:SetScript("OnUpdate", function(_, elapsed)
+        frame.gearSyncElapsed = (frame.gearSyncElapsed or 0) + elapsed
+        if frame.gearSyncElapsed < 1 then return end
+        frame.gearSyncElapsed = 0
+        refreshGearSyncControls(frame)
+        for _, button in ipairs(frame.slotButtons or {}) do
+            if button.pendingItemString then
+                local link = GGM.BuildItemHyperlink(api, button.pendingItemString)
+                local name = link and link:match("|h%[(.-)%]|h")
+                if name then
+                    button.label:SetText(name)
+                    button.itemLink = link
+                    if name ~= "Item " .. tostring(button.itemID) then button.pendingItemString = nil end
+                end
+            end
+        end
+    end)
     frame.characterLine = createText(frame.gearPanel, "OVERLAY", "GameFontNormalHuge")
     GGM.ApplyJournalFont(frame.characterLine, 30, "bold")
     frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 34, -50)
@@ -1694,10 +1942,6 @@ function GGM.CreateGuildGearBrowserWindow(api)
     GGM.ApplyJournalFont(frame.capturedLine, 12)
     frame.capturedLine:SetJustifyH("LEFT")
     setTextColor(frame.capturedLine, THEME.textSoft)
-    frame.completenessBadge = createStatusBadge(api, frame.gearPanel)
-    frame.completenessBadge:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
-    frame.completenessBadge:Hide()
-    frame.completenessLine = frame.completenessBadge.text
 
     frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
     frame.modelStage:SetSize(208, 218)
@@ -1811,6 +2055,8 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     updateBrowserList(frame, api)
     GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Character")
     frame:Show()
+    if frame.SetFrameStrata then frame:SetFrameStrata("DIALOG") end
+    if frame.Raise then frame:Raise() end
     if frame.activeTab == "Bank" and type(GGM.RefreshVisibleBankView) == "function" then
         GGM.RefreshVisibleBankView()
     end
@@ -1865,7 +2111,7 @@ local function chatEmitter(api)
     return function() end
 end
 
-local REQUEST_ERRORS = {
+REQUEST_ERRORS = {
     ["request-target-invalid"] = "Usage: /ggm request Name-Realm",
     ["sync-unavailable"] = "Gear sync is unavailable.",
     ["sync-snapshot-request-pending"] = "A gear request for this character is already pending.",

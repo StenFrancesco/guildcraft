@@ -133,7 +133,7 @@ T.test("complete snapshot response round trips every tracked slot and sequence",
     T.assertEqual(message.snapshot.slots.OFF_HAND.itemLink, false)
     local _, fields = parseFields(payload)
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
-        local offset = 19 + (index - 1) * 4
+        local offset = 19 + (index - 1) * 5
         T.assertEqual(fields[offset], trackedSlot.key)
         if trackedSlot.key == "RANGED" then
             T.assertTrue(message.snapshot.slots.RANGED.unavailable)
@@ -204,7 +204,7 @@ end)
 
 T.test("snapshot response retains bounded framing shapes for existing message types", function()
     local GGM = loadModules()
-    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 6)
     local identity = makeIdentity("Alice", "Silvermoon", "A")
     local update = assert(GGM.EncodeSyncSlotUpdate(identity, 1, "HEAD", { inventorySlotID = 1, itemID = 5, itemLink = "|Hitem:5|h[Test]|h" }, 1))
     local request = assert(GGM.EncodeSyncSnapshotRequest(identity, makeIdentity("Bob", "Silvermoon", "B"), "000001"))
@@ -214,14 +214,14 @@ T.test("snapshot response retains bounded framing shapes for existing message ty
     local requestHeader, requestFields = parseFields(request)
     local claimHeader, claimFields = parseFields(claim)
     local responseHeader, responseFields = parseFields(response)
-    T.assertEqual(updateHeader, "5U")
+    T.assertEqual(updateHeader, "6U")
     T.assertEqual(#updateFields, 10)
-    T.assertEqual(requestHeader, "5Q")
+    T.assertEqual(requestHeader, "6Q")
     T.assertEqual(#requestFields, 9)
-    T.assertEqual(claimHeader, "5C")
-    T.assertEqual(#claimFields, 5)
-    T.assertEqual(responseHeader, "5S")
-    T.assertEqual(#responseFields, 18 + 4 * #GGM.TRACKED_SLOTS)
+    T.assertEqual(claimHeader, "6C")
+    T.assertEqual(#claimFields, 7)
+    T.assertEqual(responseHeader, "6S")
+    T.assertEqual(#responseFields, 18 + 5 * #GGM.TRACKED_SLOTS)
     T.assertTrue(#response <= GGM.SYNC_MAX_LOGICAL_BYTES)
     T.assertTrue(math.ceil(#response / GGM.SYNC_FRAME_CHUNK_BYTES) <= GGM.SYNC_MAX_FRAME_COUNT)
     local configuredMaximum = GGM.SYNC_MAX_LOGICAL_BYTES
@@ -282,9 +282,9 @@ T.test("protocol rejects logical payloads above the configured bound", function(
     T.assertEqual(err, "sync-payload-too-large")
 end)
 
-T.test("protocol version five rejects version two snapshot payloads", function()
+T.test("protocol version six rejects version two snapshot payloads", function()
     local GGM = loadModules()
-    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 6)
     local payload = assert(GGM.EncodeSyncSnapshotResponse(
         makeIdentity("Alice", "Silvermoon", "A"),
         makeIdentity("Bob", "Silvermoon", "B"),
@@ -294,4 +294,18 @@ T.test("protocol version five rejects version two snapshot payloads", function()
     local message, err = GGM.DecodeSyncMessage("2" .. payload:sub(2))
     T.assertNil(message)
     T.assertEqual(err, "sync-protocol-version-unsupported")
+end)
+
+T.test("protocol six rejects old gear peers and invalid slot observation times", function()
+    local GGM = loadModules()
+    local who = makeIdentity("Alice", "Silvermoon", "A")
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(who, who, who, makeSnapshot(GGM), 1, "000001"))
+    local old, oldErr = GGM.DecodeSyncMessage("5" .. payload:sub(2))
+    T.assertNil(old); T.assertEqual(oldErr, "sync-protocol-version-unsupported")
+    local header, fields = parseFields(payload)
+    for _, badAt in ipairs({ "-1", "nan", "1700001001", "" }) do
+        fields[23] = badAt -- first slot's observation time
+        local message, err = GGM.DecodeSyncMessage(buildPayload(header, fields))
+        T.assertNil(message); T.assertEqual(err, "sync-slot-observed-at-invalid")
+    end
 end)

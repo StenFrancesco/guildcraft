@@ -9,7 +9,7 @@ local COOLDOWN, TTL, MAX_MANUAL_PEERS, MAX_COMPARISONS_PER_OPERATION = 60, 300, 
 -- Allow up to two paced windows per selected peer inside a fixed operation.
 local MANUAL_OPERATION_SECONDS = MAX_COMPARISONS_PER_OPERATION * (TTL + COOLDOWN)
 local CLAIM_START_SECONDS, CLAIM_SPREAD_SECONDS = 0.1, 1
-local ELECTION_SECONDS, RESPONSE_DEADLINE_SECONDS = 2, 27
+local ELECTION_SECONDS, LOGIN_ELECTION_SECONDS, RESPONSE_DEADLINE_SECONDS = 2, 27, 27
 local PRESENCE_EVIDENCE_SECONDS, CATALOG_REFRESH_DELAY = 60, 5
 local MAX_KNOWN_RECIPE_IDS, BLOOM_BITS_PER_ID = 2048, 8
 local BLOOM_MAX_BITS, BLOOM_PROBES = MAX_KNOWN_RECIPE_IDS * BLOOM_BITS_PER_ID, 5
@@ -277,6 +277,18 @@ local function createSession(sync, initiator, id, professionID, digest, reason, 
         end
         sync.sessions[sessionKey(initiator, id)] = nil
     end) then failed(sync, "profession-sync-timer-unavailable"); return nil end
+    if reason == "login" and initiator ~= sync.selfKey then
+        -- Keep the responder reserved through the login election, then release
+        -- it if no selection arrived. Selected exchanges retain the normal TTL.
+        if not timer(sync, LOGIN_ELECTION_SECONDS + 1, function()
+            if not session.finished and not session.selected then
+                session.finished = true
+                if sync.active == session then sync.active = nil end
+                sync.sessions[sessionKey(initiator, id)] = nil
+                timer(sync, 0.5, function() drainPending(sync) end)
+            end
+        end) then failed(sync, "profession-sync-timer-unavailable"); return nil end
+    end
     return session
 end
 
@@ -707,8 +719,8 @@ local function parseRecord(sync, session, body)
     return record
 end
 
-local COMPARISON_PRIORITY = { save = 1, selection = 2, manual = 3 }
-local function yieldUnselectedComparison(sync, sender, reason)
+local COMPARISON_PRIORITY = { login = 0, save = 1, selection = 2, manual = 3 }
+local function yieldUnselectedComparison(sync, sender, reason, professionID)
     local session = sync.active
     if not session or session.finished or session.initiator ~= sync.selfKey or session.selected then return end
     local incoming, current = COMPARISON_PRIORITY[reason], COMPARISON_PRIORITY[session.reason]
@@ -727,6 +739,13 @@ local function yieldUnselectedComparison(sync, sender, reason)
         sync.sessions[sessionKey(session.initiator, session.id)] = nil
         sync.active = nil
         notify(sync, session.professionID, "Catch-up needed")
+        if session.reason == "login" and professionID ~= session.professionID
+            and not sync.loginYieldRetries[session.professionID] then
+            -- The incoming exchange covers another profession. Preserve this
+            -- login job once, paced by its existing cooldown, without polling.
+            sync.loginYieldRetries[session.professionID] = true
+            scheduleComparison(sync, session.professionID, "login")
+        end
     end
     return true
 end
@@ -825,7 +844,7 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
         local bits = split(body, ";")
         if recipient ~= "*" or #bits ~= 4 or not hash(bits[1]) or (bits[3] ~= "" and not GGM.IsProfessionGUID(bits[3]))
             or (bits[4] ~= "" and (not sync.senders[bits[4]] or bits[4] == sender))
-            or (bits[2] ~= "manual" and bits[2] ~= "selection" and bits[2] ~= "save") then return "ignored" end
+            or (bits[2] ~= "manual" and bits[2] ~= "selection" and bits[2] ~= "save" and bits[2] ~= "login") then return "ignored" end
         if findSession(sync, sender, id) then return "ignored" end
         local cooldownKey = sender .. ":" .. professionID
         if (sync.peerCooldowns[cooldownKey] or -COOLDOWN) + COOLDOWN > now(sync) then return "ignored" end
@@ -834,7 +853,7 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
         local eligible = not preferredPeer or preferredPeer == sync.selfKey
         local yielded
         if eligible then
-            yielded = yieldUnselectedComparison(sync, sender, bits[2])
+            yielded = yieldUnselectedComparison(sync, sender, bits[2], professionID)
         end
         local cannotRespond = (preferredPeer and preferredPeer ~= sync.selfKey) or sync.active or sync.manualOperation
         acceptPeerMessage(sync, sender)
@@ -858,9 +877,10 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
         if not rows or not digest then return "observing" end
         local session = createSession(sync, sender, id, professionID, bits[1], bits[2], bits[3], preferredPeer)
         if not session then return "observing" end
-        -- Reserve the comparison we yielded to, including its response window.
-        -- Pending work must not occupy the slot before selection arrives.
-        if yielded then sync.active = session end
+        -- Reserve yielded and login comparisons through their response window.
+        -- Otherwise a queued login for another profession can take the slot
+        -- before this client's claim is sent, leaving both logins unanswered.
+        if yielded or bits[2] == "login" then sync.active = session end
         local order, rosterCount = 0, 0
         for candidate in pairs(sync.senders) do
             rosterCount = rosterCount + 1
@@ -1115,7 +1135,7 @@ function GGM.CreateProfessionSync(api, db)
     if type(api) ~= "table" or type(db) ~= "table" then return nil, "profession-sync-unavailable" end
     local sync = { api = api, db = db, generation = 0, sequence = 0, sessions = {}, pending = {}, status = {},
         cooldowns = {}, peerCooldowns = {}, pendingSaves = {}, lastAnnouncedDigests = {}, saveCooldowns = {},
-        selectedOnce = {}, cursor = {}, manualCursor = {}, peers = {}, heard = {}, presenceEvidence = {}, presenceRevision = 0,
+        selectedOnce = {}, loginYieldRetries = {}, cursor = {}, manualCursor = {}, peers = {}, heard = {}, presenceEvidence = {}, presenceRevision = 0,
         deferredResponses = {}, deferredResponseCount = 0,
         resumePeers = {}, lastOperationResult = nil, registered = false, rosterReady = false }
     local transport, err = GGM.CreateProfessionTransport(api, function(payload, sender, channel) return logical(sync, payload, sender, channel) end,
@@ -1203,7 +1223,7 @@ local function startProfessionComparison(sync, professionID, reason, preferredPe
         if sync then notify(sync, professionID or 0, "Sync unavailable") end
         return false, "profession-sync-unavailable"
     end
-    if reason ~= "manual" and reason ~= "selection" and reason ~= "save" then return false, "profession-sync-reason-invalid" end
+    if reason ~= "manual" and reason ~= "selection" and reason ~= "save" and reason ~= "login" then return false, "profession-sync-reason-invalid" end
     if preferredPeer and (not sync.senders[preferredPeer] or preferredPeer == sync.selfKey
         or not canSendTarget(sync, preferredPeer)) then return false, "profession-sync-peer-unavailable" end
     if reason == "selection" and sync.selectedOnce[professionID] then return false, "profession-sync-already-compared" end
@@ -1225,13 +1245,14 @@ local function startProfessionComparison(sync, professionID, reason, preferredPe
     local sent = send(sync, "Q", "*", id, professionID, digest .. ";" .. reason .. ";" .. startGUID .. ";" .. (preferredPeer or ""), function(success)
         if not success or session.finished then return end
         if not preferredPeer then
-            timer(sync, ELECTION_SECONDS, function()
+            timer(sync, reason == "login" and LOGIN_ELECTION_SECONDS or ELECTION_SECONDS, function()
                 session.electionReady = true
                 selectResponder(sync, session)
             end)
         end
         -- Old clients may still use roster slots extending to 26 seconds.
-        -- This is only a no-response bound, never a wait after a usable claim.
+        -- Manual discovery can use a claim after two seconds; login collects
+        -- claims for the full 27-second window before selecting a responder.
         timer(sync, RESPONSE_DEADLINE_SECONDS, function()
             if session.finished or sync.active ~= session or session.selected then return end
             if not selectResponder(sync, session) then

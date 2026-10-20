@@ -118,6 +118,38 @@ function GGM.IsProfessionGUID(value)
     return nonEmptyString(value)
 end
 
+function GGM.FilterProfessionLibraryEntries(entries, db, characterKey, characterGUID)
+    local filtered = {}
+    if type(entries) ~= "table"
+        or type(db) ~= "table"
+        or type(db.professions) ~= "table"
+        or not nonEmptyString(characterKey)
+        or not GGM.IsProfessionGUID(characterGUID) then
+        return filtered
+    end
+
+    local record = GGM.GetProfessionRecord(db, characterKey)
+    if not record then
+        return filtered
+    end
+    if record.identity.guid ~= characterGUID then
+        return filtered
+    end
+
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" and positiveInteger(entry.professionID) then
+            local snapshot = record.snapshots[entry.professionID]
+            if type(snapshot) == "table"
+                and snapshot.professionID == entry.professionID
+                and GGM.ValidateProfessionSnapshot(snapshot) then
+                filtered[#filtered + 1] = entry
+            end
+        end
+    end
+
+    return filtered
+end
+
 local function copyRegistryIdentity(identity, active)
     return { guid = identity.guid, key = identity.key, active = active == true }
 end
