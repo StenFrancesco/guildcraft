@@ -800,6 +800,22 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+T.test("changing profession library mode closes open recipe details", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertTrue(details:IsShown())
+
+    browser.professionLibraryToggle.ownRadio.scripts.OnClick(browser.professionLibraryToggle.ownRadio)
+    T.assertEqual(browser.professionLibraryMode, "Own")
+    T.assertFalse(details:IsShown())
+
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertTrue(details:IsShown())
+    browser.professionLibraryToggle.allRadio.scripts.OnClick(browser.professionLibraryToggle.allRadio)
+    T.assertEqual(browser.professionLibraryMode, "All")
+    T.assertFalse(details:IsShown())
+end)
+
 local function configureCrafterWhisperAPI(GGM, api, rows)
     local sent = {}
     GGM.professionRosterMembershipCurrent = true
@@ -1441,6 +1457,54 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     api.UIParent:SetSize(1000, 700)
     frame = GGM.CreateGuildGearBrowserWindow(api)
     T.assertTrue(math.abs(frame.scale - (976 / 1400)) < 0.001)
+end)
+
+T.test("closing the browser leaves a profession frame open if it was already open", function()
+    local GGM = loadUI()
+    local hideCount = 0
+    local professionFrame = {
+        shown = true,
+        IsShown = function(self) return self.shown end,
+        Hide = function(self) hideCount = hideCount + 1; self.shown = false end,
+        SetFrameStrata = function() end,
+        SetFrameLevel = function() end,
+    }
+    local api = makeBrowserAPI()
+    api.ProfessionsFrame = professionFrame
+    api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame:Show()
+    frame.professionLibraryMode = "Own"
+
+    GGM.SelectProfession(frame, "Alchemy")
+    frame.scripts.OnHide(frame)
+
+    T.assertEqual(hideCount, 0)
+    T.assertTrue(professionFrame.shown)
+end)
+
+T.test("closing the browser hides a profession frame that it opened", function()
+    local GGM = loadUI()
+    local hideCount = 0
+    local professionFrame = {
+        shown = false,
+        IsShown = function(self) return self.shown end,
+        Hide = function(self) hideCount = hideCount + 1; self.shown = false end,
+        SetFrameStrata = function() end,
+        SetFrameLevel = function() end,
+    }
+    local api = makeBrowserAPI()
+    api.ProfessionsFrame = professionFrame
+    api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame:Show()
+    frame.professionLibraryMode = "Own"
+
+    GGM.SelectProfession(frame, "Alchemy")
+    frame.scripts.OnHide(frame)
+
+    T.assertEqual(hideCount, 1)
+    T.assertFalse(professionFrame.shown)
 end)
 
 T.test("journal profession page follows the parchment reference proportions and typography", function()
