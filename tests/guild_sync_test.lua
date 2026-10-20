@@ -779,3 +779,245 @@ T.test("failed automatic gear repair does not send a request for every following
     G.HandleGuildSyncPayload(sync, alice.key, update)
     T.assertEqual(#sends, 2)
 end)
+
+T.test("owner gear-ready metadata carries maximum time and minimum slot observation separately", function()
+    local GGM = loadModules()
+    local owner = identity("Alice", "Silvermoon", "A")
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local observed = snapshot(GGM, 8200, 1700002000)
+    observed.slotObservedAt = {}
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        observed.slotObservedAt[slot.inventorySlotID] = slot.inventorySlotID == 1 and 1700001000 or (slot.inventorySlotID == 2 and 1700002000 or 1700001800)
+    end
+    assert(GGM.SaveCompleteCharacterRecord(db, owner, observed, 4))
+    local api, sends = clientApi(owner)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    sync.localGearTracker = { characterKey = owner.key }
+
+    local queued, err = GGM.AnnounceLocalGearReady(sync)
+
+    T.assertTrue(queued)
+    T.assertNil(err)
+    local frame = sends[1].message
+    local payload = frame:match("^F1|%d%d%d%d%d%d|%d%d|%d%d|(.*)$")
+    local message = assert(GGM.DecodeSyncMessage(payload))
+    T.assertEqual(message.capturedAt, 1700002000)
+    T.assertEqual(message.baselineObservedAt, 1700001000)
+end)
+
+T.test("gear-ready triggers one paced snapshot repair for a missing cache", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local api, sends = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 5, 1700002000, 1700001500))
+
+    local state = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+    local duplicateState = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    T.assertEqual(state, "snapshot-requested")
+    T.assertEqual(duplicateState, "snapshot-request-pending")
+    T.assertEqual(#sends, 1)
+    T.assertEqual(sync.pendingSnapshotRequestCount, 1)
+end)
+
+T.test("gear-ready refreshes one earlier unanswered request but duplicate hints coalesce", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local api, sends, drain = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    assert(GGM.RequestCompleteSnapshot(sync, owner, 7, 1700008000))
+    T.assertEqual(#sends, 1)
+    local requestID = sync.pendingSnapshotRequestTargets[owner.key]
+    local originalPending = sync.pendingSnapshotRequests[requestID]
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 0, 1700002000, 1700001500))
+
+    local refreshed = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+    local duplicate = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+    drain()
+
+    T.assertEqual(refreshed, "snapshot-request-refreshed")
+    T.assertEqual(duplicate, "snapshot-request-pending")
+    T.assertEqual(#sends, 2)
+    local firstPayload = assert(sends[1].message:match("^F1|%d%d%d%d%d%d|%d%d|%d%d|(.*)$"))
+    local secondPayload = assert(sends[2].message:match("^F1|%d%d%d%d%d%d|%d%d|%d%d|(.*)$"))
+    T.assertEqual(assert(GGM.DecodeSyncMessage(firstPayload)).requestID, requestID)
+    T.assertEqual(assert(GGM.DecodeSyncMessage(secondPayload)).requestID, requestID)
+    T.assertEqual(sync.pendingSnapshotRequestCount, 1)
+    T.assertEqual(sync.pendingSnapshotRequestTargets[owner.key], requestID)
+    T.assertTrue(sync.pendingSnapshotRequests[requestID] == originalPending)
+    T.assertEqual(originalPending.minimumSequence, 7)
+    T.assertEqual(originalPending.minimumObservedAt, 1700008000)
+end)
+
+T.test("gear-ready does not duplicate a request that is still queued for transmission", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local api, sends = clientApi(requester)
+    local completion
+    local throttleCalls = 0
+    api.ChatThrottleLib.SendAddonMessage = function(_, _, prefix, frame, channel, target, _, callback, arg)
+        throttleCalls = throttleCalls + 1
+        completion = function()
+            api.C_ChatInfo.SendAddonMessage(prefix, frame, channel, target)
+            callback(arg, true, 0)
+        end
+    end
+    local sync = assert(GGM.CreateGuildSync(api, assert(T.initializeDatabase(GGM, nil))))
+    assert(GGM.RequestCompleteSnapshot(sync, owner, 3, 1700002500))
+    local requestID = sync.pendingSnapshotRequestTargets[owner.key]
+    local pending = sync.pendingSnapshotRequests[requestID]
+    T.assertFalse(pending.requestSent)
+    T.assertEqual(#sync.transport.outboundFrames, 1)
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 4, 1700003000, 1700002500))
+
+    local state = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    T.assertEqual(state, "snapshot-request-pending")
+    T.assertEqual(throttleCalls, 1)
+    T.assertEqual(#sync.transport.outboundFrames, 1)
+    T.assertEqual(sync.pendingSnapshotRequestTargets[owner.key], requestID)
+    T.assertTrue(sync.pendingSnapshotRequests[requestID] == pending)
+    completion()
+    T.assertTrue(pending.requestSent)
+    T.assertEqual(#sends, 1)
+end)
+T.test("failed gear-ready refresh preserves the original pending request callback", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local api = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, assert(T.initializeDatabase(GGM, nil))))
+    local callbackCalls = 0
+    assert(GGM.RequestCompleteSnapshot(sync, owner, 3, 1700002500, function()
+        callbackCalls = callbackCalls + 1
+    end))
+    local oldID = sync.pendingSnapshotRequestTargets[owner.key]
+    local oldPending = sync.pendingSnapshotRequests[oldID]
+    local originalSend = GGM.SendSyncPayload
+    GGM.SendSyncPayload = function() return false, "sync-outbound-queue-full" end
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 0, 1700002000, 1700001500))
+
+    local state = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    GGM.SendSyncPayload = originalSend
+    T.assertEqual(state, "snapshot-request-pending")
+    T.assertEqual(sync.pendingSnapshotRequestTargets[owner.key], oldID)
+    T.assertTrue(sync.pendingSnapshotRequests[oldID] == oldPending)
+    T.assertEqual(sync.pendingSnapshotRequestCount, 1)
+    T.assertTrue(oldPending.gearReadyRefreshUsed)
+    T.assertEqual(callbackCalls, 0)
+end)
+
+T.test("gear-ready expires an old request before retrying after timeout backoff", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local api, sends, drain, setNow = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, assert(T.initializeDatabase(GGM, nil))))
+    local callbackCalls = 0
+    assert(GGM.RequestCompleteSnapshot(sync, owner, 3, 1700002500, function(ok)
+        callbackCalls = callbackCalls + 1
+        T.assertFalse(ok)
+    end))
+    drain()
+    local expiredID = sync.pendingSnapshotRequestTargets[owner.key]
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 4, 1700003000, 1700002500))
+    setNow(200 + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS + 1)
+
+    local expiredState = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    T.assertEqual(expiredState, "snapshot-request-cooldown")
+    T.assertEqual(callbackCalls, 1)
+    T.assertEqual(sync.pendingSnapshotRequestCount, 0)
+    T.assertEqual(#sends, 1)
+    setNow(200 + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS + GGM.SYNC_SNAPSHOT_REPAIR_BACKOFF_SECONDS + 1)
+
+    local retriedState = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    T.assertEqual(retriedState, "snapshot-requested")
+    T.assertEqual(#sends, 2)
+    local retryID = sync.pendingSnapshotRequestTargets[owner.key]
+    T.assertNotNil(retryID)
+    T.assertTrue(retryID ~= expiredID)
+end)
+
+T.test("gear-ready sequence breaks an otherwise equal-time cache freshness tie", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local sameTimeSnapshot = snapshot(GGM, 8460, 1700005000)
+    sameTimeSnapshot.slotObservedAt = {}
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        sameTimeSnapshot.slotObservedAt[slot.inventorySlotID] = (slot.inventorySlotID == 1 and 1700005000 or 1700004500)
+    end
+    assert(GGM.SaveCompleteCharacterRecord(db, owner, sameTimeSnapshot, 4))
+    local api, sends = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 5, 1700005000, 1700004500))
+
+    local state = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    T.assertEqual(state, "snapshot-requested")
+    T.assertEqual(#sends, 1)
+end)
+
+T.test("gear-ready ignores a matching snapshot and rejects self, mismatched sender, and conflicting GUIDs", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 4, 1700002000, 1700001500))
+    local matchingDB = assert(T.initializeDatabase(GGM, nil))
+    assert(GGM.SaveCompleteCharacterRecord(matchingDB, owner, snapshot(GGM, 8400, 1700002000), 4))
+    local matchingApi, matchingSends = clientApi(requester)
+    local matchingSync = assert(GGM.CreateGuildSync(matchingApi, matchingDB))
+    T.assertEqual(GGM.HandleGuildSyncPayload(matchingSync, owner.key, ready), "gear-ready-current")
+    T.assertEqual(#matchingSends, 0)
+
+    local selfDB = assert(T.initializeDatabase(GGM, nil))
+    local selfApi = clientApi(owner)
+    local selfSync = assert(GGM.CreateGuildSync(selfApi, selfDB))
+    T.assertEqual(GGM.HandleGuildSyncPayload(selfSync, owner.key, ready), "ignored")
+    local emptyDB = assert(T.initializeDatabase(GGM, nil))
+    local api, sends, drain = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, emptyDB))
+    T.assertEqual(sync.pendingSnapshotRequestCount, 0)
+    local rejected, senderErr = GGM.HandleGuildSyncPayload(sync, "Mallory-Silvermoon", ready)
+    T.assertNil(rejected)
+    T.assertEqual(senderErr, "sync-sender-identity-mismatch")
+    assert(GGM.SaveCompleteCharacterRecord(emptyDB, identity("Alice", "Silvermoon", "OTHER"), snapshot(GGM, 8500), 4))
+    local conflict, conflictErr = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+    T.assertNil(conflict)
+    T.assertEqual(conflictErr, "identity-mismatch")
+    T.assertEqual(#sends, 0)
+end)
+
+T.test("a lower sequence with a newer owner capture still requests cache repair", function()
+    local GGM = loadModules()
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local db = assert(T.initializeDatabase(GGM, nil))
+    assert(GGM.SaveCompleteCharacterRecord(db, owner, snapshot(GGM, 8450, 1700001000), 40))
+    local api, sends, drain = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 0, 1700005000, 1700004500))
+
+    local state = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    T.assertEqual(state, "snapshot-requested")
+    T.assertEqual(#sends, 1)
+end)
+
+T.test("malformed gear-ready messages do not mutate saved gear", function()
+    local GGM = loadModules()
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local requester = identity("Bob", "Silvermoon", "B")
+    local api = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, db))
+    local before = next(db.characters)
+    local malformed, malformedErr = GGM.HandleGuildSyncPayload(sync, "Alice-Silvermoon", "6R1:1")
+    T.assertNil(malformed)
+    T.assertNotNil(malformedErr)
+    local unknown, unknownErr = GGM.HandleGuildSyncPayload(sync, "Alice-Silvermoon", "6X")
+    T.assertNil(unknown)
+    T.assertEqual(unknownErr, "sync-message-type-unknown")
+    T.assertEqual(next(db.characters), before)
+end)

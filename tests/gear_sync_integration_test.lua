@@ -510,3 +510,169 @@ T.test("GC_GEAR shares and updates an inspected character using a realm spelling
     T.assertEqual(bob.G.HandleGuildSyncPayload(bob.sync, alice.identity.key, update), "slot-applied")
     T.assertEqual(bob.db.characters[alias.key].gear.slots[1], "item:9913")
 end)
+
+T.test("owner readiness announces a complete cache and discovers an uninspected peer", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice:startTracking()
+
+    local queued, err = alice.G.AnnounceLocalGearReady(alice.sync)
+    T.assertTrue(queued)
+    T.assertNil(err)
+    bus:advance(90)
+
+    local received = assert(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertTrue(received.complete)
+    T.assertEqual(received.confirmedSequence, 0)
+    T.assertEqual(bus:count("GEAR_READY"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+T.test("owner readiness refreshes a request ignored during failed startup", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice.sync.onLocalSnapshotRequest = function() return false, "local-capture-not-ready" end
+
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(30)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 0)
+    T.assertNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertEqual(bob.sync.pendingSnapshotRequestCount, 1)
+
+    alice:startTracking()
+    assert(alice.G.AnnounceLocalGearReady(alice.sync))
+    bus:advance(180)
+
+    T.assertNotNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertEqual(bus:count("GEAR_READY"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 2)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+T.test("a requester recovers the owner after startup exhaustion and receives its first cache", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice.sync.onLocalSnapshotRequest = function(target)
+        T.assertEqual(target.key, alice.identity.key)
+        alice:startTracking()
+        return true, nil
+    end
+
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(180)
+
+    local received = assert(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertTrue(received.complete)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+T.test("matching gear-ready cache produces no request, while repeated hints coalesce", function()
+    local bus = guild()
+    local alice, matched, empty = bus:client("Alice"), bus:client("Matched"), bus:client("Empty"); empty.drop = true
+    alice:startTracking()
+    local ownerRecord = assert(alice.G.GetCompleteCharacterRecord(alice.db, alice.identity.key))
+    local ownerSnapshot = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, ownerRecord.gear))
+    assert(matched.G.SaveCompleteCharacterRecord(matched.db, alice.identity, ownerSnapshot, ownerRecord.confirmedSequence))
+
+    assert(alice.G.AnnounceLocalGearReady(alice.sync))
+    bus:advance(20)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 0)
+    T.assertNotNil(matched.G.GetCompleteCharacterRecord(matched.db, alice.identity.key))
+
+    -- The fresh peer is still unknown to this client; duplicate hints share its one pending request.
+    empty.drop = false
+    assert(alice.G.AnnounceLocalGearReady(alice.sync))
+    assert(alice.G.AnnounceLocalGearReady(alice.sync))
+    bus:advance(90)
+    T.assertNotNil(empty.G.GetCompleteCharacterRecord(empty.db, alice.identity.key))
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+
+-- Run the real event entry point against the same API/timer/guild fixture.
+local function loadLoginBackend(bus, client)
+    local onEvent
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, callback) onEvent = callback end,
+    }
+    client.api.C_Timer.After = function(delay, callback) return bus:schedule(delay, callback) end
+    -- Isolate readiness from the separate, already covered roster catch-up pass.
+    client.G.LoginGearSync = function() return true end
+    local environment = setmetatable({
+        _G = client.api,
+        CreateFrame = function() return frame end,
+    }, { __index = _G })
+    local main = assert(loadfile("The Guild Book gear/Main.lua"))
+    setfenv(main, environment)("The Guild Book gear", client.G)
+    onEvent(frame, "ADDON_LOADED", "The Guild Book gear")
+    client.sync = assert(client.G.guildSync)
+    return function(event, ...) onEvent(frame, event, ...) end
+end
+
+T.test("real login retries missing item links and completes an earlier unanswered guild request", function()
+    local bus = guild()
+    local owner, peer = bus:client("Owner"), bus:client("Peer")
+    local itemLink = owner.api.GetInventoryItemLink
+    owner.api.GetInventoryItemLink = function(...)
+        if bus.now < 104 then return nil end
+        return itemLink(...)
+    end
+    local login = loadLoginBackend(bus, owner)
+    login("PLAYER_LOGIN")
+    assert(peer.G.RequestCompleteSnapshot(peer.sync, owner.identity))
+    bus:advance(40)
+
+    local record = assert(peer.G.GetCompleteCharacterRecord(peer.db, owner.identity.key))
+    T.assertEqual(record.gear.slots[1], "item:1001")
+    T.assertEqual(record.confirmedSequence, 0)
+    T.assertEqual(owner.G.trackingStartupAttempts, 3)
+    T.assertNotNil(owner.G.gearTracker)
+    T.assertTrue(owner.sync.localGearTracker == owner.G.gearTracker)
+    T.assertNil(owner.G.lastCaptureError)
+    T.assertEqual(bus:count("GEAR_READY"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 2)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+    T.assertEqual(bus:count("SLOT_UPDATE"), 0)
+    local frames = #bus.frames
+    bus:advance(6000)
+    T.assertEqual(#bus.frames, frames)
+end)
+
+T.test("real login exhaustion recovers through the owner request handler and retains stable tracking", function()
+    local bus = guild()
+    local owner, peer = bus:client("Owner"), bus:client("Peer")
+    local itemLink, linksReady = owner.api.GetInventoryItemLink, false
+    owner.api.GetInventoryItemLink = function(...)
+        if not linksReady then return nil end
+        return itemLink(...)
+    end
+    local login = loadLoginBackend(bus, owner)
+    login("PLAYER_LOGIN")
+    bus:advance(65)
+    T.assertTrue(owner.G.trackingStartupExhausted)
+    T.assertEqual(owner.G.trackingStartupAttempts, 6)
+    T.assertEqual(bus:count("GEAR_READY"), 0)
+    T.assertNil(owner.G.gearTracker)
+
+    linksReady = true
+    assert(peer.G.RequestCompleteSnapshot(peer.sync, owner.identity))
+    bus:advance(40)
+    T.assertNotNil(peer.G.GetCompleteCharacterRecord(peer.db, owner.identity.key))
+    T.assertNotNil(owner.G.gearTracker)
+    T.assertTrue(owner.sync.localGearTracker == owner.G.gearTracker)
+    T.assertNil(owner.G.lastCaptureError)
+    T.assertEqual(bus:count("GEAR_READY"), 1)
+
+    owner.items[1] = 7777
+    login("PLAYER_EQUIPMENT_CHANGED", 1, true)
+    bus:advance(310)
+    local updated = assert(peer.G.GetCompleteCharacterRecord(peer.db, owner.identity.key))
+    T.assertEqual(updated.gear.slots[1], "item:7777")
+    T.assertEqual(updated.confirmedSequence, 1)
+    T.assertEqual(bus:count("SLOT_UPDATE"), 1)
+end)
