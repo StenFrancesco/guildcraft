@@ -28,6 +28,24 @@ T.test("successful profession save publishes changed hash after persistence with
     T.assertTrue(published)
 end)
 
+T.test("successful profession save refreshes the visible profession library", function()
+    local G = loadModule()
+    local refreshCalls = 0
+    G.CaptureLinkedProfessionSnapshot = function()
+        return { professionID = 164, recipes = {}, source = "player" }
+    end
+    G.SaveProfessionSnapshot = function() return true end
+    G.RefreshVisibleProfessionLibrary = function()
+        refreshCalls = refreshCalls + 1
+    end
+    local controller = G.CreateProfessionLinkSaveController({}, {})
+    controller.activeSource = "player"
+    controller.activeIdentity = { key = "Alice-Realm", name = "Alice", realm = "Realm" }
+
+    T.assertEqual(G.SaveActiveLinkedProfession(controller), "saved")
+    T.assertEqual(refreshCalls, 1)
+end)
+
 T.test("extracts exact trade hyperlinks from guild chat text", function()
     local GGM = loadModule()
     local links = GGM.ExtractProfessionTradeLinks(

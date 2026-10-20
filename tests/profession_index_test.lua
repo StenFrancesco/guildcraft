@@ -61,15 +61,15 @@ T.test("profession library filter returns only complete professions owned by the
     local beforeEntries = entries
     local beforeDB = db
 
-    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, alice.key)
+    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, alice.key, alice.guid)
 
     T.assertEqual(#filtered, 2)
     T.assertTrue(filtered[1] == entries[1])
     T.assertTrue(filtered[2] == entries[2])
-    T.assertTrue(GGM.FilterProfessionLibraryEntries(entries, db, "Missing-Silvermoon") ~= nil)
+    T.assertTrue(GGM.FilterProfessionLibraryEntries(entries, db, "Missing-Silvermoon", "Missing-GUID") ~= nil)
     T.assertTrue(entries == beforeEntries)
     T.assertTrue(db == beforeDB)
-    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, "Missing-Silvermoon"), 0)
+    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, "Missing-Silvermoon", "Missing-GUID"), 0)
 end)
 
 T.test("profession library filter rejects invalid identity fields", function()
@@ -86,7 +86,7 @@ T.test("profession library filter rejects invalid identity fields", function()
         },
     }
 
-    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, alice.key), 0)
+    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, alice.key, alice.guid), 0)
 
     db.professions[alice.key].identity = {
         key = "Other-Silvermoon",
@@ -94,7 +94,24 @@ T.test("profession library filter rejects invalid identity fields", function()
         realm = alice.realm,
         guid = alice.guid,
     }
-    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, alice.key), 0)
+    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, alice.key, alice.guid), 0)
+end)
+
+T.test("profession library filter rejects a name-realm match with a different GUID", function()
+    local GGM = loadModules()
+    local entries = { { key = "Alchemy", professionID = 171 } }
+    local active = indexedIdentity(GGM, "Alice-Silvermoon", "Player-NEW")
+    local db = {
+        schemaVersion = GGM.SCHEMA_VERSION,
+        professions = {
+            [active.key] = {
+                identity = indexedIdentity(GGM, active.key, "Player-OLD"),
+                snapshots = { [171] = indexedMetadata(GGM, 171) },
+            },
+        },
+    }
+
+    T.assertEqual(#GGM.FilterProfessionLibraryEntries(entries, db, active.key, active.guid), 0)
 end)
 
 T.test("profession library filter rejects a malformed unrelated snapshot", function()
@@ -117,7 +134,7 @@ T.test("profession library filter rejects a malformed unrelated snapshot", funct
         },
     }
 
-    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, alice.key)
+    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, alice.key, alice.guid)
 
     T.assertEqual(#filtered, 0)
 end)
@@ -139,7 +156,7 @@ T.test("profession library filter does not mutate nested inputs", function()
     local originalIdentity = db.professions[identity.key].identity
     local originalSnapshot = db.professions[identity.key].snapshots[171]
 
-    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, identity.key)
+    local filtered = GGM.FilterProfessionLibraryEntries(entries, db, identity.key, identity.guid)
 
     T.assertTrue(filtered[1] == entries[1])
     T.assertTrue(entries[1].metadata == originalEntryMetadata)

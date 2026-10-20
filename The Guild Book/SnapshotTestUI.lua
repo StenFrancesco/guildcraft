@@ -881,8 +881,9 @@ function GGM.RefreshVisibleProfessionLibrary(frame)
             if identityOk then identity = playerIdentity end
         end
         local characterKey = identity and identity.key or nil
+        local characterGUID = identity and identity.guid or nil
         visibleEntries = GGM.FilterProfessionLibraryEntries(
-            frame.professionButtons, frame.db, characterKey)
+            frame.professionButtons, frame.db, characterKey, characterGUID)
     else
         for _, button in ipairs(frame.professionButtons) do visibleEntries[#visibleEntries + 1] = button end
     end
