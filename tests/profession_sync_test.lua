@@ -856,6 +856,7 @@ T.test("real profession event startup does not require the gear companion", func
     G.RegisterSnapshotTestSlashCommand = function() end
     G.InitializeSavedDatabases = function() return b.db, nil, b.db end
     G.CreateProfessionLinkSaveController = function() return {} end
+    G.TryAutoSaveProfession = function() return "ignored" end
     G.RegisterProfessionLinkSaveController = function() return true end
     G.RecordLocalPlayerOwnership = function() return G.MarkLocalCharacterGUID(b.db, b.identity.guid) end
     local chunk = assert(loadfile("The Guild Book/Main.lua")); setfenv(chunk, api); chunk("The Guild Book", G)

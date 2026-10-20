@@ -65,6 +65,29 @@ local function guildIdentityForGUID(api, ownerGUID)
     return matchedIdentity, nil
 end
 
+local function accountIdentityForGUID(controller, guid)
+    if type(GGM.IsLocalCharacterGUID) ~= "function"
+        or not GGM.IsLocalCharacterGUID(controller.db, guid) then return nil end
+    if type(GGM.BuildPlayerIdentity) == "function" then
+        local ok, identity = pcall(GGM.BuildPlayerIdentity, controller.api)
+        if ok and type(identity) == "table" and identity.guid == guid then return identity end
+    end
+    local match
+    for key, record in pairs(controller.db.professions or {}) do
+        local identity = type(record) == "table" and record.identity or nil
+        if type(identity) == "table" and identity.guid == guid then
+            if match or identity.key ~= key then return nil end
+            match = identity
+        end
+    end
+    return match
+end
+
+local function linkedOwnerIdentity(controller)
+    return guildIdentityForGUID(controller.api, controller.activeOwnerGUID)
+        or accountIdentityForGUID(controller, controller.activeOwnerGUID)
+end
+
 function GGM.ExtractProfessionTradeLinks(message)
     local links = {}
     if type(message) ~= "string" then return links end
@@ -109,8 +132,10 @@ function GGM.HandleProfessionHyperlinkOpened(controller, link)
     if type(controller) ~= "table" or type(link) ~= "string" then return "ignored" end
     if not link:match("^trade:") then return "ignored" end
 
+    controller.autoSaved = nil
     local source = controller.sourceByLink[link]
-    if type(source) ~= "table" or type(source.reportedBy) ~= "table" then
+    local ownerGUID = professionOwnerGUID(link)
+    if not ownerGUID then
         controller.activeLink = nil
         controller.activeIdentity = nil
         controller.activeOwnerGUID = nil
@@ -119,13 +144,26 @@ function GGM.HandleProfessionHyperlinkOpened(controller, link)
         return "ignored"
     end
 
-    local ownerIdentity = guildIdentityForGUID(controller.api, source.ownerGUID)
+    local ownerIdentity = guildIdentityForGUID(controller.api, ownerGUID)
+        or accountIdentityForGUID(controller, ownerGUID)
     controller.activeLink = link
     controller.activeIdentity = ownerIdentity
-    controller.activeOwnerGUID = source.ownerGUID
-    controller.activeReportedBy = source.reportedBy
+    controller.activeOwnerGUID = ownerGUID
+    controller.activeReportedBy = type(source) == "table" and source.reportedBy or nil
     controller.activeSource = "guild"
     return "guild-profession-link"
+end
+
+local function isOwnProfessionView(trade)
+    -- Older clients may omit these browsing modes entirely.
+    if type(trade) ~= "table" then return true end
+    for _, name in ipairs({ "IsTradeSkillGuild", "IsTradeSkillNPC", "IsNPCCrafting" }) do
+        if type(trade[name]) == "function" then
+            local ok, foreign = pcall(trade[name])
+            if not ok or foreign ~= false then return false end
+        end
+    end
+    return true
 end
 
 function GGM.SaveActiveLinkedProfession(controller)
@@ -135,18 +173,26 @@ function GGM.SaveActiveLinkedProfession(controller)
 
     local identity
     local snapshotSource
+    local guildMembershipVerified = false
     if controller.activeSource == "guild" then
-        if GGM.professionRosterMembershipCurrent ~= true then
-            return nil, "profession-roster-incomplete"
-        end
         if professionOwnerGUID(controller.activeLink) ~= controller.activeOwnerGUID then
             return nil, "profession-owner-unavailable"
         end
-        local ownerIdentity, ownerErr = guildIdentityForGUID(controller.api, controller.activeOwnerGUID)
+        local ownerIdentity, ownerErr
+        if GGM.professionRosterMembershipCurrent == true then
+            ownerIdentity, ownerErr = guildIdentityForGUID(controller.api, controller.activeOwnerGUID)
+            guildMembershipVerified = ownerIdentity ~= nil
+        else
+            ownerErr = "profession-roster-incomplete"
+        end
+        ownerIdentity = ownerIdentity or accountIdentityForGUID(controller, controller.activeOwnerGUID)
         if not ownerIdentity then return nil, ownerErr end
         identity = ownerIdentity
         snapshotSource = GGM.PROFESSION_SOURCE_GUILD_LINK
     elseif controller.activeSource == "player" and type(controller.activeIdentity) == "table" then
+        if not isOwnProfessionView(controller.api and controller.api.C_TradeSkillUI) then
+            return nil, "profession-not-owned"
+        end
         identity = controller.activeIdentity
         snapshotSource = GGM.PROFESSION_SOURCE_PLAYER
     else
@@ -160,9 +206,9 @@ function GGM.SaveActiveLinkedProfession(controller)
     if not snapshot then return nil, captureErr end
 
     local saveOptions
-    if controller.activeSource == "guild" then
+    if guildMembershipVerified then
         saveOptions = { guildMembershipVerified = true }
-    elseif GGM.professionRosterMembershipCurrent == true then
+    elseif controller.activeSource == "player" and GGM.professionRosterMembershipCurrent == true then
         local playerGuildIdentity, playerGuildErr = guildIdentityForGUID(controller.api, identity.guid)
         if playerGuildIdentity then
             identity = playerGuildIdentity
@@ -210,8 +256,7 @@ local function findCreateAllButton(professionFrame)
 end
 
 local function establishOwnProfessionContext(controller, trade)
-    if controller.activeSource == "guild"
-        or controller.activeIdentity
+    if (controller.activeIdentity and controller.activeSource ~= "guild")
         or type(trade) ~= "table"
         or type(trade.IsTradeSkillLinked) ~= "function"
         or type(GGM.BuildPlayerIdentity) ~= "function" then
@@ -219,13 +264,60 @@ local function establishOwnProfessionContext(controller, trade)
     end
 
     local linkedOk, linked = pcall(trade.IsTradeSkillLinked)
-    if not linkedOk or linked ~= false then return end
+    if not linkedOk or linked ~= false or not isOwnProfessionView(trade) then return end
 
+    -- Unlinked data must never inherit the previous linked owner's identity.
+    if controller.activeSource == "guild" then
+        controller.activeLink = nil
+        controller.activeOwnerGUID = nil
+        controller.activeReportedBy = nil
+    end
     local identityOk, identity = pcall(GGM.BuildPlayerIdentity, controller.api)
     if identityOk and type(identity) == "table" then
         controller.activeIdentity = identity
         controller.activeSource = "player"
     end
+end
+
+function GGM.TryAutoSaveProfession(controller)
+    if type(controller) ~= "table" or controller.panelOpen ~= true then return "ignored" end
+    local trade = type(controller.api) == "table" and controller.api.C_TradeSkillUI or nil
+    if type(trade) ~= "table" or type(trade.IsTradeSkillLinked) ~= "function"
+        or type(trade.IsTradeSkillReady) ~= "function"
+        or type(trade.GetBaseProfessionInfo) ~= "function" then
+        return nil, "profession-api-unavailable"
+    end
+    local linkedOk, linked = pcall(trade.IsTradeSkillLinked)
+    local readyOk, ready = pcall(trade.IsTradeSkillReady)
+    if not linkedOk or not readyOk or ready ~= true then
+        return nil, "profession-data-unavailable"
+    end
+    if linked == false then
+        if not isOwnProfessionView(trade) then return nil, "profession-not-owned" end
+        establishOwnProfessionContext(controller, trade)
+    elseif linked ~= true or controller.activeSource ~= "guild" then
+        return nil, "profession-source-unavailable"
+    end
+    local identity = controller.activeIdentity
+    if controller.activeSource == "guild" then
+        identity = linkedOwnerIdentity(controller)
+    end
+    if type(identity) ~= "table" or not nonEmptyString(identity.guid) then
+        return nil, "profession-owner-unavailable"
+    end
+    local infoOk, info = pcall(trade.GetBaseProfessionInfo)
+    if not infoOk or type(info) ~= "table" or type(info.professionID) ~= "number" then
+        return nil, "profession-info-unavailable"
+    end
+    local key = identity.guid .. ":" .. tostring(info.professionID)
+    if controller.autoSaved and controller.autoSaved[key] then return "unchanged" end
+    local result, err = GGM.SaveActiveLinkedProfession(controller)
+    if result == "saved" then
+        controller.autoSaved = controller.autoSaved or {}
+        controller.autoSaved[key] = true
+        setStatus(controller, "The Guild Book  •  snapshot saved automatically", "success")
+    end
+    return result, err
 end
 
 local function addButtonIcon(button)
@@ -326,7 +418,7 @@ function GGM.RefreshProfessionSaveButton(controller)
     establishOwnProfessionContext(controller, trade)
 
     if controller.activeSource == "guild" then
-        controller.activeIdentity = guildIdentityForGUID(controller.api, controller.activeOwnerGUID)
+        controller.activeIdentity = linkedOwnerIdentity(controller)
     end
 
     if type(controller.activeIdentity) ~= "table"
@@ -339,9 +431,16 @@ function GGM.RefreshProfessionSaveButton(controller)
 
     local linkedOk, linked = pcall(trade.IsTradeSkillLinked)
     local readyOk, ready = pcall(trade.IsTradeSkillReady)
-    local validContext = linked == true or (linked == false and controller.activeSource == "player")
+    local validContext = (linked == true and controller.activeSource == "guild")
+        or (linked == false and controller.activeSource == "player" and isOwnProfessionView(trade))
     if linkedOk and validContext and readyOk and ready == true then
-        if controller.activeSource == "player" then
+        local infoOk, info = false, nil
+        if type(trade.GetBaseProfessionInfo) == "function" then infoOk, info = pcall(trade.GetBaseProfessionInfo) end
+        local savedKey = infoOk and type(info) == "table" and controller.activeIdentity.guid
+            and (controller.activeIdentity.guid .. ":" .. tostring(info.professionID))
+        if savedKey and controller.autoSaved and controller.autoSaved[savedKey] then
+            setStatus(controller, "The Guild Book  •  snapshot saved automatically", "success")
+        elseif controller.activeSource == "player" then
             setStatus(controller, "The Guild Book  •  personal profession  •  last-known recipes")
         else
             setStatus(controller, "The Guild Book  •  guild profession  •  last-known recipes")
@@ -356,6 +455,9 @@ end
 
 function GGM.ClearProfessionSaveContext(controller)
     if type(controller) ~= "table" then return end
+    controller.panelOpen = false
+    controller.autoSaveRequest = nil
+    controller.autoSaved = nil
     controller.activeLink = nil
     controller.activeIdentity = nil
     controller.activeOwnerGUID = nil
