@@ -1387,12 +1387,12 @@ T.test("profession library toggle filters by selected character without changing
     local alice = frame.selectedEntry.key
     local bob = "Beatrice-ArgentDawn"
     frame.db.professions = {
-        [alice] = { identity = { key = alice, name = "Alice", realm = "Silvermoon" }, snapshots = {
+        [alice] = { identity = { key = alice, name = "Alice", realm = "Silvermoon", guid = "Player-1" }, snapshots = {
             [171] = { complete = true, professionID = 171, professionName = "Alchemy",
                 capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER,
                 status = GGM.PROFESSION_CACHE_STATUS },
         } },
-        [bob] = { identity = { key = bob, name = "Beatrice", realm = "ArgentDawn" }, snapshots = {
+        [bob] = { identity = { key = bob, name = "Beatrice", realm = "ArgentDawn", guid = "Player-2" }, snapshots = {
             [164] = { complete = true, professionID = 164, professionName = "Blacksmithing",
                 capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER,
                 status = GGM.PROFESSION_CACHE_STATUS },
