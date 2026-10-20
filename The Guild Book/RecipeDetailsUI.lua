@@ -652,6 +652,7 @@ local function createWhisperControls(details)
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.browser.craftingContextSkillLineID = nil
+            details.browser.craftingContextOpenedByGuildBook = nil
             details.pendingCraftQuantity = nil
             updateCraftControls(details)
             return

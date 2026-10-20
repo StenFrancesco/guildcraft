@@ -863,10 +863,16 @@ local function openSelectedProfessionContext(frame, skillLineID)
     if frame.professionLibraryMode ~= "Own" then return false end
     local trade = frame.api and frame.api.C_TradeSkillUI
     if type(trade) ~= "table" or type(trade.OpenTradeSkill) ~= "function" then return false end
+    local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
+    local frameWasShown = professionFrame ~= nil
+    if professionFrame and type(professionFrame.IsShown) == "function" then
+        local shownOK, wasShown = pcall(professionFrame.IsShown, professionFrame)
+        frameWasShown = not shownOK or wasShown == true
+    end
     local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
     if not openOK or opened == false then return false end
     frame.craftingContextSkillLineID = skillLineID
-    local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
+    frame.craftingContextOpenedByGuildBook = not frameWasShown
     if professionFrame then
         if type(GGM.HideBlizzardProfessionPanel) == "function" then
             GGM.HideBlizzardProfessionPanel(frame.api, professionFrame)
@@ -905,6 +911,7 @@ function GGM.SelectProfession(frame, selectedKey)
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
     end
     frame.craftingContextSkillLineID = nil
+    frame.craftingContextOpenedByGuildBook = nil
     if frame.professionLibraryMode == "Own" then
         openSelectedProfessionContext(frame, selectedProfession.professionID)
     end
@@ -1717,7 +1724,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.api = api
     frame:SetScript("OnHide", function(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
-        if self.craftingContextSkillLineID then
+        if self.craftingContextSkillLineID and self.craftingContextOpenedByGuildBook then
             local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
             if type(GGM.CloseBlizzardProfessionPanel) == "function" then
                 GGM.CloseBlizzardProfessionPanel(self.api, professionFrame)
@@ -1729,6 +1736,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
         self.selectedProfession = nil
         self.selectedProfessionID = nil
         self.craftingContextSkillLineID = nil
+        self.craftingContextOpenedByGuildBook = nil
     end)
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
     frame.browserView = "Guild"
