@@ -1504,6 +1504,11 @@ function GGM.RequestProfessionSyncFromButton(sync, professionID)
                 if sync.manualOperation then sync.manualOperation.fromButton = true end
             else
                 notify(sync, professionID, failure == "profession-sync-peer-unavailable" and "Catch-up needed" or "Sync unavailable")
+                if safe(sync) then
+                    timer(sync, 0.5, function()
+                        if safe(sync) then drainPending(sync) end
+                    end)
+                end
             end
             if type(GGM.RefreshVisibleProfessionSyncStatus) == "function" then GGM.RefreshVisibleProfessionSyncStatus() end
             return

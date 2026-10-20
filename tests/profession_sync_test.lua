@@ -1997,4 +1997,18 @@ T.test("queued button requests retain catch-up status when peers go offline", fu
     T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Catch-up needed")
 end)
 
+T.test("ready automatic comparisons drain after a queued button request becomes unavailable", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection")); bus:advance(5)
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    a.identity.online = false; b:ready()
+    bus:advance(61)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready automatic comparison should drain after the button retry fails")
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 202), "Catch-up needed")
+end)
+
 return { guild = guild }
