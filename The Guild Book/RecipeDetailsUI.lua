@@ -55,6 +55,10 @@ local function recipeIsCraftable(details)
     local trade = details.api.C_TradeSkillUI
     local ok, info = pcall(trade.GetRecipeInfo, details.recipeID)
     if not ok or not isPublic(details.api, info) or type(info) ~= "table" then return false end
+    for _, flag in ipairs({ "isEnchanting", "isSalvage", "isRecraft" }) do
+        local specialized = rawget(info, flag)
+        if not isPublic(details.api, specialized) or specialized == true then return false end
+    end
     return rawget(info, "craftable") == true
 end
 
@@ -102,7 +106,10 @@ local function ensureCraftingContext(details, fromRecipeClick)
     local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
     if not openOK or opened == false then return false end
     details.craftingContextRecipeID = details.recipeID
-    if details.browser then details.browser.craftingContextSkillLineID = skillLineID end
+    if details.browser then
+        details.browser.craftingContextSkillLineID = skillLineID
+        details.browser.craftingContextOpenedByGuildBook = true
+    end
     hideProfessionFrame(details)
     return true
 end
@@ -679,6 +686,7 @@ local function createWhisperControls(details)
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.browser.craftingContextSkillLineID = nil
+            details.browser.craftingContextOpenedByGuildBook = false
             details.pendingCraftQuantity = nil
             updateCraftControls(details)
             return

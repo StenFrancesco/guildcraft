@@ -800,6 +800,22 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+T.test("changing profession library mode closes open recipe details", function()
+    local GGM, _, browser, recipes = recipeDetailsFixture()
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertTrue(details:IsShown())
+
+    browser.professionLibraryToggle.ownRadio.scripts.OnClick(browser.professionLibraryToggle.ownRadio)
+    T.assertEqual(browser.professionLibraryMode, "Own")
+    T.assertFalse(details:IsShown())
+
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertTrue(details:IsShown())
+    browser.professionLibraryToggle.allRadio.scripts.OnClick(browser.professionLibraryToggle.allRadio)
+    T.assertEqual(browser.professionLibraryMode, "All")
+    T.assertFalse(details:IsShown())
+end)
+
 local function configureCrafterWhisperAPI(GGM, api, rows)
     local sent = {}
     GGM.professionRosterMembershipCurrent = true
@@ -990,6 +1006,49 @@ T.test("own create remains available when Blizzard exposes craftability but not 
     T.assertFalse(details.createAllButton.enabled)
     details.createButton.scripts.OnClick(details.createButton)
     T.assertEqual(api.craftCall[2], 1)
+end)
+
+T.test("own create controls reject enchanting salvage and recraft recipes", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    local recipeInfo = {}
+    local craftCalls = 0
+    api.C_TradeSkillUI = {
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function() return true end,
+        GetRecipeInfo = function(recipeID)
+            local info = { recipeID = recipeID, learned = true, craftable = true }
+            for flag, value in pairs(recipeInfo) do info[flag] = value end
+            return info
+        end,
+        GetCraftableCount = function() return 5 end,
+        CraftRecipe = function() craftCalls = craftCalls + 1; return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    for _, flag in ipairs({ "isEnchanting", "isSalvage", "isRecraft" }) do
+        recipeInfo = { [flag] = true }
+        GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+        T.assertFalse(details.createButton.enabled, flag .. " must disable Create")
+        T.assertFalse(details.createAllButton.enabled, flag .. " must disable Create All")
+        details.createButton.scripts.OnClick(details.createButton)
+        details.createAllButton.scripts.OnClick(details.createAllButton)
+        T.assertEqual(craftCalls, 0, flag .. " must not call CraftRecipe")
+    end
+
+    local secretFlag = {}
+    recipeInfo = { isSalvage = secretFlag }
+    api.issecretvalue = function(value) return value == secretFlag end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertFalse(details.createButton.enabled, "unknown recipe type must disable Create")
+    T.assertFalse(details.createAllButton.enabled, "unknown recipe type must disable Create All")
+
+    api.issecretvalue = function() return false end
+    recipeInfo = { isEnchanting = false, isSalvage = false, isRecraft = false }
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertTrue(details.createButton.enabled, "ordinary recipe should remain craftable")
 end)
 
 T.test("own recipe details load the profession context without leaving Blizzard's window visible", function()
@@ -1288,6 +1347,54 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     api.UIParent:SetSize(1000, 700)
     frame = GGM.CreateGuildGearBrowserWindow(api)
     T.assertTrue(math.abs(frame.scale - (976 / 1400)) < 0.001)
+end)
+
+T.test("closing the browser leaves a profession frame open if it was already open", function()
+    local GGM = loadUI()
+    local hideCount = 0
+    local professionFrame = {
+        shown = true,
+        IsShown = function(self) return self.shown end,
+        Hide = function(self) hideCount = hideCount + 1; self.shown = false end,
+        SetFrameStrata = function() end,
+        SetFrameLevel = function() end,
+    }
+    local api = makeBrowserAPI()
+    api.ProfessionsFrame = professionFrame
+    api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame:Show()
+    frame.professionLibraryMode = "Own"
+
+    GGM.SelectProfession(frame, "Alchemy")
+    frame.scripts.OnHide(frame)
+
+    T.assertEqual(hideCount, 0)
+    T.assertTrue(professionFrame.shown)
+end)
+
+T.test("closing the browser hides a profession frame that it opened", function()
+    local GGM = loadUI()
+    local hideCount = 0
+    local professionFrame = {
+        shown = false,
+        IsShown = function(self) return self.shown end,
+        Hide = function(self) hideCount = hideCount + 1; self.shown = false end,
+        SetFrameStrata = function() end,
+        SetFrameLevel = function() end,
+    }
+    local api = makeBrowserAPI()
+    api.ProfessionsFrame = professionFrame
+    api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame:Show()
+    frame.professionLibraryMode = "Own"
+
+    GGM.SelectProfession(frame, "Alchemy")
+    frame.scripts.OnHide(frame)
+
+    T.assertEqual(hideCount, 1)
+    T.assertFalse(professionFrame.shown)
 end)
 
 T.test("journal profession page follows the parchment reference proportions and typography", function()

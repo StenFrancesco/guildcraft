@@ -826,11 +826,14 @@ local function openSelectedProfessionContext(frame, skillLineID)
     if frame.professionLibraryMode ~= "Own" then return false end
     local trade = frame.api and frame.api.C_TradeSkillUI
     if type(trade) ~= "table" or type(trade.OpenTradeSkill) ~= "function" then return false end
+    local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
+    local wasShown = professionFrame and type(professionFrame.IsShown) == "function"
+        and professionFrame:IsShown() == true
     local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
     if not openOK or opened == false then return false end
     frame.craftingContextSkillLineID = skillLineID
-    local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
     if professionFrame then
+        if wasShown == false then frame.craftingContextOpenedByGuildBook = true end
         if type(professionFrame.SetFrameStrata) == "function" then
             pcall(professionFrame.SetFrameStrata, professionFrame, "MEDIUM")
         end
@@ -1041,6 +1044,9 @@ local function createProfessionsPage(api, frame)
     frame.professionLibraryToggle = toggle
     frame.professionLibraryToggle:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, 34)
     local function selectProfessionLibraryMode(mode)
+        if frame.professionLibraryMode ~= mode and GGM.HideRecipeDetailsWindow then
+            GGM.HideRecipeDetailsWindow(frame)
+        end
         frame.professionLibraryMode = mode
         GGM.RefreshVisibleProfessionLibrary(frame)
     end
@@ -1668,13 +1674,14 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame:SetScript("OnHide", function(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
         local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
-        if professionFrame and type(professionFrame.Hide) == "function" then
+        if self.craftingContextOpenedByGuildBook and professionFrame and type(professionFrame.Hide) == "function" then
             pcall(professionFrame.Hide, professionFrame)
         end
         self.professionLibraryMode = "All"
         self.selectedProfession = nil
         self.selectedProfessionID = nil
         self.craftingContextSkillLineID = nil
+        self.craftingContextOpenedByGuildBook = false
     end)
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
     frame.browserView = "Guild"
