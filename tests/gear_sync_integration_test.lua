@@ -297,16 +297,16 @@ T.test("GC_GEAR stability deltas detect missed updates and automatically repair 
     T.assertFalse(repaired.refreshNeeded == true)
 end)
 
-T.test("GC_GEAR paces separate one-frame logical messages", function()
+T.test("GC_GEAR yields between separate one-frame logical messages", function()
     local bus = guild()
     local bob = bus:client("Bob")
     for _, name in ipairs({ "Alice", "Carol" }) do
         assert(bob.G.RequestCompleteSnapshot(bob.sync, { key = name .. "-Silvermoon", name = name, realm = "Silvermoon" }))
     end
     T.assertEqual(#bus.frames, 1)
-    bus:advance(3)
+    bus:advance(0)
     T.assertEqual(#bus.frames, 2)
-    T.assertTrue(bus.frames[2].at - bus.frames[1].at + 0.000001 >= bob.G.SYNC_SEND_INTERVAL_SECONDS)
+    T.assertTrue(bus.frames[2].at - bus.frames[1].at < bob.G.SYNC_SEND_INTERVAL_SECONDS)
 end)
 
 T.test("GC_GEAR busy cache responders do not send a second late snapshot", function()
@@ -340,7 +340,7 @@ T.test("GC_GEAR ignores old prefixes and fails closed on unavailable guild sends
     T.assertEqual(#bus.frames, 1)
 end)
 
-T.test("GC_GEAR simultaneous stable slots are paced and remain sequential", function()
+T.test("GC_GEAR simultaneous stable slots remain sequential without fixed waits", function()
     local bus = guild()
     local alice, bob = bus:client("Alice"), bus:client("Bob")
     alice:startTracking()
@@ -359,7 +359,7 @@ T.test("GC_GEAR simultaneous stable slots are paced and remain sequential", func
         if entry.message.type == "SLOT_UPDATE" then changes[#changes + 1] = entry end
     end
     T.assertEqual(#changes, 2)
-    T.assertTrue(changes[2].at - changes[1].at + 0.000001 >= alice.G.SYNC_SEND_INTERVAL_SECONDS)
+    T.assertTrue(changes[2].at - changes[1].at < alice.G.SYNC_SEND_INTERVAL_SECONDS)
 end)
 
 T.test("GC_GEAR snapshot throttling releases the responder without retrying", function()

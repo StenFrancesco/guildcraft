@@ -215,13 +215,13 @@ T.test("bundled CTL channel throttle fails both transports closed without retry"
     T.assertEqual(#c.timers, 0)
 end)
 
-T.test("real CTL completion starts each transports pacing after a prefix throttle", function()
+T.test("real CTL completion yields without a fixed delay after a prefix throttle", function()
     for _, domain in ipairs({"gear", "profession"}) do
         local api, c = client({3, 0})
         local G, transport, interval
         if domain == "gear" then
             G, transport = gear(api)
-            interval = G.SYNC_SEND_INTERVAL_SECONDS
+            interval = 0
             G.SendSyncPayload(transport, string.rep("g", 500))
         else
             G = {}
@@ -255,7 +255,7 @@ T.test("real CTL completion starts each transports pacing after a prefix throttl
     end
 end)
 
-T.test("multi-frame professions finish faster while sharing real CTL with paced gear", function()
+T.test("multi-frame gear and professions share real CTL without fixed frame delays", function()
     local api, c = client()
     c:update(6)
     local G, transport = gear(api)
@@ -263,10 +263,11 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
     T.loadAddonFile("The Guild Book/ProfessionTransport.lua", P)
     local profession = assert(P.CreateProfessionTransport(api, function() end))
     local gearPayload, professionPayload = string.rep("g", 700), string.rep("p", 222 * 40)
-    local gearDone, professionDone, finishedAt = 0, 0, nil
+    local gearDone, professionDone, finishedAt, gearFinishedAt = 0, 0, nil, nil
     G.SendSyncPayload(transport, gearPayload, function(sent)
         T.assertTrue(sent)
         gearDone = gearDone + 1
+        gearFinishedAt = c.now
     end)
     P.SendProfessionPayload(profession, professionPayload, "Alice-Realm", function(sent)
         T.assertTrue(sent)
@@ -279,6 +280,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
     T.assertEqual(professionDone, 1)
     -- Forty frames used to require at least 19.5 seconds of fixed waits.
     T.assertTrue(finishedAt - 6 < 19.5)
+    T.assertTrue(gearFinishedAt - 6 < 3 * G.SYNC_SEND_INTERVAL_SECONDS)
     local chunks, lastGearAt, bytes = {GC_GEAR = {}, GC_PROF4 = {}}, nil, 0
     for _, call in ipairs(c.sent) do
         local index, chunk = call.text:match("^F1|%d+|(%d+)|%d+|(.*)$")
@@ -288,7 +290,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
         bytes = bytes + #call.text + c.library.MSG_OVERHEAD
         T.assertTrue(bytes <= c.library.BURST + c.library.MAX_CPS * (call.at - 6) + 0.000001)
         if call.prefix == "GC_GEAR" then
-            if lastGearAt then T.assertTrue(call.at - lastGearAt >= G.SYNC_SEND_INTERVAL_SECONDS - 0.000001) end
+            if lastGearAt then T.assertTrue(call.at >= lastGearAt) end
             lastGearAt = call.at
         else
             T.assertEqual(call.channel, "WHISPER")

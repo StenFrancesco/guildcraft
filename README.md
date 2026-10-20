@@ -182,8 +182,10 @@ unavailable APIs, combat restrictions and throttling.
 ChatThrottleLib version 29 is embedded, unchanged, under `Libs/ChatThrottleLib`
 in both The Guild Book and The Guild Book gear. The first loaded copy
 initializes the shared library; the second reuses it. No fourth addon folder is needed. Gear and
-profession frames use BULK priority and retain their existing pacing and queue
-limits. A frame counts as submitted only when the library calls back successfully;
+profession frames use BULK priority and retain their existing queue limits.
+After each successful send callback, gear yields to the next update without an
+additional fixed delay; ChatThrottleLib controls bandwidth and throttle pacing.
+A frame counts as submitted only when the library calls back successfully;
 this does not guarantee delivery to the recipient. Missing library support disables
 synchronization rather than falling back to unthrottled sends.
 

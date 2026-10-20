@@ -83,7 +83,8 @@ pumpOutbound = function(transport)
             group.remaining = group.remaining - 1
             if group.remaining == 0 then finishOutboundGroup(group, true, nil) end
         end
-        local timerOk, timer = pcall(transport.api.C_Timer.NewTimer, GGM.SYNC_SEND_INTERVAL_SECONDS, function()
+        -- Yield to the next update; CTL owns bandwidth and prefix-throttle waits.
+        local timerOk, timer = pcall(transport.api.C_Timer.NewTimer, 0, function()
             transport.sendTimer = nil
             pumpOutbound(transport)
         end)
