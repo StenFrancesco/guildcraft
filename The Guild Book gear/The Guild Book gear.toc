@@ -18,4 +18,6 @@ LocalGearMemory.lua
 SyncProtocol.lua
 SyncTransport.lua
 GuildSync.lua
+AutomaticSync.lua
+GearAutomaticSync.lua
 Main.lua

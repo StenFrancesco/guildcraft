@@ -1,6 +1,6 @@
 local _, GGM = ...
 
-local PREFIX = "GC_PROF3"
+local PREFIX = "GC_PROF4"
 local MAX_MESSAGE_BYTES = 240
 local MAX_LOGICAL_BYTES = 65536
 local MAX_CHUNK_BYTES = 222 -- 240 minus the 18-byte F1 header.
@@ -196,6 +196,7 @@ pumpOutbound = function(transport)
             end
         else
             transport.sendTimer = nil
+            if type(transport.onIdle) == "function" then pcall(transport.onIdle) end
         end
     end
     local ok = pcall(transport.api.ChatThrottleLib.SendAddonMessage, transport.api.ChatThrottleLib,

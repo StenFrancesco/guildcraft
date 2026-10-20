@@ -2,7 +2,9 @@ local ADDON_NAME, GearMemory = ...
 local api = _G
 
 local frame = CreateFrame("Frame")
-for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "CHAT_MSG_ADDON", "INSPECT_READY" }) do
+for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "CHAT_MSG_ADDON", "INSPECT_READY",
+    "GUILD_ROSTER_UPDATE", "PLAYER_GUILD_UPDATE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA",
+    "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "PLAYER_UPDATE_RESTING", "PLAYER_REGEN_ENABLED" }) do
     frame:RegisterEvent(event)
 end
 
@@ -67,6 +69,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "PLAYER_LOGIN" then
+        if GearMemory.guildSync and type(GearMemory.LoginGearSync) == "function" then GearMemory.LoginGearSync(GearMemory.guildSync) end
         if GearMemory.gearTracker or GearMemory.trackingStartupScheduled then return end
         GearMemory.trackingStartupScheduled = true
         api.C_Timer.After(1, function()
@@ -81,6 +84,13 @@ frame:SetScript("OnEvent", function(_, event, ...)
             GearMemory.lastCaptureError = err
             notifyDisplay(true)
         end)
+        return
+    end
+
+    if event == "GUILD_ROSTER_UPDATE" or event == "PLAYER_GUILD_UPDATE" or event == "PLAYER_ENTERING_WORLD"
+        or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS"
+        or event == "PLAYER_UPDATE_RESTING" or event == "PLAYER_REGEN_ENABLED" then
+        if type(GearMemory.WakeGearSync) == "function" then GearMemory.WakeGearSync(GearMemory.guildSync) end
         return
     end
 

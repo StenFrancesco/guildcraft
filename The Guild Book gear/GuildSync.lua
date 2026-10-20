@@ -53,6 +53,7 @@ local function finishSnapshotRequest(sync, requestID, status, err)
     if pending.sendToken then GGM.CancelSyncPayload(sync.transport, pending.sendToken) end
     setRequestResult(sync, pending.targetKey, status, err)
     notifyChanged(sync, status == "synced")
+    if type(pending.onFinished) == "function" then pcall(pending.onFinished, status == "synced") end
 end
 
 local function getResponseTime(sync)
@@ -260,11 +261,28 @@ local function handleSnapshotRequest(sync, sender, message)
     sync.pendingSnapshotResponses[responseKey] = pending
     sync.pendingSnapshotResponseTargets[responseTargetKey] = pending
     sync.pendingSnapshotResponseCount = sync.pendingSnapshotResponseCount + 1
-    local timerOk, timerOrError = pcall(sync.api.C_Timer.NewTimer, responseDelay(message.requester.key, message.target.key, responder.key), function()
+    local function startClaim()
         if sync.pendingSnapshotResponses[responseKey] ~= pending then return end
-        -- A busy client cannot advertise within the bounded election window.
-        -- Decline this request rather than sending a second, late full copy.
+        local at = getResponseTime(sync)
+        if not at or at >= now + 30 then
+            removePendingSnapshotResponse(sync, responseKey, pending)
+            return
+        end
         if #sync.transport.outboundFrames > 0 then
+            pending.startClaim = startClaim
+            if not pending.expiryTimer then
+                local ok, handle = pcall(sync.api.C_Timer.NewTimer, math.max(0, now + 30 - at), function()
+                    if sync.pendingSnapshotResponses[responseKey] == pending and pending.startClaim then
+                        removePendingSnapshotResponse(sync, responseKey, pending)
+                    end
+                end)
+                if not ok or not handle then removePendingSnapshotResponse(sync, responseKey, pending)
+                else pending.expiryTimer = handle end
+            end
+            return
+        end
+        pending.startClaim = nil
+        if type(sync.validateAutomaticResponse) == "function" and not sync.validateAutomaticResponse(message) then
             removePendingSnapshotResponse(sync, responseKey, pending)
             return
         end
@@ -310,7 +328,8 @@ local function handleSnapshotRequest(sync, sender, message)
             return
         end
         pending.claimToken = claimToken
-    end)
+    end
+    local timerOk, timerOrError = pcall(sync.api.C_Timer.NewTimer, responseDelay(message.requester.key, message.target.key, responder.key), startClaim)
     if not timerOk or timerOrError == nil then
         removePendingSnapshotResponse(sync, responseKey, pending)
         return nil, "sync-response-timer-create-failed"
@@ -354,6 +373,8 @@ local function handleSnapshotResponse(sync, sender, message)
     clearExpiredSnapshotRequests(sync, now)
     local pending = sync.pendingSnapshotRequests[message.requestID]
     if not pending or pending.targetKey ~= message.target.key or pending.requesterKey ~= message.requester.key then return "ignored", nil end
+    if pending.onFinished and type(sync.validateAutomaticIncoming) == "function"
+        and not sync.validateAutomaticIncoming(sender, message) then return "ignored", nil end
     if not pending.selectedResponderKey or pending.selectedResponderKey ~= message.responder.key then return "ignored", nil end
     local observedAt = message.snapshot.capturedAt
     if not meetsRequestFloor(pending, GGM.GetGearObservationFloor(message.snapshot), message.confirmedSequence)
@@ -391,6 +412,12 @@ function GGM.CreateGuildSync(api, db)
     end)
     if not transport then return nil, transportErr end
     sync.transport = transport
+    transport.onIdle = function()
+        for _, pending in pairs(sync.pendingSnapshotResponses) do
+            if #transport.outboundFrames > 0 then break end
+            if pending.startClaim then pending.startClaim() end
+        end
+    end
     return sync, nil
 end
 
@@ -412,7 +439,7 @@ function GGM.PublishConfirmedSlot(sync, characterKey, slotKey, slotValue, confir
     return GGM.SendSyncPayload(sync.transport, payload)
 end
 
-function GGM.RequestCompleteSnapshot(sync, targetIdentity, minimumSequence, minimumObservedAt)
+function GGM.RequestCompleteSnapshot(sync, targetIdentity, minimumSequence, minimumObservedAt, onFinished)
     local requester, requesterErr = GGM.BuildPlayerIdentity(sync.api)
     if not requester then return false, requesterErr end
     local targetValid, targetErr = GGM.ValidateSyncIdentity(targetIdentity)
@@ -435,7 +462,7 @@ function GGM.RequestCompleteSnapshot(sync, targetIdentity, minimumSequence, mini
     local record = GGM.GetCharacterRecord(sync.db, targetIdentity.key)
     local knownSequence = record and (record.requiredBaselineSequence or record.confirmedSequence) or 0
     local knownObservation = record and (record.requiredBaselineObservedAt or GGM.GetGearObservationFloor(record.gear)) or 0
-    local pending = { minimumObservedAt = math.max(minimumObservedAt or 0, knownObservation), minimumSequence = math.max(minimumSequence or 0, knownSequence), requesterKey = requester.key, targetKey = targetIdentity.key, expiresAt = now + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS, selectedResponderKey = nil, selectedSequence = -1, selectedObservedAt = -1 }
+    local pending = { onFinished = onFinished, minimumObservedAt = math.max(minimumObservedAt or 0, knownObservation), minimumSequence = math.max(minimumSequence or 0, knownSequence), requesterKey = requester.key, targetKey = targetIdentity.key, expiresAt = now + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS, selectedResponderKey = nil, selectedSequence = -1, selectedObservedAt = -1 }
     sync.pendingSnapshotRequests[requestID] = pending
     sync.pendingSnapshotRequestTargets[targetIdentity.key] = requestID
     sync.pendingSnapshotRequestCount = sync.pendingSnapshotRequestCount + 1
@@ -451,7 +478,12 @@ function GGM.RequestCompleteSnapshot(sync, targetIdentity, minimumSequence, mini
     end
     pending.sendToken = sendToken
     notifyChanged(sync, false)
-    return true, nil
+    return true, nil, requestID
+end
+
+function GGM.ExpireGuildSnapshotRequests(sync)
+    local at = getResponseTime(sync)
+    if at then clearExpiredSnapshotRequests(sync, at) end
 end
 
 -- Expiry is checked by the visible status control and at request/receive boundaries.

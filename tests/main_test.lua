@@ -141,7 +141,7 @@ T.test("main profession sync waits for reconciled roster and routes addon messag
         onEvent(frame, "ADDON_LOADED", "The Guild Book")
         T.assertNotNil(G.professionSync)
         onEvent(frame, "PLAYER_LOGIN")
-        T.assertEqual(logins, 0)
+        T.assertEqual(logins, 1, "login schedules work while roster readiness gates actual traffic")
         onEvent(frame, "PLAYER_ENTERING_WORLD")
         onEvent(frame, "GUILD_ROSTER_UPDATE")
         T.assertEqual(logins, 1)

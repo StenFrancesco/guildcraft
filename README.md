@@ -33,9 +33,10 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 ## Data and synchronization
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
-- Profession sharing uses protocol P3 (`GC_PROF3`). Participating clients need compatible versions.
+- Profession sharing uses protocol P4 (`GC_PROF4`). Participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
-- Login queues one automatic profession sync pass after the guild roster is ready, with a 27-second discovery window. Manual discovery retains its two-second window; there is no periodic background polling. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
+- Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
+- Leaving a guild or switching guilds cancels work for the previous guild. Once current membership and roster state are confirmed, a fresh bounded synchronization run is scheduled for the new guild.
 - The renamed addons use the SavedVariables globals shown above. Existing SavedVariables are not migrated to the new names, and this branch starts a fresh gear cache. Back up SavedVariables with the game closed if you need to keep existing data.
 
 ## Gear synchronization
@@ -77,15 +78,15 @@ guild membership and compatible participating copies of The Guild Book gear.
 The Professions tab shares complete last-known recipe snapshots with guild
 members using the same protocol version. A first profession selection can start
 a comparison, and a meaningful local snapshot save can announce that change.
-On login, after guild roster readiness, one automatic pass discovers a responder
-for each supported profession and exchanges missing or newer cached snapshots.
-Login discovery collects replies for 27 seconds; ordinary discovery keeps its
-two-second window. Roster refreshes and idle time do not start another pass.
-The **Sync profession** button starts a bounded operation that checks up to four
+Gear and recipes synchronize automatically after a random login delay of zero
+to five minutes. Neither requires opening the character browser. The
+**Sync profession** button starts immediately, subject to the existing cooldown,
+and checks up to four
 eligible guild peers one at a time, with the existing 60-second cooldown. A
 status reports how many peer caches matched or were compared; it does not claim
-agreement across the guild. If more than four peers are eligible, a later manual
-request rotates to another bounded candidate window. Unavailable peers, a
+agreement across the guild. If more than four peers are eligible, unfinished
+automatic work resumes with another bounded candidate window. Manual requests
+also rotate the window. Unavailable peers, a
 reached limit, or incomplete evidence leave the status at **Catch-up needed**.
 When comparisons start simultaneously, a manual request takes precedence over
 an automatic comparison; ties use the normalized character name and realm.
@@ -96,15 +97,18 @@ If no peer answers within the response window, `/ggm status` reports
 `profession-sync-no-responder`. The command also reports profession registration,
 roster readiness, and send errors on each client.
 Login and background hash announcements are cached as hints. Login comparison
-queries are accepted; periodic background queries receive no response. All
-participants must run a version that accepts login comparisons to auto-sync.
+queries are accepted; periodic background queries receive no response. Automatic
+catch-up uses the bounded peer comparisons described above.
 
 GUILD carries compact hashes and responder-selection notices. Only one selected
-pair exchanges manifests and missing/newer character records through
+pair exchanges manifests and differing character records through
 WHISPER. Each manifest contains character GUID, original capture timestamp and
 recipe content hash. Profession ID is in the exchange header. New observations
 use WoW server time.
-The newest complete observation wins. When the recipes match, a small freshness
+Validated learned recipe IDs are merged as a union for each character and
+profession, including knowledge from older and equal-time records. A newer
+empty remote snapshot cannot erase learned recipes. Locally owned captures keep
+their ownership protection. When the recipes match, a small freshness
 message updates the observation metadata without transferring the recipes again.
 Receiving data preserves its original timestamp. Data received during a
 comparison is not rebroadcast to wake other guild members.
@@ -117,13 +121,31 @@ recipes belong to a character or whether a snapshot is complete.
 
 Each exchange transfers at most four character-profession records and uses
 bounded chunks, queues and timeouts. Records are requested sequentially in each
-direction; larger caches may remain incomplete and require another explicit
-request after the cooldown. The recipient acknowledges a record only after
+direction. An operation continues through paced batches, with at most eight
+comparisons and four peers per profession; each manifest window contains at most
+128 characters. Per-peer cursors retain unfinished batches. The recipient acknowledges a record only after
 validating the complete transfer. Partial or failed transfers preserve the
 previous cache. Visible catalog refreshes are batched during receive bursts;
 records are saved and acknowledged as soon as they validate. ChatThrottleLib
 defers throttled submissions using its shared traffic queue; terminal send
-failures cancel the remaining transport work.
+failures cancel the remaining transport work while retaining automatic catch-up
+state. Busy responders keep eligible requests in bounded, deduplicated queues
+of at most 16 entries, expiring within 30 seconds. Superseded requests are dropped.
+
+Only unfinished automatic work retries, in a recognized major city, with at least
+20 minutes between attempt starts. A timer checks eligibility when the cooldown
+expires, including when the player stays in the city. Outside a city, zone and
+resting events can resume eligible work. Inns outside city maps do not qualify;
+unavailable or unreadable city APIs leave recovery pending. There are at most
+three recovery attempts per login and a one-hour deadline per automatic attempt.
+Finished work creates no idle polling or broadcasts. Manual synchronization
+remains available after automatic retries are exhausted.
+
+Gear uses the existing snapshot request, responder election and confirmed
+sequence rules. Automatic target batches include offline guild characters whose
+gear may be cached by online members. A target completes only after a validated
+snapshot is received. Unresponsive targets cannot permanently block later roster
+entries. Guild changes cancel work belonging to the previous guild.
 
 Queued whisper frames check recipient availability before submitting each frame
 to ChatThrottleLib. Confirmed
@@ -131,15 +153,16 @@ offline recipients cancel the current work while preserving cached records.
 Recent valid protocol messages can provide temporary presence evidence when the
 guild roster is stale. Unknown presence without that evidence stops the transfer.
 
-Whisper records reach only their selected recipient. Equal-time conflicts retain
-existing data and require a fresh observation. Shared information remains
+Whisper records reach only their selected recipient. Ownership conflicts retain
+existing local data and require a fresh observation. Invalid or oversized unions
+preserve the valid saved catalog and leave catch-up work unfinished. Shared information remains
 last-known/cached, including offline crafters; a peer match does not prove their
 current recipes. Profession sync is independent of the gear companion.
 
-This version uses protocol P3 and prefix GC_PROF3; all participating copies must
-use this version. The renamed addons use new SavedVariables globals without
-migrating the old data. Profession traffic remains within supported in-game
-addon communication and respects
+This version uses recipe protocol P4 and prefix GC_PROF4. All participating copies
+must update: legacy recipe clients use replacement semantics and cannot join the
+union exchange. Gear keeps its existing protocol. This sync update adds no storage migration; the renamed addons on main retain their new SavedVariables globals. Profession
+traffic remains within supported in-game addon communication and respects
 unavailable APIs, combat restrictions and throttling.
 
 ChatThrottleLib version 29 is embedded, unchanged, under `Libs/ChatThrottleLib`

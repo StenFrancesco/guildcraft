@@ -30,6 +30,8 @@ local function guild()
             "StableGearTracker", "LocalGearMemory", "SyncProtocol", "SyncTransport", "GuildSync" }) do
             T.loadUnitModule(module, G)
         end
+        T.loadAddonFile("The Guild Book gear/AutomaticSync.lua", G)
+        T.loadAddonFile("The Guild Book gear/GearAutomaticSync.lua", G)
         -- This suite isolates sync behavior; the real adapter contract is tested separately.
         G.AttachGearBackend = function(backend)
             if type(backend) ~= "table" then return false, "gear-backend-invalid" end
@@ -43,6 +45,20 @@ local function guild()
             UnitGUID = function() return name end,
             GetRealmName = function() return "Silvermoon" end,
             GetTime = function() return self.now end,
+            random = function() return client.delay or 0 end,
+            issecretvalue = function() return false end,
+            IsInGuild = function() return not client.left end,
+            InCombatLockdown = function() return client.combat or false end,
+            IsResting = function() return true end,
+            C_Map = { GetBestMapForUnit = function() return client.map or 84 end },
+            GetGuildInfo = function() return client.guildName or "Guild", nil, nil, "Silvermoon" end,
+            GetNumGuildMembers = function() return #self.clients end,
+            GetGuildRosterInfo = function(index)
+                local member = self.clients[index]
+                if client.rosterBroken then return nil end
+                return member.identity.key, nil, nil, nil, nil, nil, nil, nil, not member.offline,
+                    nil, nil, nil, nil, nil, nil, nil, member.identity.guid
+            end,
             GetServerTime = function() return 1700000000 + math.floor(self.now) end,
             GetInventorySlotInfo = function(inventoryName)
                 for _, slot in ipairs(G.TRACKED_SLOTS) do
@@ -110,6 +126,115 @@ local function guild()
     end
     return bus
 end
+
+T.test("automatic gear login fetches online and offline cached snapshots without opening the browser", function()
+    local bus = guild()
+    local alice, bob, offline = bus:client("Alice"), bus:client("Bob"), bus:client("Offline")
+    alice:startTracking(); offline:startTracking(); offline.offline, offline.drop = true, true
+    local snapshot = assert(offline.G.BuildRuntimeGearSnapshot(offline.api, offline.db.characters[offline.identity.key].gear))
+    assert(alice.G.SaveCompleteCharacterRecord(alice.db, offline.identity, snapshot, 5))
+    bob.delay = 300
+    assert(bob.G.LoginGearSync(bob.sync)); assert(bob.G.LoginGearSync(bob.sync))
+    bus:advance(299); T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 0)
+    bus:advance(100)
+    T.assertNotNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertNotNil(bob.G.GetCompleteCharacterRecord(bob.db, offline.identity.key))
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 2)
+    local frames = #bus.frames; bus:advance(5000); T.assertEqual(#bus.frames, frames)
+end)
+
+T.test("automatic gear retries only failed targets at the stationary city cooldown", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice:startTracking(); alice.drop = true
+    assert(bob.G.LoginGearSync(bob.sync)); bus:advance(1000)
+    T.assertNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 1)
+    alice.drop = false; bus:advance(400)
+    T.assertNotNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 2)
+    local count = #bus.frames; bus:advance(8000); T.assertEqual(#bus.frames, count)
+end)
+
+T.test("a sole busy gear cache responder serves the queued request after outgoing traffic drains", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice:startTracking()
+    for index = 1, 8 do
+        local target = { key = "Missing" .. index .. "-Silvermoon", name = "Missing" .. index, realm = "Silvermoon" }
+        assert(alice.G.SendSyncPayload(alice.sync.transport, assert(alice.G.EncodeSyncSnapshotRequest(alice.identity, target, string.format("%06d", index)))))
+    end
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(90)
+    T.assertNotNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+T.test("gear automatic target batches rotate past unresponsive members", function()
+    local bus = guild()
+    local requester = bus:client("Requester")
+    for index = 1, 16 do bus:client("Absent" .. index) end
+    local provider = bus:client("Zulu")
+    provider:startTracking()
+    assert(requester.G.LoginGearSync(requester.sync)); bus:advance(5000)
+    T.assertNotNil(requester.G.GetCompleteCharacterRecord(requester.db, provider.identity.key))
+end)
+
+T.test("gear automatic interruption preserves completed targets and waits for city recovery", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice:startTracking(); bob.rosterBroken = true
+    assert(bob.G.LoginGearSync(bob.sync)); bus:advance(100)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 0)
+    bob.rosterBroken = false; bob.map = 37
+    bus:advance(1300); T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 0)
+    bob.map = 84; bob.G.WakeGearSync(bob.sync); bus:advance(100)
+    T.assertNotNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    bob.left = true; bob.G.WakeGearSync(bob.sync)
+    T.assertTrue(bob.sync.automaticController.stopped)
+    bob.left, bob.rosterBroken = false, true
+    bob.G.WakeGearSync(bob.sync)
+    T.assertTrue(bob.sync.automaticController.stopped)
+    bob.rosterBroken = false
+    bob.G.WakeGearSync(bob.sync)
+    T.assertFalse(bob.sync.automaticController.stopped)
+end)
+
+T.test("gear automatic work restarts on a verified guild switch wake", function()
+    local bus = guild()
+    bus:client("Alice")
+    local bob = bus:client("Bob")
+    assert(bob.G.LoginGearSync(bob.sync)); bus:advance(100)
+    local oldGuild = bob.sync.automaticGuild
+    T.assertEqual(oldGuild, "Guild:Silvermoon")
+
+    bob.guildName = "OtherGuild"
+    bob.G.WakeGearSync(bob.sync)
+    T.assertFalse(bob.sync.automaticController.stopped)
+    T.assertEqual(bob.sync.automaticGuild, nil)
+    T.assertEqual(bob.sync.automaticRemaining, nil)
+    T.assertEqual(bob.sync.automaticCursor, nil)
+
+    bus:advance(100)
+    T.assertFalse(bob.sync.automaticController.stopped)
+    T.assertEqual(bob.sync.automaticGuild, "OtherGuild:Silvermoon")
+    T.assertNotNil(bob.sync.automaticRemaining)
+end)
+
+T.test("busy gear response expires without sending a late snapshot", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice:startTracking()
+    local original, held = alice.api.ChatThrottleLib.SendAddonMessage, nil
+    alice.api.ChatThrottleLib.SendAddonMessage = function(lib, priority, prefix, text, channel, target, queue, callback, arg)
+        held = function() original(lib, priority, prefix, text, channel, target, queue, callback, arg) end
+    end
+    assert(alice.G.SendSyncPayload(alice.sync.transport, assert(alice.G.EncodeSyncSnapshotRequest(alice.identity, bob.identity, "999999"))))
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity)); bus:advance(31)
+    T.assertEqual(alice.sync.pendingSnapshotResponseCount, 0)
+    alice.api.ChatThrottleLib.SendAddonMessage = original; held(); bus:advance(90)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 0)
+end)
 
 T.test("GC_GEAR clients exchange one explicit cached baseline with multiple responders", function()
     local bus = guild()
