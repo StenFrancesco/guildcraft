@@ -928,6 +928,92 @@ T.test("recipe detail whisper controls default to one and only an explicit click
     T.assertTrue(string.find(details.whisperStatus.text, "Request attempted", 1, true) ~= nil)
 end)
 
+T.test("own recipe details replace whispering with player-triggered create controls", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    api.C_TradeSkillUI = {
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function() return true end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function(recipeID)
+            return 31
+        end,
+        CraftRecipe = function(recipeID, quantity)
+            api.craftCall = { recipeID, quantity }
+            return true
+        end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton:IsShown())
+    T.assertTrue(details.createAllButton:IsShown())
+    T.assertFalse(details.whisperButton:IsShown())
+    T.assertFalse(details.crafterDropdown:IsShown())
+    T.assertEqual(details.createAllButton.label.text, "Create All [31]")
+
+    details.amountInput:SetText("3")
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(api.craftCall[1], 11)
+    T.assertEqual(api.craftCall[2], 3)
+
+    details.createAllButton.scripts.OnClick(details.createAllButton)
+    T.assertEqual(api.craftCall[2], 31)
+end)
+
+T.test("own create remains available when Blizzard exposes craftability but not a maximum", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    api.C_TradeSkillUI = {
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function() return true end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        CraftRecipe = function(recipeID, quantity)
+            api.craftCall = { recipeID, quantity }
+            return true
+        end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton.enabled)
+    T.assertFalse(details.createAllButton.enabled)
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(api.craftCall[2], 1)
+end)
+
+T.test("own recipe details load the profession context without leaving Blizzard's window visible", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    local openedSkillLine
+    api.C_TradeSkillUI = {
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetRecipeInfo = function(recipeID) return { recipeID = recipeID, learned = true, craftable = true } end,
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function(skillLineID) openedSkillLine = skillLineID; return true end,
+        GetCraftableCount = function() return 31 end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    local lowered = 0
+    api.ProfessionsFrame = { SetFrameStrata = function() lowered = lowered + 1 end }
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(openedSkillLine, 164)
+    T.assertTrue(lowered > 0)
+end)
+
 T.test("crafter whisper amount is preserved for same recipe and reset for a new recipe", function()
     local GGM, _, browser, recipes = recipeDetailsFixture()
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
