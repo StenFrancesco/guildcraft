@@ -184,7 +184,7 @@ end
 function GGM.ValidateStoredGear(gear, expectedComplete)
     if type(gear) ~= "table" then return false, "stored-gear-invalid" end
     for key in pairs(gear) do
-        if key ~= "complete" and key ~= "capturedAt" and key ~= "slots" and key ~= "unavailableSlots" then
+        if key ~= "complete" and key ~= "capturedAt" and key ~= "slots" and key ~= "unavailableSlots" and key ~= "slotObservedAt" then
             return false, "stored-gear-invalid"
         end
     end
@@ -193,6 +193,8 @@ function GGM.ValidateStoredGear(gear, expectedComplete)
         return false, expectedComplete and "snapshot-not-complete" or "stored-gear-completeness-invalid"
     end
     if not isProtocolTimestamp(gear.capturedAt) then return false, "snapshot-captured-at-invalid" end
+    local timesValid, timesErr = GGM.ValidateGearObservationTimes(gear)
+    if not timesValid then return false, timesErr end
     if type(gear.slots) ~= "table" then return false, "snapshot-slots-invalid" end
     if type(gear.unavailableSlots) ~= "table" then return false, "snapshot-unavailable-slots-invalid" end
 
@@ -221,6 +223,48 @@ function GGM.ValidateStoredGear(gear, expectedComplete)
     end
     return true, nil
 end
+
+-- A legacy snapshot observed every slot at capturedAt. Explicit maps keep
+-- incremental observations from making unchanged equipment appear newer.
+function GGM.GetGearSlotObservedAt(gear, slotID)
+    return gear.slotObservedAt and gear.slotObservedAt[slotID] or gear.capturedAt
+end
+
+function GGM.GetGearObservationFloor(gear)
+    local oldest = gear.capturedAt
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        oldest = math.min(oldest, GGM.GetGearSlotObservedAt(gear, slot.inventorySlotID))
+    end
+    return oldest
+end
+
+function GGM.CopyGearObservationTimes(gear)
+    local times = {}
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        times[slot.inventorySlotID] = GGM.GetGearSlotObservedAt(gear, slot.inventorySlotID)
+    end
+    return times
+end
+
+local function validateObservationTimes(gear)
+    if gear.slotObservedAt == nil then return true end
+    if type(gear.slotObservedAt) ~= "table" then return false, "snapshot-observation-times-invalid" end
+    for slotID, at in pairs(gear.slotObservedAt) do
+        if not GGM.FindTrackedSlotByID(slotID) or not isProtocolTimestamp(at) or at > gear.capturedAt then
+            return false, "snapshot-observation-times-invalid"
+        end
+    end
+    local newest = 0
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        newest = math.max(newest, gear.slotObservedAt[slot.inventorySlotID] or 0)
+        if not isProtocolTimestamp(gear.slotObservedAt[slot.inventorySlotID]) then
+            return false, "snapshot-observation-times-invalid"
+        end
+    end
+    if newest ~= gear.capturedAt then return false, "snapshot-observation-times-invalid" end
+    return true
+end
+GGM.ValidateGearObservationTimes = validateObservationTimes
 
 function GGM.GetStoredGearSlot(gear, slotKey)
     local trackedSlot, slotErr = GGM.FindTrackedSlot(slotKey)
@@ -290,6 +334,8 @@ function GGM.CreateStoredGear(snapshot)
     if type(snapshot) ~= "table" then return nil, "snapshot-invalid" end
     if snapshot.complete ~= true then return nil, "snapshot-not-complete" end
     if not isProtocolTimestamp(snapshot.capturedAt) then return nil, "snapshot-captured-at-invalid" end
+    local timesValid, timesErr = validateObservationTimes(snapshot)
+    if not timesValid then return nil, timesErr end
     if type(snapshot.slots) ~= "table" then return nil, "snapshot-slots-invalid" end
 
     for slotKey in pairs(snapshot.slots) do
@@ -313,6 +359,7 @@ function GGM.CreateStoredGear(snapshot)
         local stored, storeErr = GGM.SetStoredGearSlot(gear, trackedSlot.key, slotValue)
         if not stored then return nil, storeErr end
     end
+    if snapshot.slotObservedAt then gear.slotObservedAt = GGM.CopyGearObservationTimes(snapshot) end
     local valid, validateErr = GGM.ValidateStoredGear(gear, true)
     if not valid then return nil, validateErr end
     return gear, nil
@@ -335,7 +382,7 @@ end
 function GGM.BuildRuntimeGearSnapshot(api, gear)
     local valid, validateErr = GGM.ValidateStoredGear(gear, true)
     if not valid then return nil, validateErr end
-    local snapshot = { complete = true, capturedAt = gear.capturedAt, slots = {} }
+    local snapshot = { complete = true, capturedAt = gear.capturedAt, slots = {}, slotObservedAt = GGM.CopyGearObservationTimes(gear) }
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local slotValue, slotErr = GGM.BuildRuntimeGearSlot(api, gear, trackedSlot.key)
         if not slotValue then return nil, slotErr end

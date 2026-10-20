@@ -150,7 +150,7 @@ function GGM.EncodeSyncSnapshotRequest(requester, target, requestID)
     return encodePayload("Q", fields)
 end
 
-function GGM.EncodeSyncSnapshotResponseClaim(target, requester, responder, confirmedSequence, requestID)
+function GGM.EncodeSyncSnapshotResponseClaim(target, requester, responder, confirmedSequence, requestID, observedAt, baselineObservedAt)
     local targetValid, targetErr = GGM.ValidateSyncIdentity(target)
     if not targetValid then return nil, targetErr end
     local requesterValid, requesterErr = GGM.ValidateSyncIdentity(requester)
@@ -168,12 +168,21 @@ function GGM.EncodeSyncSnapshotResponseClaim(target, requester, responder, confi
     if not requesterKeyValid then return nil, requesterKeyErr end
     local responderKeyValid, responderKeyErr = validateBoundedString(responder.key, keyMaximum, "sync-claim-responder-key", false)
     if not responderKeyValid then return nil, responderKeyErr end
+    observedAt = observedAt or 0
+    baselineObservedAt = baselineObservedAt or observedAt
+    local baselineValid, baselineErr = validateTimestamp(baselineObservedAt, "sync-baseline-observed-at-invalid")
+    if not baselineValid then return nil, baselineErr end
+    if baselineObservedAt > observedAt then return nil, "sync-baseline-observed-at-invalid" end
+    local timeValid, timeErr = validateTimestamp(observedAt, "sync-observed-at-invalid")
+    if not timeValid then return nil, timeErr end
     local fields = {}
     table.insert(fields, target.key)
     table.insert(fields, requester.key)
     table.insert(fields, responder.key)
     table.insert(fields, tostring(confirmedSequence))
     table.insert(fields, requestID)
+    table.insert(fields, tostring(observedAt))
+    table.insert(fields, tostring(baselineObservedAt))
     return encodePayload("C", fields)
 end
 
@@ -216,6 +225,7 @@ function GGM.EncodeSyncSnapshotResponse(target, requester, responder, snapshot, 
         local slotValid, slotErr = validateSyncSlotValue(trackedSlot.key, slotValue)
         if not slotValid then return nil, slotErr end
         encodeSlotFields(fields, trackedSlot.key, slotValue)
+        table.insert(fields, tostring(GGM.GetGearSlotObservedAt(snapshot, trackedSlot.inventorySlotID)))
     end
     return encodePayload("S", fields)
 end
@@ -293,8 +303,8 @@ function GGM.DecodeSyncMessage(payload)
     local fieldCount
     if typeCode == "U" then fieldCount = 10
     elseif typeCode == "Q" then fieldCount = 9
-    elseif typeCode == "S" then fieldCount = 18 + (#GGM.TRACKED_SLOTS * 4)
-    elseif typeCode == "C" then fieldCount = 5
+    elseif typeCode == "S" then fieldCount = 18 + (#GGM.TRACKED_SLOTS * 5)
+    elseif typeCode == "C" then fieldCount = 7
     else return nil, "sync-message-type-unknown" end
     local fields, cursor, fieldsErr = readFields(payload, 3, fieldCount)
     if not fields then return nil, fieldsErr end
@@ -331,7 +341,11 @@ function GGM.DecodeSyncMessage(payload)
         if sequence == nil then return nil, sequenceErr end
         local requestIDValid, requestIDErr = validateRequestID(fields[5])
         if not requestIDValid then return nil, requestIDErr end
-        return { type = "SNAPSHOT_RESPONSE_CLAIM", target = { key = fields[1] }, requester = { key = fields[2] }, responder = { key = fields[3] }, confirmedSequence = sequence, requestID = fields[5] }, nil
+        local observedAt, observedErr = parseUnsignedInteger(fields[6], 0, GGM.SYNC_MAX_TIMESTAMP, "sync-observed-at-invalid")
+        if observedAt == nil then return nil, observedErr end
+        local baselineObservedAt, baselineErr = parseUnsignedInteger(fields[7], 0, observedAt, "sync-baseline-observed-at-invalid")
+        if baselineObservedAt == nil then return nil, baselineErr end
+        return { type = "SNAPSHOT_RESPONSE_CLAIM", target = { key = fields[1] }, requester = { key = fields[2] }, responder = { key = fields[3] }, confirmedSequence = sequence, requestID = fields[5], observedAt = observedAt, baselineObservedAt = baselineObservedAt }, nil
     end
     local target, targetErr = decodeIdentity(fields, 1)
     if not target then return nil, targetErr end
@@ -356,13 +370,16 @@ function GGM.DecodeSyncMessage(payload)
     if not noModel and not validModel then return nil, "sync-target-model-identity-invalid" end
     if raceID == 0 then raceID, sex = nil, nil end
     if displayID == 0 then displayID = nil end
-    local snapshot = { complete = true, capturedAt = capturedAt, slots = {} }
+    local snapshot = { complete = true, capturedAt = capturedAt, slots = {}, slotObservedAt = {} }
     local offset = 19
     for _, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local slotKey, slotValue, slotErr = decodeSlot(fields, offset, trackedSlot.key)
         if not slotKey then return nil, slotErr end
         snapshot.slots[slotKey] = slotValue
-        offset = offset + 4
+        local at, atErr = parseUnsignedInteger(fields[offset + 4], 0, capturedAt, "sync-slot-observed-at-invalid")
+        if at == nil then return nil, atErr end
+        snapshot.slotObservedAt[trackedSlot.inventorySlotID] = at
+        offset = offset + 5
     end
     local snapshotValid, snapshotErr = GGM.ValidateCompleteSnapshot(snapshot)
     if not snapshotValid then return nil, snapshotErr end

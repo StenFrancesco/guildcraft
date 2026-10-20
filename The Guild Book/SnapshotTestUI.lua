@@ -1,4 +1,5 @@
 local _, GGM = ...
+local REQUEST_ERRORS
 
 local function gearUnavailableMessage(db)
     local reason = type(db) == "table" and db.gearUnavailableReason or nil
@@ -187,12 +188,13 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         local icon = slotTexture
         if itemID then icon = getItemIcon(api, itemID) or slotTexture end
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
-        local displayName = slotDisplayNames[trackedSlot.key]
+        local displayName = itemLink and itemLink:match("|h%[(.-)%]|h") or slotDisplayNames[trackedSlot.key]
         table.insert(slots, {
             key = trackedSlot.key,
             inventorySlotID = state.inventorySlotID,
             itemID = itemID,
             itemLink = itemLink,
+            itemString = state.itemString,
             empty = empty,
             unavailable = unavailable,
             valueText = unavailable and "No data" or nil,
@@ -601,28 +603,6 @@ local function createSectionLabel(parent, text)
     return label
 end
 
-local function createStatusBadge(api, parent)
-    local badge = createSurface(api, parent, THEME.panelRaised, THEME.borderSoft)
-    badge:SetSize(126, 24)
-    badge.dot = badge:CreateTexture(nil, "ARTWORK")
-    badge.dot:SetSize(6, 6)
-    badge.dot:SetPoint("LEFT", badge, "LEFT", 10, 0)
-    badge.text = createText(badge, "OVERLAY", "GameFontHighlightSmall")
-    badge.text:SetPoint("LEFT", badge.dot, "RIGHT", 7, 0)
-    badge.text:SetPoint("RIGHT", badge, "RIGHT", -8, 0)
-    badge.text:SetJustifyH("LEFT")
-    return badge
-end
-
-local function setStatusBadge(badge, text, tone)
-    if not badge then return end
-    local color = tone == "success" and THEME.success or (tone == "warning" and THEME.warning) or THEME.muted
-    badge.text:SetText(text or "")
-    setTextColor(badge.text, color)
-    setColor(badge.dot, color)
-    recolorBorder(badge.border, { color[1], color[2], color[3], 0.48 })
-end
-
 local function createEmptyStateCard(api, parent, iconPath, title, body)
     local card = createSurface(api, parent, THEME.panelAlt, THEME.borderSoft, true)
     card:SetSize(390, 190)
@@ -649,6 +629,46 @@ local function createEmptyStateCard(api, parent, iconPath, title, body)
     return card
 end
 
+local function refreshGearSyncControls(frame)
+    if not frame.gearSyncButton then return end
+    local entry = frame.selectedEntry
+    local visible = frame.activeTab == "Character" and entry ~= nil
+    if not visible then frame.gearSyncButton:Hide(); frame.gearSyncStatus:Hide(); return end
+    frame.gearSyncButton:Show()
+    frame.gearSyncStatus:Show()
+    local status, busy, err = "", false, nil
+    if type(GGM.GetGearSyncStatus) == "function" then
+        status, busy, err = GGM.GetGearSyncStatus(GGM.guildSync, entry.key)
+    end
+    local localError = frame.gearSyncError
+    if localError and localError.targetKey == entry.key then
+        err = localError.error
+        if busy then frame.gearSyncError = nil; err = nil end
+    end
+    if err then status = REQUEST_ERRORS[err] or "Gear sync failed. Try again." end
+    frame.gearSyncStatus:SetText(status)
+    if frame.gearSyncButton.SetEnabled then frame.gearSyncButton:SetEnabled(not busy) end
+end
+
+function GGM.SyncSelectedGear(frame)
+    local entry = frame and frame.selectedEntry
+    if not entry or frame.activeTab ~= "Character" then return false end
+    local ok, err = false, "sync-unavailable"
+    if GGM.guildSync and type(GGM.RequestCompleteSnapshot) == "function" then
+        ok, err = GGM.RequestCompleteSnapshot(GGM.guildSync, entry.record.identity)
+    end
+    frame.gearSyncError = not ok and { targetKey = entry.key, error = err } or nil
+    GGM.lastSyncError = err
+    refreshGearSyncControls(frame)
+    return ok, err
+end
+
+function GGM.RefreshVisibleGearSyncStatus(dataChanged)
+    local frame = GGM.guildGearBrowserFrame
+    if frame and dataChanged == true then frame.gearSyncError = nil end
+    if frame and frame:IsShown() then refreshGearSyncControls(frame) end
+end
+
 local function renderBrowserDetail(frame, entry, api)
     if type(GGM.ClearSavedCharacterModel) == "function" then
         GGM.ClearSavedCharacterModel(frame.characterModelView)
@@ -657,10 +677,10 @@ local function renderBrowserDetail(frame, entry, api)
     end
     if frame.modelUnavailableLabel then frame.modelUnavailableLabel:Hide() end
     frame.detailModel = nil
-    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do
+    refreshGearSyncControls(frame)
+    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine }) do
         if control then control:Hide() end
     end
-    if frame.completenessBadge then frame.completenessBadge:Hide() end
     if frame.snapshotCaption then frame.snapshotCaption:Hide() end
     frame.detailEmpty:Hide()
     if frame.modelStage then frame.modelStage:Hide() end
@@ -705,12 +725,7 @@ local function renderBrowserDetail(frame, entry, api)
     setText(frame.characterLine, model.characterName)
     setText(frame.realmLine, model.realm)
     setText(frame.capturedLine, model.capturedAtText)
-    setText(frame.completenessLine, model.completenessText)
     if frame.snapshotCaption then frame.snapshotCaption:Show() end
-
-    local statusTone = model.complete and "success" or "warning"
-    setStatusBadge(frame.completenessBadge, model.completenessText, statusTone)
-    frame.completenessBadge:Show()
 
     for index, slot in ipairs(model.slots) do
         local button = frame.slotButtons[index]
@@ -724,6 +739,8 @@ local function renderBrowserDetail(frame, entry, api)
             if not slot.empty and not slot.unavailable then button.glow:Show() else button.glow:Hide() end
         end
         button.label:SetText(slot.displayName)
+        button.label:SetHeight(slot.itemID and 32 or 14)
+        button.pendingItemString = slot.itemID and slot.displayName == "Item " .. tostring(slot.itemID) and slot.itemString or nil
         setText(button.status, slot.statusText)
         button.empty = slot.empty
         button.unavailable = slot.unavailable
@@ -751,6 +768,7 @@ local function renderBrowserDetail(frame, entry, api)
 end
 
 local function setBrowserContentVisible(frame, visible)
+    refreshGearSyncControls(frame)
     for _, control in ipairs({ frame.searchPanel, frame.listPanel, frame.gearPanel }) do
         if control then if visible then control:Show() else control:Hide() end end
     end
@@ -1666,6 +1684,8 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
 
     button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
     button.label:SetText(slotDisplayNames[trackedSlot.key])
+    GGM.ApplyJournalFont(button.label, 12)
+    if button.label.SetWordWrap then button.label:SetWordWrap(true) end
     setTextColor(button.label, THEME.textSoft)
     button.status = createText(button, "OVERLAY", "GameFontDisableSmall")
     setTextColor(button.status, THEME.muted)
@@ -1679,10 +1699,10 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     end
 
     if layout.group == "left" then
-        button.label:SetWidth(98); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
+        button.label:SetWidth(146); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
         button.status:SetWidth(98); button.status:SetJustifyH("LEFT"); button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -2)
     elseif layout.group == "right" then
-        button.label:SetWidth(98); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -9, 5)
+        button.label:SetWidth(146); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -9, 5)
         button.status:SetWidth(98); button.status:SetJustifyH("RIGHT"); button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -2)
     else
         button.label:SetWidth(92); button.label:SetJustifyH("CENTER"); button.label:SetPoint("TOP", button, "BOTTOM", 0, -5)
@@ -1870,6 +1890,34 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.listEmpty:Hide()
 
     frame.gearPanel = createGearPanel(api, frame)
+    frame.gearSyncButton = GGM.CreateFlatButton(api, frame.gearPanel, "Sync gear", 112, 27, "secondary")
+    frame.gearSyncButton:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
+    frame.gearSyncButton:SetScript("OnClick", function() GGM.SyncSelectedGear(frame) end)
+    frame.gearSyncStatus = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
+    GGM.ApplyJournalFont(frame.gearSyncStatus, 12)
+    frame.gearSyncStatus:SetPoint("LEFT", frame.gearSyncButton, "RIGHT", 12, 0)
+    frame.gearSyncStatus:SetSize(230, 30)
+    frame.gearSyncStatus:SetJustifyH("LEFT")
+    setTextColor(frame.gearSyncStatus, THEME.textSoft)
+    frame.gearSyncButton:Hide()
+    frame.gearSyncStatus:Hide()
+    frame.gearSyncButton:SetScript("OnUpdate", function(_, elapsed)
+        frame.gearSyncElapsed = (frame.gearSyncElapsed or 0) + elapsed
+        if frame.gearSyncElapsed < 1 then return end
+        frame.gearSyncElapsed = 0
+        refreshGearSyncControls(frame)
+        for _, button in ipairs(frame.slotButtons or {}) do
+            if button.pendingItemString then
+                local link = GGM.BuildItemHyperlink(api, button.pendingItemString)
+                local name = link and link:match("|h%[(.-)%]|h")
+                if name then
+                    button.label:SetText(name)
+                    button.itemLink = link
+                    if name ~= "Item " .. tostring(button.itemID) then button.pendingItemString = nil end
+                end
+            end
+        end
+    end)
     frame.characterLine = createText(frame.gearPanel, "OVERLAY", "GameFontNormalHuge")
     GGM.ApplyJournalFont(frame.characterLine, 30, "bold")
     frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 34, -50)
@@ -1894,10 +1942,6 @@ function GGM.CreateGuildGearBrowserWindow(api)
     GGM.ApplyJournalFont(frame.capturedLine, 12)
     frame.capturedLine:SetJustifyH("LEFT")
     setTextColor(frame.capturedLine, THEME.textSoft)
-    frame.completenessBadge = createStatusBadge(api, frame.gearPanel)
-    frame.completenessBadge:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
-    frame.completenessBadge:Hide()
-    frame.completenessLine = frame.completenessBadge.text
 
     frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
     frame.modelStage:SetSize(208, 218)
@@ -2067,7 +2111,7 @@ local function chatEmitter(api)
     return function() end
 end
 
-local REQUEST_ERRORS = {
+REQUEST_ERRORS = {
     ["request-target-invalid"] = "Usage: /ggm request Name-Realm",
     ["sync-unavailable"] = "Gear sync is unavailable.",
     ["sync-snapshot-request-pending"] = "A gear request for this character is already pending.",

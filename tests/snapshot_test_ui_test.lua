@@ -649,8 +649,8 @@ T.test("character content stays within the journal's painted page borders", func
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
         "native scrollbar extends beyond the library border")
-    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.completenessBadge.point.x,
-        "status badge overlaps the capture date")
+    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.gearSyncButton.point.x,
+        "sync button overlaps the capture date")
 end)
 
 T.test("journal headings reserve space for subtitles inside their columns", function()
@@ -2232,7 +2232,7 @@ T.test("browser portrait selection updates from A to B and clears on no selectio
     T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
     T.assertEqual(frame.characterLine.text, "Beatrice")
     T.assertEqual(frame.capturedLine.text, "saved-1700000200")
-    T.assertEqual(frame.completenessLine.text, "Complete")
+    T.assertNil(frame.completenessBadge)
     frame.searchBox:SetText("no match")
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
@@ -2284,7 +2284,7 @@ T.test("failed 2D portrait frame creation leaves saved detail visible with unava
     T.assertTrue(frame.realmLine.visible)
     T.assertTrue(frame.capturedLine.visible)
     T.assertEqual(frame.capturedLine.text, "saved-1700000100")
-    T.assertTrue(frame.completenessLine.visible)
+    T.assertNil(frame.completenessLine)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     for _, slot in ipairs(frame.slotButtons) do T.assertTrue(slot.visible) end
 end)
@@ -2315,19 +2315,19 @@ T.test("browser missing portrait data preserves incomplete and refresh-needed ge
     local frame = showBrowser(GGM, api, makeDB(GGM, { legacy }))
 
     T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
     T.assertEqual(frame.capturedLine.text, "saved-1700000100")
     T.assertTrue(frame.slotButtons[1].visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { legacy }))
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertTrue(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
 end)
 
 T.test("guild gear browser gives a saved empty slot an explicit dimmed empty treatment", function()
@@ -2780,13 +2780,13 @@ T.test("compact absent optional and required slots render as empty", function()
     T.assertTrue(found.SHIRT.empty)
     T.assertFalse(found.HEAD.unavailable)
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
-    T.assertEqual(frame.completenessLine.text, "Complete")
+    T.assertNil(frame.completenessBadge)
     local shirtIndex
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do if slot.key == "SHIRT" then shirtIndex = index end end
     T.assertTrue(frame.slotButtons[shirtIndex].empty)
     T.assertEqual(frame.slotButtons[shirtIndex].label.text, "Shirt")
     T.assertEqual(frame.slotButtons[shirtIndex].status.text, "Empty")
-    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 98)
+    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 146)
     T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 98)
 end)
 
@@ -2803,15 +2803,15 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     T.assertFalse(frame.detailModel.complete)
     T.assertTrue(frame.detailModel.refreshNeeded)
     T.assertEqual(frame.detailModel.completenessText, "Refresh needed")
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     for index, row in ipairs(frame.detailModel.slots) do
         local button = frame.slotButtons[index]
         T.assertFalse(row.unavailable)
         local expectedWidth = button.paperDollGroup == "bottom" and 92 or 98
-        T.assertTrue(button.label.width <= expectedWidth)
+        T.assertTrue(button.label.width <= (button.paperDollGroup == "bottom" and 92 or 146))
         T.assertTrue(button.status.width <= expectedWidth)
-        T.assertTrue(#button.label.text <= 9)
+        T.assertEqual(button.label.text, row.displayName)
         T.assertTrue(#(button.status.text or "") <= 7)
         T.assertEqual(button.key, row.key)
         T.assertEqual(button.itemLink, row.itemLink)
@@ -2827,5 +2827,102 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     frame = showBrowser(GGM, makeBrowserAPI(), db)
     T.assertTrue(frame.detailModel.complete)
     T.assertFalse(frame.detailModel.refreshNeeded)
-    T.assertEqual(frame.completenessLine.text, "Complete")
+    T.assertNil(frame.completenessBadge)
+end)
+
+T.test("gear sync button requests only the selected saved character and renders lifecycle status", function()
+    local G = loadUI()
+    local api = makeBrowserAPI()
+    local alice, beta = makeRecord(G), makeRecord(G)
+    beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    local requested, count, status, busy = nil, 0, "", false
+    G.guildSync = {}
+    G.RequestCompleteSnapshot = function(sync, target)
+        T.assertTrue(sync == G.guildSync)
+        requested, count, status, busy = target, count + 1, "Waiting for a gear snapshot...", true
+        return true
+    end
+    G.GetGearSyncStatus = function() return status, busy end
+    local frame = showBrowser(G, api, makeDB(G, { alice, beta }))
+    T.assertEqual(count, 0)
+    T.assertTrue(frame.gearSyncButton.visible)
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    T.assertEqual(count, 0)
+    frame.gearSyncButton.scripts.OnClick()
+    T.assertEqual(requested.key, "Beatrice-ArgentDawn")
+    T.assertEqual(count, 1)
+    T.assertEqual(frame.gearSyncStatus.text, "Waiting for a gear snapshot...")
+    status, busy = "Gear snapshot synchronized.", false
+    G.RefreshVisibleGearSyncStatus()
+    T.assertEqual(frame.gearSyncStatus.text, status)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertFalse(frame.gearSyncButton.visible)
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    T.assertTrue(frame.gearSyncButton.visible)
+end)
+
+T.test("gear sync button hides without selection and reports unavailable transport", function()
+    local G = loadUI()
+    local api = makeBrowserAPI()
+    local frame = showBrowser(G, api, makeDB(G, {}))
+    T.assertFalse(frame.gearSyncButton.visible)
+    frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+    frame.gearSyncButton.scripts.OnClick()
+    T.assertEqual(frame.gearSyncStatus.text, "Gear sync is unavailable.")
+end)
+
+T.test("gear refresh shows cooldown rejection even after a prior successful synchronization", function()
+    local G = loadUI()
+    local api = makeBrowserAPI()
+    G.guildSync = {}
+    G.GetGearSyncStatus = function() return "Gear snapshot synchronized.", false end
+    G.RequestCompleteSnapshot = function() return false, "sync-snapshot-request-cooldown" end
+    local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+    frame.gearSyncButton.scripts.OnClick()
+    T.assertEqual(frame.gearSyncStatus.text, "Please wait before requesting this character again.")
+end)
+
+T.test("equipped gear labels show item names from modern and legacy item APIs", function()
+    for _, modern in ipairs({ true, false }) do
+        local G, api = loadUI(), makeBrowserAPI()
+        local name = "Crown of the Very Long Forgotten Kingdom"
+        if modern then api.C_Item = { GetItemNameByID = function() return name end }
+        else api.GetItemInfo = function() return name end end
+        local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+        for _, button in ipairs(frame.slotButtons) do
+            T.assertEqual(button.label.text, name)
+            T.assertEqual(button.label.height, 32)
+        end
+    end
+end)
+
+T.test("uncached equipped item names refresh when item data becomes available", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local available = false
+    api.GetItemInfo = function() if available then return "Crown of Memories" end end
+    local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+    local button = frame.slotButtons[1]
+    T.assertEqual(button.label.text, "Item " .. button.itemID)
+    available = true
+    frame.gearSyncButton.scripts.OnUpdate(nil, 1)
+    T.assertEqual(button.label.text, "Crown of Memories")
+    T.assertTrue(string.find(button.itemLink, "[Crown of Memories]", 1, true) ~= nil)
+end)
+
+T.test("item-name refresh follows the selected character without replacing empty slot labels", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local alice, beta = makeRecord(G), makeRecord(G)
+    beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    beta.gear.slots.HEAD = { inventorySlotID = 1, itemID = false, itemLink = false }
+    local available = false
+    api.GetItemInfo = function() if available then return "Alice's Crown" end end
+    local frame = showBrowser(G, api, makeDB(G, { alice, beta }))
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    available = true
+    frame.gearSyncButton.scripts.OnUpdate(nil, 1)
+    local head = frame.slotButtons[1]
+    T.assertEqual(head.label.text, "Head")
+    T.assertEqual(head.status.text, "Empty")
+    T.assertEqual(head.label.height, 14)
+    T.assertNil(head.itemLink)
 end)

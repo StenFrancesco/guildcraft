@@ -44,12 +44,12 @@ T.test("tracked slot catalog contains the exact 19-slot paper-doll mapping", fun
     end
 end)
 
-T.test("schema version is seven and protocol version stays five", function()
+T.test("schema version is seven and protocol version is six", function()
     local GGM = {}
     T.loadAddonFile("The Guild Book/Constants.lua", GGM)
     T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
     T.assertEqual(GGM.SCHEMA_VERSION, 7)
-    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 5)
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 6)
 end)
 
 T.test("profession recipe index version is three", function()

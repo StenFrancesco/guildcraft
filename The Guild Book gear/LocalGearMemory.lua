@@ -92,6 +92,7 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
         end
     end
 
+    identity = record.identity
     local baseline, baselineErr = GGM.BuildRuntimeGearSnapshot(api, record.gear)
     if not baseline then
         return nil, baselineErr

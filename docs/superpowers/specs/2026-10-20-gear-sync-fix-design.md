@@ -1,0 +1,5 @@
+# Gear sync repair
+
+Approved 2026-10-20. Fix missing baselines and missed-update gaps by requesting a complete cached snapshot when a valid owner update reveals either condition. Keep requests bounded and coalesced. Normalize transport sender names without weakening identity validation. Refresh visible gear after committed data changes. Add an explicit Sync gear control for the selected saved character, with waiting, success, failure, and timeout feedback. Select the highest confirmed sequence available through the existing responder election; never replace newer data with an older response. Opening or selecting the browser remains local-only. Preserve database schema, stable equipment confirmation, and guild transport.
+
+Validation: regression tests for first baseline recovery, gap recovery, same-realm sender normalization and spoof rejection, request failure and expiry, newest peer snapshot, selected-character button routing, selection/tab visibility, and live display refresh. Run the complete Lua suite and syntax checks. Real multiplayer UI verification remains an in-game follow-up.
