@@ -35,7 +35,7 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
 - Profession sharing uses protocol P3 (`GC_PROF3`). Participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
-- Login, roster readiness, and elapsed time alone do not trigger profession traffic. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
+- Login queues one automatic profession sync pass after the guild roster is ready, with a 27-second discovery window. Manual discovery retains its two-second window; there is no periodic background polling. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
 - The renamed addons use the SavedVariables globals shown above. Existing SavedVariables are not migrated to the new names, and this branch starts a fresh gear cache. Back up SavedVariables with the game closed if you need to keep existing data.
 
 ## Profession synchronization details
@@ -43,7 +43,10 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 The Professions tab shares complete last-known recipe snapshots with guild
 members using the same protocol version. A first profession selection can start
 a comparison, and a meaningful local snapshot save can announce that change.
-Login, roster readiness, and elapsed time alone create no profession traffic.
+On login, after guild roster readiness, one automatic pass discovers a responder
+for each supported profession and exchanges missing or newer cached snapshots.
+Login discovery collects replies for 27 seconds; ordinary discovery keeps its
+two-second window. Roster refreshes and idle time do not start another pass.
 The **Sync profession** button starts a bounded operation that checks up to four
 eligible guild peers one at a time, with the existing 60-second cooldown. A
 status reports how many peer caches matched or were compared; it does not claim
@@ -58,8 +61,9 @@ later comparison completes. Exchanges already transferring records finish first.
 If no peer answers within the response window, `/ggm status` reports
 `profession-sync-no-responder`. The command also reports profession registration,
 roster readiness, and send errors on each client.
-Legacy login and background hashes are cached as hints, while legacy periodic
-queries receive no response.
+Login and background hash announcements are cached as hints. Login comparison
+queries are accepted; periodic background queries receive no response. All
+participants must run a version that accepts login comparisons to auto-sync.
 
 GUILD carries compact hashes and responder-selection notices. Only one selected
 pair exchanges manifests and missing/newer character records through
