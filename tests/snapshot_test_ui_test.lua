@@ -624,8 +624,8 @@ T.test("character content stays within the journal's painted page borders", func
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
         "native scrollbar extends beyond the library border")
-    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.completenessBadge.point.x,
-        "status badge overlaps the capture date")
+    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.gearSyncButton.point.x,
+        "sync button overlaps the capture date")
 end)
 
 T.test("journal headings reserve space for subtitles inside their columns", function()
@@ -1713,7 +1713,7 @@ T.test("browser portrait selection updates from A to B and clears on no selectio
     T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
     T.assertEqual(frame.characterLine.text, "Beatrice")
     T.assertEqual(frame.capturedLine.text, "saved-1700000200")
-    T.assertEqual(frame.completenessLine.text, "Complete")
+    T.assertNil(frame.completenessBadge)
     frame.searchBox:SetText("no match")
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
@@ -1765,7 +1765,7 @@ T.test("failed 2D portrait frame creation leaves saved detail visible with unava
     T.assertTrue(frame.realmLine.visible)
     T.assertTrue(frame.capturedLine.visible)
     T.assertEqual(frame.capturedLine.text, "saved-1700000100")
-    T.assertTrue(frame.completenessLine.visible)
+    T.assertNil(frame.completenessLine)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     for _, slot in ipairs(frame.slotButtons) do T.assertTrue(slot.visible) end
 end)
@@ -1796,19 +1796,19 @@ T.test("browser missing portrait data preserves incomplete and refresh-needed ge
     local frame = showBrowser(GGM, api, makeDB(GGM, { legacy }))
 
     T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
     T.assertEqual(frame.capturedLine.text, "saved-1700000100")
     T.assertTrue(frame.slotButtons[1].visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { legacy }))
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertTrue(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
 end)
 
 T.test("guild gear browser gives a saved empty slot an explicit dimmed empty treatment", function()
@@ -2261,7 +2261,7 @@ T.test("compact absent optional and required slots render as empty", function()
     T.assertTrue(found.SHIRT.empty)
     T.assertFalse(found.HEAD.unavailable)
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { record }))
-    T.assertEqual(frame.completenessLine.text, "Complete")
+    T.assertNil(frame.completenessBadge)
     local shirtIndex
     for index, slot in ipairs(GGM.TRACKED_SLOTS) do if slot.key == "SHIRT" then shirtIndex = index end end
     T.assertTrue(frame.slotButtons[shirtIndex].empty)
@@ -2284,7 +2284,7 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     T.assertFalse(frame.detailModel.complete)
     T.assertTrue(frame.detailModel.refreshNeeded)
     T.assertEqual(frame.detailModel.completenessText, "Refresh needed")
-    T.assertEqual(frame.completenessLine.text, "Refresh needed")
+    T.assertNil(frame.completenessBadge)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     for index, row in ipairs(frame.detailModel.slots) do
         local button = frame.slotButtons[index]
@@ -2308,7 +2308,7 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     frame = showBrowser(GGM, makeBrowserAPI(), db)
     T.assertTrue(frame.detailModel.complete)
     T.assertFalse(frame.detailModel.refreshNeeded)
-    T.assertEqual(frame.completenessLine.text, "Complete")
+    T.assertNil(frame.completenessBadge)
 end)
 
 T.test("gear sync button requests only the selected saved character and renders lifecycle status", function()

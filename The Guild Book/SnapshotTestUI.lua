@@ -602,28 +602,6 @@ local function createSectionLabel(parent, text)
     return label
 end
 
-local function createStatusBadge(api, parent)
-    local badge = createSurface(api, parent, THEME.panelRaised, THEME.borderSoft)
-    badge:SetSize(126, 24)
-    badge.dot = badge:CreateTexture(nil, "ARTWORK")
-    badge.dot:SetSize(6, 6)
-    badge.dot:SetPoint("LEFT", badge, "LEFT", 10, 0)
-    badge.text = createText(badge, "OVERLAY", "GameFontHighlightSmall")
-    badge.text:SetPoint("LEFT", badge.dot, "RIGHT", 7, 0)
-    badge.text:SetPoint("RIGHT", badge, "RIGHT", -8, 0)
-    badge.text:SetJustifyH("LEFT")
-    return badge
-end
-
-local function setStatusBadge(badge, text, tone)
-    if not badge then return end
-    local color = tone == "success" and THEME.success or (tone == "warning" and THEME.warning) or THEME.muted
-    badge.text:SetText(text or "")
-    setTextColor(badge.text, color)
-    setColor(badge.dot, color)
-    recolorBorder(badge.border, { color[1], color[2], color[3], 0.48 })
-end
-
 local function createEmptyStateCard(api, parent, iconPath, title, body)
     local card = createSurface(api, parent, THEME.panelAlt, THEME.borderSoft, true)
     card:SetSize(390, 190)
@@ -699,10 +677,9 @@ local function renderBrowserDetail(frame, entry, api)
     if frame.modelUnavailableLabel then frame.modelUnavailableLabel:Hide() end
     frame.detailModel = nil
     refreshGearSyncControls(frame)
-    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do
+    for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine }) do
         if control then control:Hide() end
     end
-    if frame.completenessBadge then frame.completenessBadge:Hide() end
     if frame.snapshotCaption then frame.snapshotCaption:Hide() end
     frame.detailEmpty:Hide()
     if frame.modelStage then frame.modelStage:Hide() end
@@ -747,12 +724,7 @@ local function renderBrowserDetail(frame, entry, api)
     setText(frame.characterLine, model.characterName)
     setText(frame.realmLine, model.realm)
     setText(frame.capturedLine, model.capturedAtText)
-    setText(frame.completenessLine, model.completenessText)
     if frame.snapshotCaption then frame.snapshotCaption:Show() end
-
-    local statusTone = model.complete and "success" or "warning"
-    setStatusBadge(frame.completenessBadge, model.completenessText, statusTone)
-    frame.completenessBadge:Show()
 
     for index, slot in ipairs(model.slots) do
         local button = frame.slotButtons[index]
@@ -1714,13 +1686,13 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     frame.gearPanel = createGearPanel(api, frame)
     frame.gearSyncButton = GGM.CreateFlatButton(api, frame.gearPanel, "Sync gear", 112, 27, "secondary")
-    frame.gearSyncButton:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -34, -48)
+    frame.gearSyncButton:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
     frame.gearSyncButton:SetScript("OnClick", function() GGM.SyncSelectedGear(frame) end)
     frame.gearSyncStatus = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
     GGM.ApplyJournalFont(frame.gearSyncStatus, 12)
-    frame.gearSyncStatus:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -34, -83)
-    frame.gearSyncStatus:SetSize(280, 30)
-    frame.gearSyncStatus:SetJustifyH("RIGHT")
+    frame.gearSyncStatus:SetPoint("LEFT", frame.gearSyncButton, "RIGHT", 12, 0)
+    frame.gearSyncStatus:SetSize(230, 30)
+    frame.gearSyncStatus:SetJustifyH("LEFT")
     setTextColor(frame.gearSyncStatus, THEME.textSoft)
     frame.gearSyncButton:Hide()
     frame.gearSyncStatus:Hide()
@@ -1754,10 +1726,6 @@ function GGM.CreateGuildGearBrowserWindow(api)
     GGM.ApplyJournalFont(frame.capturedLine, 12)
     frame.capturedLine:SetJustifyH("LEFT")
     setTextColor(frame.capturedLine, THEME.textSoft)
-    frame.completenessBadge = createStatusBadge(api, frame.gearPanel)
-    frame.completenessBadge:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
-    frame.completenessBadge:Hide()
-    frame.completenessLine = frame.completenessBadge.text
 
     frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
     frame.modelStage:SetSize(208, 218)
