@@ -139,6 +139,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "TRADE_SKILL_CLOSE" then
+        if GGM.guildGearBrowserFrame then
+            GGM.guildGearBrowserFrame.craftingContextSkillLineID = nil
+            GGM.guildGearBrowserFrame.craftingContextOpenedByGuildBook = nil
+        end
         if GGM.professionLinkSave then
             GGM.ClearProfessionSaveContext(GGM.professionLinkSave)
         end

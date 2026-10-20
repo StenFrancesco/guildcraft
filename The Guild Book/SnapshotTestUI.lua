@@ -822,18 +822,63 @@ function GGM.FilterProfessionRecipeBrowserEntries(entries, query)
     return filtered
 end
 
+function GGM.HideBlizzardProfessionPanel(api, professionFrame)
+    if type(api) ~= "table" or not professionFrame then return false end
+    if type(api.HideUIPanel) ~= "function" then return false end
+
+    local getScript = professionFrame.GetScript
+    local setScript = professionFrame.SetScript
+    local originalOnHide
+    local canTemporarilySuppress = type(getScript) == "function" and type(setScript) == "function"
+    if canTemporarilySuppress then
+        local scriptOK, script = pcall(getScript, professionFrame, "OnHide")
+        if not scriptOK then return false end
+        originalOnHide = script
+        local clearOK = pcall(setScript, professionFrame, "OnHide", nil)
+        if not clearOK then return false end
+    end
+
+    local hideOK = pcall(api.HideUIPanel, professionFrame)
+    if canTemporarilySuppress then
+        pcall(setScript, professionFrame, "OnHide", originalOnHide)
+    end
+    return hideOK
+end
+
+function GGM.CloseBlizzardProfessionPanel(api, professionFrame)
+    if type(api) ~= "table" then return false end
+    local trade = api.C_TradeSkillUI
+    local closedContext = false
+    if type(trade) == "table" and type(trade.CloseTradeSkill) == "function" then
+        closedContext = pcall(trade.CloseTradeSkill)
+    end
+    local hiddenFrame = false
+    if professionFrame and type(professionFrame.Hide) == "function" then
+        hiddenFrame = pcall(professionFrame.Hide, professionFrame)
+    end
+    return closedContext or hiddenFrame
+end
+
 local function openSelectedProfessionContext(frame, skillLineID)
     if frame.professionLibraryMode ~= "Own" then return false end
     local trade = frame.api and frame.api.C_TradeSkillUI
     if type(trade) ~= "table" or type(trade.OpenTradeSkill) ~= "function" then return false end
     local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
-    local wasShown = professionFrame and type(professionFrame.IsShown) == "function"
-        and professionFrame:IsShown() == true
+    local frameWasShown = false
+    if professionFrame and type(professionFrame.IsShown) == "function" then
+        local shownOK, wasShown = pcall(professionFrame.IsShown, professionFrame)
+        frameWasShown = not shownOK or wasShown == true
+    end
     local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
     if not openOK or opened == false then return false end
     frame.craftingContextSkillLineID = skillLineID
+    frame.craftingContextOpenedByGuildBook = not frameWasShown
     if professionFrame then
-        if wasShown == false then frame.craftingContextOpenedByGuildBook = true end
+        if type(GGM.HideBlizzardProfessionPanel) == "function" then
+            GGM.HideBlizzardProfessionPanel(frame.api, professionFrame)
+        elseif type(professionFrame.Hide) == "function" then
+            pcall(professionFrame.Hide, professionFrame)
+        end
         if type(professionFrame.SetFrameStrata) == "function" then
             pcall(professionFrame.SetFrameStrata, professionFrame, "MEDIUM")
         end
@@ -866,8 +911,10 @@ function GGM.SelectProfession(frame, selectedKey)
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
     end
     frame.craftingContextSkillLineID = nil
-    local frameVisible = type(frame.IsShown) ~= "function" or frame:IsShown()
-    if frameVisible then openSelectedProfessionContext(frame, selectedProfession.professionID) end
+    frame.craftingContextOpenedByGuildBook = nil
+    if frame.professionLibraryMode == "Own" then
+        openSelectedProfessionContext(frame, selectedProfession.professionID)
+    end
     if frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
     return true
 end
@@ -1044,11 +1091,18 @@ local function createProfessionsPage(api, frame)
     frame.professionLibraryToggle = toggle
     frame.professionLibraryToggle:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, 34)
     local function selectProfessionLibraryMode(mode)
-        if frame.professionLibraryMode ~= mode and GGM.HideRecipeDetailsWindow then
-            GGM.HideRecipeDetailsWindow(frame)
-        end
+        local changed = frame.professionLibraryMode ~= mode
+        if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
         frame.professionLibraryMode = mode
         GGM.RefreshVisibleProfessionLibrary(frame)
+        if changed and mode == "Own" then
+            for _, profession in ipairs(frame.visibleProfessionEntries or {}) do
+                if profession.key == frame.selectedProfession then
+                    GGM.SelectProfession(frame, frame.selectedProfession)
+                    break
+                end
+            end
+        end
     end
     toggle.allRadio:SetScript("OnClick", function() selectProfessionLibraryMode("All") end)
     toggle.ownRadio:SetScript("OnClick", function() selectProfessionLibraryMode("Own") end)
@@ -1223,9 +1277,6 @@ updateProfessionRecipeBrowser = function(frame)
             row = frame.api.CreateFrame("Button", nil, frame.professionRecipeContent)
             row:RegisterForClicks("LeftButtonUp")
             row:SetScript("OnClick", function(self)
-                if frame.professionLibraryMode == "Own" then
-                    openSelectedProfessionContext(frame, frame.selectedProfessionID)
-                end
                 GGM.ShowRecipeDetailsWindow(frame, self.recipe)
             end)
             if row.SetHighlightTexture then row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD") end
@@ -1673,15 +1724,19 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.api = api
     frame:SetScript("OnHide", function(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
-        local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
-        if self.craftingContextOpenedByGuildBook and professionFrame and type(professionFrame.Hide) == "function" then
-            pcall(professionFrame.Hide, professionFrame)
+        if self.craftingContextSkillLineID and self.craftingContextOpenedByGuildBook then
+            local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
+            if type(GGM.CloseBlizzardProfessionPanel) == "function" then
+                GGM.CloseBlizzardProfessionPanel(self.api, professionFrame)
+            elseif professionFrame and type(professionFrame.Hide) == "function" then
+                pcall(professionFrame.Hide, professionFrame)
+            end
         end
         self.professionLibraryMode = "All"
         self.selectedProfession = nil
         self.selectedProfessionID = nil
         self.craftingContextSkillLineID = nil
-        self.craftingContextOpenedByGuildBook = false
+        self.craftingContextOpenedByGuildBook = nil
     end)
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
     frame.browserView = "Guild"

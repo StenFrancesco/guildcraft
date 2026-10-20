@@ -47,7 +47,8 @@ local function maxCraftable(details)
     if type(trade.GetCraftableCount) ~= "function" then return nil end
     local countOK, maximum = pcall(trade.GetCraftableCount, details.recipeID)
     if not countOK or not isPublic(details.api, maximum) or type(maximum) ~= "number"
-        or maximum < 0 or maximum ~= math.floor(maximum) or maximum > 999 then return nil end
+        or maximum < 0 or maximum ~= maximum or maximum == math.huge
+        or maximum ~= math.floor(maximum) then return nil end
     return maximum
 end
 
@@ -55,15 +56,16 @@ local function recipeIsCraftable(details)
     local trade = details.api.C_TradeSkillUI
     local ok, info = pcall(trade.GetRecipeInfo, details.recipeID)
     if not ok or not isPublic(details.api, info) or type(info) ~= "table" then return false end
-    for _, flag in ipairs({ "isEnchanting", "isSalvage", "isRecraft" }) do
-        local specialized = rawget(info, flag)
-        if not isPublic(details.api, specialized) or specialized == true then return false end
-    end
     return rawget(info, "craftable") == true
 end
 
 local function hideProfessionFrame(details)
     local frame = details.api.ProfessionsFrame or details.api.TradeSkillFrame
+    if frame and type(GGM.HideBlizzardProfessionPanel) == "function" then
+        GGM.HideBlizzardProfessionPanel(details.api, frame)
+    elseif frame and type(frame.Hide) == "function" then
+        pcall(frame.Hide, frame)
+    end
     if frame and type(frame.SetFrameStrata) == "function" then
         pcall(frame.SetFrameStrata, frame, "MEDIUM")
     end
@@ -72,51 +74,19 @@ local function hideProfessionFrame(details)
     end
 end
 
-local function professionFrameIsOpen(details)
-    local frame = details.api.ProfessionsFrame or details.api.TradeSkillFrame
-    if not frame or type(frame.IsShown) ~= "function" then return true end
-    local ok, visible = pcall(frame.IsShown, frame)
-    return ok and visible == true
-end
-
-local function ensureCraftingContext(details, fromRecipeClick)
+local function ensureCraftingContext(details)
     if not details.ownMode or not details.recipeID then return true end
     if details.craftingContextRecipeID == details.recipeID then return true end
-
-    local trade = details.api.C_TradeSkillUI
-    if type(trade) ~= "table"
-        or type(trade.GetTradeSkillLineForRecipe) ~= "function"
-        or type(trade.OpenTradeSkill) ~= "function" then
-        return false
-    end
-
-    local infoOK, skillLineID = pcall(trade.GetTradeSkillLineForRecipe, details.recipeID)
-    if not infoOK or not isPublic(details.api, skillLineID) or type(skillLineID) ~= "number" then
-        skillLineID = details.browser and details.browser.selectedProfessionID or nil
-    end
-    if not isPublic(details.api, skillLineID) or type(skillLineID) ~= "number" then return false end
-
-    if not fromRecipeClick and details.browser and details.browser.craftingContextSkillLineID
-        and professionFrameIsOpen(details) then
+    if details.browser and details.browser.craftingContextSkillLineID then
         details.craftingContextRecipeID = details.recipeID
         return true
     end
-    if not fromRecipeClick then return false end
-
-    local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
-    if not openOK or opened == false then return false end
-    details.craftingContextRecipeID = details.recipeID
-    if details.browser then
-        details.browser.craftingContextSkillLineID = skillLineID
-        details.browser.craftingContextOpenedByGuildBook = true
-    end
-    hideProfessionFrame(details)
-    return true
+    return false
 end
 
 local function updateCraftControls(details)
     if not details.createButton then return end
-    local contextReady = ensureCraftingContext(details)
+    local contextReady = details.ownMode == true and ensureCraftingContext(details)
     local safe, message = craftSafety(details.api)
     local amount = parseAmount(details.api, details.amountInput:GetText())
     local craftable = contextReady and safe and recipeIsCraftable(details)
@@ -139,28 +109,23 @@ end
 
 local function craftRecipe(details, quantity)
     if not details.browser or not details.browser.craftingContextSkillLineID then
-        details.pendingCraftQuantity = quantity
-        if ensureCraftingContext(details, true) then
-            details.craftStatus:SetText("Opening the profession context…")
-        else
-            details.pendingCraftQuantity = nil
-            details.craftStatus:SetText("Crafting unavailable: profession context could not be opened.")
-        end
-        return
+        details.craftStatus:SetText("Crafting unavailable: profession context is not ready.")
+        return false
     end
     local safe, message = craftSafety(details.api)
     local maximum = safe and maxCraftable(details) or nil
-    if not safe then details.craftStatus:SetText(message); return end
+    if not safe then details.craftStatus:SetText(message); return false end
     if not recipeIsCraftable(details) or not quantity or quantity < 1 or (maximum and quantity > maximum) then
         details.craftStatus:SetText("Crafting quantity is unavailable.")
-        return
+        return false
     end
     local ok, result = pcall(details.api.C_TradeSkillUI.CraftRecipe, details.recipeID, quantity)
     if not ok or (result ~= nil and result ~= true) then
         details.craftStatus:SetText("Crafting could not be started.")
-        return
+        return false
     end
     details.craftStatus:SetText("Craft request accepted.")
+    return true
 end
 
 local function chatSendFunction(api)
@@ -680,13 +645,14 @@ local function createWhisperControls(details)
     details.rosterEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_SHOW")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
+    details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CRAFT_BEGIN")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CLOSE")
     details.rosterEventFrame:SetScript("OnEvent", function(_, event)
         if not shown(details) then return end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.browser.craftingContextSkillLineID = nil
-            details.browser.craftingContextOpenedByGuildBook = false
+            details.browser.craftingContextOpenedByGuildBook = nil
             details.pendingCraftQuantity = nil
             updateCraftControls(details)
             return
@@ -837,7 +803,6 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     local preserveSelection = details.recipeID == canonical.recipeID
     if not preserveSelection then details.amountInput:SetText("1") end
     details.recipeID = canonical.recipeID
-    if browser.professionLibraryMode == "Own" then ensureCraftingContext(details, true) end
     setActionMode(details, browser.professionLibraryMode == "Own")
     details.currentRecipeName = canonical.name
     setRecipeTitle(details, canonical.name)
