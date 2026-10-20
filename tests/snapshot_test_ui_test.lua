@@ -928,7 +928,7 @@ T.test("recipe detail whisper controls default to one and only an explicit click
     T.assertTrue(string.find(details.whisperStatus.text, "Request attempted", 1, true) ~= nil)
 end)
 
-T.test("own recipe details replace whispering with player-triggered create controls", function()
+T.test("own Create All accepts counts above the manual amount limit", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
     local opened, hidden = 0, 0
@@ -940,7 +940,7 @@ T.test("own recipe details replace whispering with player-triggered create contr
             return { recipeID = recipeID, learned = true, craftable = true }
         end,
         GetCraftableCount = function(recipeID)
-            return 31
+            return 1200
         end,
         CraftRecipe = function(recipeID, quantity)
             api.craftCall = { recipeID, quantity }
@@ -959,7 +959,7 @@ T.test("own recipe details replace whispering with player-triggered create contr
     T.assertTrue(details.createAllButton:IsShown())
     T.assertFalse(details.whisperButton:IsShown())
     T.assertFalse(details.crafterDropdown:IsShown())
-    T.assertEqual(details.createAllButton.label.text, "Create All [31]")
+    T.assertEqual(details.createAllButton.label.text, "Create All [1200]")
 
     details.amountInput:SetText("3")
     details.createButton.scripts.OnClick(details.createButton)
@@ -968,8 +968,16 @@ T.test("own recipe details replace whispering with player-triggered create contr
     T.assertEqual(api.craftCall[1], 11)
     T.assertEqual(api.craftCall[2], 3)
 
+    details.amountInput:SetText("999")
+    T.assertTrue(details.createButton.enabled)
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(api.craftCall[2], 999)
+
+    details.amountInput:SetText("1000")
+    T.assertFalse(details.createButton.enabled)
+
     details.createAllButton.scripts.OnClick(details.createAllButton)
-    T.assertEqual(api.craftCall[2], 31)
+    T.assertEqual(api.craftCall[2], 1200)
 end)
 
 T.test("own create remains available when Blizzard exposes craftability but not a maximum", function()
@@ -1035,6 +1043,39 @@ T.test("closing the guild book closes the Blizzard profession context and frame"
     T.assertTrue(closed)
     T.assertEqual(closeCalls, 1)
     T.assertEqual(hideCalls, 1)
+end)
+
+T.test("closing the guild book only closes a profession context it opened", function()
+    local GGM = loadUI()
+    local closeCalls, hideCalls = 0, 0
+    local openedSkillLineID
+    local api = makeBrowserAPI()
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function(skillLineID)
+            openedSkillLineID = skillLineID
+            return true
+        end,
+        CloseTradeSkill = function() closeCalls = closeCalls + 1 end,
+    }
+    api.HideUIPanel = function() end
+    api.ProfessionsFrame = {
+        Hide = function() hideCalls = hideCalls + 1 end,
+    }
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+
+    frame.scripts.OnHide(frame)
+    T.assertEqual(closeCalls, 0, "an independently opened profession context must remain open")
+    T.assertEqual(hideCalls, 0, "the independently opened profession frame must remain visible")
+
+    frame.professionLibraryMode = "Own"
+    GGM.SelectProfession(frame, "Alchemy")
+    T.assertEqual(openedSkillLineID, frame.selectedProfessionID)
+    T.assertEqual(frame.craftingContextSkillLineID, frame.selectedProfessionID)
+
+    frame.scripts.OnHide(frame)
+    T.assertEqual(closeCalls, 1)
+    T.assertEqual(hideCalls, 1)
+    T.assertNil(frame.craftingContextSkillLineID)
 end)
 
 T.test("selecting an own profession opens and immediately hides Blizzard's profession window", function()
@@ -1532,10 +1573,13 @@ T.test("profession library toggle filters by selected character without changing
     T.assertTrue(frame.professionButtons[1]:IsShown())
     T.assertFalse(frame.professionButtons[2]:IsShown())
     T.assertEqual(frame.selectedProfession, selectedProfession)
-    T.assertTrue(frame.professionCatalog == selectedCatalog)
     T.assertEqual(frame.professionSearchBox:GetText(), selectedSearch)
     T.assertEqual(frame.professionCatalog.state, selectedCatalog.state)
-    T.assertTrue(frame.professionCatalog.recipes == selectedCatalog.recipes)
+    T.assertEqual(#frame.professionCatalog.recipes, #selectedCatalog.recipes)
+    for index, recipe in ipairs(selectedCatalog.recipes) do
+        T.assertEqual(frame.professionCatalog.recipes[index].recipeID, recipe.recipeID)
+        T.assertEqual(frame.professionCatalog.recipes[index].name, recipe.name)
+    end
     T.assertEqual(frame.db.professions[alice].snapshots[171], selectedSnapshot)
     T.assertEqual(frame.db.professions[alice].snapshots[171].status, GGM.PROFESSION_CACHE_STATUS)
     T.assertEqual(frame.professionSyncStatus.text, selectedSyncStatus)
@@ -1554,6 +1598,33 @@ T.test("profession library toggle filters by selected character without changing
     for _, button in ipairs(frame.professionButtons) do T.assertTrue(button:IsShown()) end
     T.assertEqual(frame.db.professions[bob].snapshots[164].status, GGM.PROFESSION_CACHE_STATUS)
     T.assertEqual(frame.professionSyncStatus.text, selectedSyncStatus)
+end)
+
+T.test("switching to Own opens the selected owned profession and closes recipe details", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local openedSkillLine
+    api.UnitFullName = function() return "Alice", "Realm" end
+    api.GetRealmName = function() return "Realm" end
+    api.UnitGUID = function() return "Player-1" end
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function(skillLineID)
+            openedSkillLine = skillLineID
+            return true
+        end,
+    }
+    local alchemyButton = browser.professionButtons[1]
+    GGM.FilterProfessionLibraryEntries = function() return { alchemyButton } end
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertTrue(browser.recipeDetailsFrame:IsShown())
+    T.assertNil(browser.craftingContextSkillLineID)
+
+    browser.professionLibraryToggle.ownRadio.scripts.OnClick(browser.professionLibraryToggle.ownRadio)
+
+    T.assertEqual(browser.professionLibraryMode, "Own")
+    T.assertEqual(openedSkillLine, 171)
+    T.assertEqual(browser.craftingContextSkillLineID, 171)
+    T.assertFalse(browser.recipeDetailsFrame:IsShown())
 end)
 
 T.test("profession library Own mode uses the active player identity instead of selected entry", function()

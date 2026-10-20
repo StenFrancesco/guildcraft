@@ -1084,8 +1084,18 @@ local function createProfessionsPage(api, frame)
     frame.professionLibraryToggle = toggle
     frame.professionLibraryToggle:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, 34)
     local function selectProfessionLibraryMode(mode)
+        local changed = frame.professionLibraryMode ~= mode
+        if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
         frame.professionLibraryMode = mode
         GGM.RefreshVisibleProfessionLibrary(frame)
+        if changed and mode == "Own" then
+            for _, profession in ipairs(frame.visibleProfessionEntries or {}) do
+                if profession.key == frame.selectedProfession then
+                    GGM.SelectProfession(frame, frame.selectedProfession)
+                    break
+                end
+            end
+        end
     end
     toggle.allRadio:SetScript("OnClick", function() selectProfessionLibraryMode("All") end)
     toggle.ownRadio:SetScript("OnClick", function() selectProfessionLibraryMode("Own") end)
@@ -1707,11 +1717,13 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.api = api
     frame:SetScript("OnHide", function(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
-        local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
-        if type(GGM.CloseBlizzardProfessionPanel) == "function" then
-            GGM.CloseBlizzardProfessionPanel(self.api, professionFrame)
-        elseif professionFrame and type(professionFrame.Hide) == "function" then
-            pcall(professionFrame.Hide, professionFrame)
+        if self.craftingContextSkillLineID then
+            local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
+            if type(GGM.CloseBlizzardProfessionPanel) == "function" then
+                GGM.CloseBlizzardProfessionPanel(self.api, professionFrame)
+            elseif professionFrame and type(professionFrame.Hide) == "function" then
+                pcall(professionFrame.Hide, professionFrame)
+            end
         end
         self.professionLibraryMode = "All"
         self.selectedProfession = nil

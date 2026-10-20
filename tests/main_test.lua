@@ -455,6 +455,40 @@ T.test("trade skill list update refreshes the local profession save control afte
     end)
 end)
 
+T.test("trade skill close clears browser crafting context before recipe details exist", function()
+    local onEvent
+    local frame = {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, handler) onEvent = handler end,
+    }
+
+    withGlobals({
+        CreateFrame = function() return frame end,
+        TheGuildBookDB = NIL,
+    }, function()
+        local GGM = {}
+        stubSnapshotUI(GGM)
+        GGM.InitializeDatabase = function()
+            return { schemaVersion = 3, characters = {}, localCharacters = {}, professions = {} }, nil
+        end
+        GGM.CreateProfessionLinkSaveController = function() return {}, nil end
+        GGM.RegisterProfessionLinkSaveController = function() return true, nil end
+        GGM.ClearProfessionSaveContext = function() end
+        GGM.StartLocalPlayerGearTracking = function() return {}, nil end
+        GGM.HandlePlayerEquipmentChanged = function() return "ignored", nil end
+
+        T.loadAddonFile("The Guild Book/Main.lua", GGM)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
+        GGM.guildGearBrowserFrame = { professionLibraryMode = "Own", craftingContextSkillLineID = 164 }
+
+        onEvent(frame, "TRADE_SKILL_CLOSE")
+
+        T.assertNil(GGM.guildGearBrowserFrame.craftingContextSkillLineID)
+        T.assertNil(GGM.guildGearBrowserFrame.recipeDetailsFrame,
+            "the close cleanup must not depend on a recipe details window")
+    end)
+end)
+
 T.test("main registers the snapshot slash command before addon loaded", function()
     local onEvent
     local registeredApi

@@ -47,7 +47,8 @@ local function maxCraftable(details)
     if type(trade.GetCraftableCount) ~= "function" then return nil end
     local countOK, maximum = pcall(trade.GetCraftableCount, details.recipeID)
     if not countOK or not isPublic(details.api, maximum) or type(maximum) ~= "number"
-        or maximum < 0 or maximum ~= math.floor(maximum) or maximum > 999 then return nil end
+        or maximum < 0 or maximum ~= maximum or maximum == math.huge
+        or maximum ~= math.floor(maximum) then return nil end
     return maximum
 end
 
