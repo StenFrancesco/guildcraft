@@ -469,6 +469,10 @@ local function newControl()
     function control:RegisterEvent(name) self.registeredEvents = self.registeredEvents or {}; self.registeredEvents[name] = true end
     function control:SetDesaturated(value) self.desaturated = value end
     function control:SetAlpha(value) self.alpha = value end
+    function control:SetChecked(value) self.checked = value end
+    function control:GetChecked() return self.checked end
+    function control:SetCheckedTexture(texture) self.checkedTexture = texture end
+    function control:SetNormalTexture(texture) self.normalTexture = texture end
     function control:SetBlendMode(value) self.blendMode = value end
     function control:SetVertexColor(...) self.vertexColor = { ... } end
     function control:SetTexture(value) self.texture = value; self.atlas = nil; self.color = nil end
@@ -482,7 +486,7 @@ local function newControl()
     return control
 end
 
-local function makeBrowserAPI()
+local function makeBrowserAPI(enforceNumericColorTexture)
     local api = {
         UIParent = newControl(),
         CreateFrame = function(frameType, name, parent, template)
@@ -496,6 +500,27 @@ local function makeBrowserAPI()
         GetItemIcon = function(itemID) return "item-icon:" .. tostring(itemID) end,
         GetInventorySlotInfo = function(slotName) return 1, "slot-icon:" .. slotName end,
     }
+    if enforceNumericColorTexture then
+        local originalCreateFrame = api.CreateFrame
+        api.CreateFrame = function(frameType, name, parent, template)
+            local frame = originalCreateFrame(frameType, name, parent, template)
+            local originalCreateTexture = frame.CreateTexture
+            frame.CreateTexture = function(self, ...)
+                local texture = originalCreateTexture(self, ...)
+                function texture:SetColorTexture(r, g, b, a)
+                    T.assertTrue(type(r) == "number", "SetColorTexture r must be numeric")
+                    T.assertTrue(type(g) == "number", "SetColorTexture g must be numeric")
+                    T.assertTrue(type(b) == "number", "SetColorTexture b must be numeric")
+                    T.assertTrue(type(a) == "number", "SetColorTexture a must be numeric")
+                    self.color = { r, g, b, a }
+                    self.texture = nil
+                    self.atlas = nil
+                end
+                return texture
+            end
+            return frame
+        end
+    end
     api.UIParent:SetSize(1920, 1080)
     return api
 end
@@ -903,6 +928,204 @@ T.test("recipe detail whisper controls default to one and only an explicit click
     T.assertTrue(string.find(details.whisperStatus.text, "Request attempted", 1, true) ~= nil)
 end)
 
+T.test("own recipe details replace whispering with player-triggered create controls", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    local opened, hidden = 0, 0
+    api.C_TradeSkillUI = {
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function() opened = opened + 1; return true end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function(recipeID)
+            return 31
+        end,
+        CraftRecipe = function(recipeID, quantity)
+            api.craftCall = { recipeID, quantity }
+            return true
+        end,
+    }
+    api.HideUIPanel = function() hidden = hidden + 1 end
+    api.ProfessionsFrame = {}
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton:IsShown())
+    T.assertTrue(details.createAllButton:IsShown())
+    T.assertFalse(details.whisperButton:IsShown())
+    T.assertFalse(details.crafterDropdown:IsShown())
+    T.assertEqual(details.createAllButton.label.text, "Create All [31]")
+
+    details.amountInput:SetText("3")
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(opened, 1)
+    T.assertEqual(hidden, 1)
+    T.assertEqual(api.craftCall[1], 11)
+    T.assertEqual(api.craftCall[2], 3)
+
+    details.createAllButton.scripts.OnClick(details.createAllButton)
+    T.assertEqual(api.craftCall[2], 31)
+end)
+
+T.test("own create remains available when Blizzard exposes craftability but not a maximum", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    api.C_TradeSkillUI = {
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function() return true end,
+        CloseTradeSkill = function() end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        CraftRecipe = function(recipeID, quantity)
+            api.craftCall = { recipeID, quantity }
+            return true
+        end,
+    }
+    GGM.SelectProfession(browser, "Blacksmithing")
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton.enabled)
+    T.assertFalse(details.createAllButton.enabled)
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(api.craftCall[2], 1)
+end)
+
+T.test("profession panel hide temporarily suppresses and then restores Blizzard OnHide", function()
+    local GGM = loadUI()
+    local onHideCalls, hideCalls = 0, 0
+    local originalOnHide = function() onHideCalls = onHideCalls + 1 end
+    local professionFrame = { onHide = originalOnHide }
+    function professionFrame:GetScript(name)
+        return name == "OnHide" and self.onHide or nil
+    end
+    function professionFrame:SetScript(name, script)
+        if name == "OnHide" then self.onHide = script end
+    end
+    local api = {
+        HideUIPanel = function(frame)
+            hideCalls = hideCalls + 1
+            if frame.onHide then frame.onHide() end
+        end,
+    }
+
+    T.assertTrue(GGM.HideBlizzardProfessionPanel(api, professionFrame))
+    T.assertEqual(hideCalls, 1)
+    T.assertEqual(onHideCalls, 0)
+    T.assertTrue(professionFrame.onHide == originalOnHide)
+end)
+
+T.test("closing the guild book closes the Blizzard profession context and frame", function()
+    local GGM = loadUI()
+    local closeCalls, hideCalls = 0, 0
+    local api = {
+        C_TradeSkillUI = { CloseTradeSkill = function() closeCalls = closeCalls + 1 end },
+    }
+    local professionFrame = { Hide = function() hideCalls = hideCalls + 1 end }
+    local closed = GGM.CloseBlizzardProfessionPanel(api, professionFrame)
+    T.assertTrue(closed)
+    T.assertEqual(closeCalls, 1)
+    T.assertEqual(hideCalls, 1)
+end)
+
+T.test("selecting an own profession opens and immediately hides Blizzard's profession window", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    local openedSkillLine
+    api.C_TradeSkillUI = {
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetRecipeInfo = function(recipeID) return { recipeID = recipeID, learned = true, craftable = true } end,
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function(skillLineID) openedSkillLine = skillLineID; return true end,
+        GetCraftableCount = function() return 31 end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    local hidden, lowered = 0, 0
+    api.HideUIPanel = function() hidden = hidden + 1 end
+    api.ProfessionsFrame = { SetFrameStrata = function() lowered = lowered + 1 end }
+
+    GGM.SelectProfession(browser, "Blacksmithing")
+    T.assertEqual(openedSkillLine, browser.selectedProfessionID)
+    T.assertEqual(hidden, 1)
+end)
+
+T.test("clicking an own recipe row does not open Blizzard's profession window", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    local opened = 0
+    api.C_TradeSkillUI = {
+        GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
+        OpenTradeSkill = function() opened = opened + 1; return true end,
+        GetRecipeInfo = function(recipeID) return { recipeID = recipeID, learned = true, craftable = true } end,
+        GetRecipeSchematic = function() return { reagentSlotSchematics = {} } end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+
+    GGM.SelectProfession(browser, "Blacksmithing")
+    local openedAfterSelection = opened
+    browser.professionRecipeRows[1].scripts.OnClick(browser.professionRecipeRows[1])
+
+    T.assertEqual(opened, openedAfterSelection)
+    T.assertTrue(browser.recipeDetailsFrame:IsShown())
+end)
+
+T.test("craft click falls back to the selected profession when recipe skill-line data is secret", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    local openedSkillLine
+    api.C_TradeSkillUI = {
+        GetTradeSkillLineForRecipe = function() return {} end,
+        OpenTradeSkill = function(skillLineID) openedSkillLine = skillLineID; return true end,
+        GetRecipeInfo = function(recipeID) return { recipeID = recipeID, learned = true, craftable = true } end,
+        GetRecipeSchematic = function() return { reagentSlotSchematics = {} } end,
+        GetCraftableCount = function() return 1 end,
+        CraftRecipe = function() return true end,
+        CloseTradeSkill = function() end,
+    }
+    api.issecretvalue = function(value) return type(value) == "table" end
+    api.InCombatLockdown = function() return false end
+
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(openedSkillLine, browser.selectedProfessionID)
+end)
+
+T.test("craft click opens the selected profession without recipe skill-line discovery", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    local openedSkillLine
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function(skillLineID) openedSkillLine = skillLineID; return true end,
+        GetRecipeInfo = function(recipeID) return { recipeID = recipeID, learned = true, craftable = true } end,
+        GetRecipeSchematic = function() return { reagentSlotSchematics = {} } end,
+        GetCraftableCount = function() return 1 end,
+        CraftRecipe = function() return true end,
+        CloseTradeSkill = function() end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    browser.recipeDetailsFrame.createButton.scripts.OnClick(browser.recipeDetailsFrame.createButton)
+
+    T.assertEqual(openedSkillLine, browser.selectedProfessionID)
+end)
+
 T.test("crafter whisper amount is preserved for same recipe and reset for a new recipe", function()
     local GGM, _, browser, recipes = recipeDetailsFixture()
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
@@ -1189,7 +1412,7 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(ui.windowHeight, 630)
     T.assertEqual(ui.professionLibraryX, 314)
     T.assertEqual(ui.professionDetailX, 629)
-    T.assertEqual(ui.professionLibraryTop, 109)
+    T.assertEqual(ui.professionLibraryTop, 145)
     T.assertEqual(frame.pageTitle.text, "Professions")
     T.assertEqual(frame.pageTitle.font.path, GGM.UIJournalTextures.boldFont)
     T.assertEqual(frame.pageTitle.font.size, 26)
@@ -1197,6 +1420,48 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(frame.pageTitle.shadowColor[4], 0)
     T.assertEqual(frame.pageTitle.shadowOffset[1], 0)
     T.assertEqual(frame.pageSubtitle.font.path, GGM.UIJournalTextures.font)
+    local toggle = frame.professionLibraryToggle
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    T.assertFalse(toggle:IsShown(), "profession toggle must be hidden outside the Professions page")
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertTrue(toggle:IsShown(), "profession toggle must show on the Professions page")
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    T.assertFalse(toggle:IsShown(), "profession toggle must hide on the Characters page")
+    GGM.SelectGuildGearBrowserTab(frame, "Bank")
+    T.assertFalse(toggle:IsShown(), "profession toggle must hide on the Bank page")
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertTrue(toggle:IsShown(), "profession toggle must show again on the Professions page")
+    T.assertTrue(toggle.parent == frame.professionsPage,
+        "profession toggle must be parented to the Professions page")
+    T.assertEqual(toggle.point.relativeTo, frame.professionSidebar)
+    T.assertEqual(toggle.point.relativePoint, "TOPLEFT")
+    T.assertEqual(toggle.point.x, 34)
+    T.assertTrue(toggle.point.y ~= frame.professionLibraryEmpty.point.y,
+        "toggle must not reuse the empty-state anchor")
+    T.assertTrue(toggle.point.y > frame.professionLibraryHeading.point.y,
+        "toggle must sit above the Profession Library heading in the journal")
+    T.assertTrue(toggle.allRadio ~= nil, "All radio control must exist")
+    T.assertTrue(toggle.ownRadio ~= nil, "Own radio control must exist")
+    T.assertEqual(toggle.allRadio.label.text, "ALL")
+    T.assertEqual(toggle.ownRadio.label.text, "OWN")
+    T.assertEqual(toggle.allRadio.label.journalFont, frame.professionLibraryHeading.journalFont)
+    T.assertEqual(toggle.allRadio.label.journalFontSize, frame.professionLibraryHeading.journalFontSize)
+    T.assertTrue(toggle.allRadio:GetChecked())
+    T.assertFalse(toggle.ownRadio:GetChecked())
+    T.assertTrue(toggle.height >= 20, "radio controls need a dedicated horizontal layout height")
+    T.assertEqual(toggle.allRadio.point.relativeTo, toggle)
+    T.assertEqual(toggle.ownRadio.point.relativeTo, toggle)
+    T.assertTrue(toggle.point.y >= frame.professionLibraryHeading.point.y + 20,
+        "radio controls must remain above the Profession Library heading")
+    T.assertEqual(toggle.allRadio.checkedTexture.texture,
+        "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-radio-checked")
+    T.assertEqual(toggle.allRadio.uncheckedTexture.texture,
+        "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-radio-unchecked")
+    T.assertEqual(toggle.allRadio.normalTexture, toggle.allRadio.uncheckedTexture)
+    T.assertEqual(frame.professionButtons[1].point.relativeTo, frame.professionSidebar)
+    T.assertEqual(frame.professionButtons[1].point.relativePoint, "TOPLEFT")
+    T.assertEqual(frame.professionButtons[1].point.x, 34)
+    T.assertEqual(frame.professionButtons[1].point.y, -62)
     T.assertEqual(frame.professionButtons[1].width, 244)
     T.assertEqual(frame.professionButtons[1].height, 48)
     T.assertEqual(frame.professionButtons[1].point.x, 34)
@@ -1219,6 +1484,125 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(frame.professionHeroArtwork.point.y, 9)
     T.assertEqual(frame.professionRecipeScroll.point.point, "BOTTOMRIGHT")
     T.assertEqual(frame.professionRecipeScroll.point.y, 22)
+end)
+
+T.test("profession library toggle filters by selected character without changing recipe state", function()
+    local GGM = loadUI()
+    local api = makeBrowserAPI()
+    function api.UnitFullName() return "Alice", "Silvermoon" end
+    function api.GetRealmName() return "Silvermoon" end
+    function api.UnitGUID() return "Player-1" end
+    local aliceRecord = makeRecord(GGM)
+    local bobRecord = makeRecord(GGM)
+    bobRecord.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    local frame = showBrowser(GGM, api, makeDB(GGM, { aliceRecord, bobRecord }))
+    local alice = frame.selectedEntry.key
+    local bob = "Beatrice-ArgentDawn"
+    frame.db.professions = {
+        [alice] = { identity = { key = alice, name = "Alice", realm = "Silvermoon", guid = "Player-1" }, snapshots = {
+            [171] = { complete = true, professionID = 171, professionName = "Alchemy",
+                capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER,
+                status = GGM.PROFESSION_CACHE_STATUS },
+        } },
+        [bob] = { identity = { key = bob, name = "Beatrice", realm = "ArgentDawn", guid = "Player-2" }, snapshots = {
+            [164] = { complete = true, professionID = 164, professionName = "Blacksmithing",
+                capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER,
+                status = GGM.PROFESSION_CACHE_STATUS },
+        } },
+    }
+    GGM.GetProfessionSyncStatus = function() return "Compared cached data" end
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    local selectedProfession, selectedCatalog, selectedSearch = frame.selectedProfession,
+        frame.professionCatalog, frame.professionSearchBox:GetText()
+    local selectedSyncStatus = frame.professionSyncStatus.text
+    local selectedSyncSelections = frame.professionSyncSelections
+    local selectedSnapshot = frame.db.professions[alice].snapshots[171]
+    T.assertEqual(frame.professionLibraryMode, "All")
+    T.assertEqual(frame.professionLibraryToggle.allRadio.label.text, "ALL")
+    T.assertEqual(frame.professionLibraryToggle.ownRadio.label.text, "OWN")
+    T.assertTrue(frame.professionLibraryToggle.allRadio:GetChecked())
+    T.assertFalse(frame.professionLibraryToggle.ownRadio:GetChecked())
+    T.assertTrue(frame.professionButtons[1]:IsShown())
+    T.assertTrue(frame.professionButtons[2]:IsShown())
+
+    frame.professionLibraryToggle.ownRadio.scripts.OnClick(frame.professionLibraryToggle.ownRadio)
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertFalse(frame.professionLibraryToggle.allRadio:GetChecked())
+    T.assertTrue(frame.professionLibraryToggle.ownRadio:GetChecked())
+    T.assertTrue(frame.professionButtons[1]:IsShown())
+    T.assertFalse(frame.professionButtons[2]:IsShown())
+    T.assertEqual(frame.selectedProfession, selectedProfession)
+    T.assertTrue(frame.professionCatalog == selectedCatalog)
+    T.assertEqual(frame.professionSearchBox:GetText(), selectedSearch)
+    T.assertEqual(frame.professionCatalog.state, selectedCatalog.state)
+    T.assertTrue(frame.professionCatalog.recipes == selectedCatalog.recipes)
+    T.assertEqual(frame.db.professions[alice].snapshots[171], selectedSnapshot)
+    T.assertEqual(frame.db.professions[alice].snapshots[171].status, GGM.PROFESSION_CACHE_STATUS)
+    T.assertEqual(frame.professionSyncStatus.text, selectedSyncStatus)
+    T.assertTrue(frame.professionSyncSelections == selectedSyncSelections)
+
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertTrue(frame.professionButtons[1]:IsShown())
+    T.assertFalse(frame.professionButtons[2]:IsShown())
+    T.assertEqual(frame.db.professions[alice].snapshots[171].status, GGM.PROFESSION_CACHE_STATUS)
+    T.assertEqual(frame.professionSyncStatus.text, selectedSyncStatus)
+
+    frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
+    T.assertEqual(frame.professionLibraryMode, "All")
+    for _, button in ipairs(frame.professionButtons) do T.assertTrue(button:IsShown()) end
+    T.assertEqual(frame.db.professions[bob].snapshots[164].status, GGM.PROFESSION_CACHE_STATUS)
+    T.assertEqual(frame.professionSyncStatus.text, selectedSyncStatus)
+end)
+
+T.test("profession library Own mode uses the active player identity instead of selected entry", function()
+    local GGM = loadUI()
+    local api = makeBrowserAPI()
+    function api.UnitFullName(unit) T.assertEqual(unit, "player"); return "Alice", "Silvermoon" end
+    function api.GetRealmName() return "Silvermoon" end
+    function api.UnitGUID(unit) T.assertEqual(unit, "player"); return "Player-1" end
+    local aliceRecord = makeRecord(GGM)
+    local bobRecord = makeRecord(GGM)
+    bobRecord.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    local frame = showBrowser(GGM, api, makeDB(GGM, { aliceRecord, bobRecord }))
+    local filterKey
+    local aliceButton = frame.professionButtons[1]
+    GGM.FilterProfessionLibraryEntries = function(entries, _, characterKey)
+        filterKey = characterKey
+        return { aliceButton }
+    end
+    frame.db.professions = {
+        [aliceRecord.identity.key] = { snapshots = { [171] = {
+            complete = true, professionID = 171, professionName = "Alchemy",
+            capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER,
+            status = GGM.PROFESSION_CACHE_STATUS,
+        } } },
+        [bobRecord.identity.key] = { snapshots = { [164] = {
+            complete = true, professionID = 164, professionName = "Blacksmithing",
+            capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER,
+            status = GGM.PROFESSION_CACHE_STATUS,
+        } } },
+    }
+    frame.selectedEntry = frame.entries[2]
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    frame.professionLibraryToggle.ownRadio.scripts.OnClick(frame.professionLibraryToggle.ownRadio)
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertEqual(filterKey, "Alice-Silvermoon")
+    T.assertEqual(#frame.visibleProfessionEntries, 1)
+    T.assertEqual(frame.visibleProfessionEntries[1].key, "Alchemy")
+end)
+
+T.test("profession library Own mode shows an empty state for a character without snapshots", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    frame.db.professions = {}
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    frame.professionLibraryToggle.ownRadio.scripts.OnClick(frame.professionLibraryToggle.ownRadio)
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    for _, button in ipairs(frame.professionButtons) do T.assertFalse(button:IsShown()) end
+    T.assertTrue(frame.professionLibraryEmpty:IsShown())
+    T.assertTrue(frame.professionLibraryEmpty.text:find("No captured professions", 1, true) ~= nil)
 end)
 
 T.test("profession selection changes the full page artwork for each supported profession", function()

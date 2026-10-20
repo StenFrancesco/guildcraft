@@ -20,6 +20,113 @@ local function parseAmount(api, value)
     return amount
 end
 
+local function craftSafety(api)
+    if type(api) ~= "table" or type(api.InCombatLockdown) ~= "function" then
+        return false, "Crafting unavailable: safety check unavailable."
+    end
+    local ok, inCombat = pcall(api.InCombatLockdown)
+    if not ok or not isPublic(api, inCombat) or type(inCombat) ~= "boolean" then
+        return false, "Crafting unavailable: safety check unavailable."
+    end
+    if inCombat then return false, "Crafting unavailable during combat." end
+    local trade = api.C_TradeSkillUI
+    if type(trade) ~= "table" or type(trade.CraftRecipe) ~= "function"
+        or type(trade.GetRecipeInfo) ~= "function" then
+        return false, "Crafting unavailable: profession API unavailable."
+    end
+    return true
+end
+
+local function maxCraftable(details)
+    local trade = details.api.C_TradeSkillUI
+    local ok, info = pcall(trade.GetRecipeInfo, details.recipeID)
+    if not ok or not isPublic(details.api, info) or type(info) ~= "table" then return nil end
+    local craftable = rawget(info, "craftable")
+    if not isPublic(details.api, craftable) or craftable ~= true then return nil end
+
+    if type(trade.GetCraftableCount) ~= "function" then return nil end
+    local countOK, maximum = pcall(trade.GetCraftableCount, details.recipeID)
+    if not countOK or not isPublic(details.api, maximum) or type(maximum) ~= "number"
+        or maximum < 0 or maximum ~= math.floor(maximum) or maximum > 999 then return nil end
+    return maximum
+end
+
+local function recipeIsCraftable(details)
+    local trade = details.api.C_TradeSkillUI
+    local ok, info = pcall(trade.GetRecipeInfo, details.recipeID)
+    if not ok or not isPublic(details.api, info) or type(info) ~= "table" then return false end
+    return rawget(info, "craftable") == true
+end
+
+local function hideProfessionFrame(details)
+    local frame = details.api.ProfessionsFrame or details.api.TradeSkillFrame
+    if frame and type(GGM.HideBlizzardProfessionPanel) == "function" then
+        GGM.HideBlizzardProfessionPanel(details.api, frame)
+    elseif frame and type(frame.Hide) == "function" then
+        pcall(frame.Hide, frame)
+    end
+    if frame and type(frame.SetFrameStrata) == "function" then
+        pcall(frame.SetFrameStrata, frame, "MEDIUM")
+    end
+    if frame and type(frame.SetFrameLevel) == "function" then
+        pcall(frame.SetFrameLevel, frame, 1)
+    end
+end
+
+local function ensureCraftingContext(details)
+    if not details.ownMode or not details.recipeID then return true end
+    if details.craftingContextRecipeID == details.recipeID then return true end
+    if details.browser and details.browser.craftingContextSkillLineID then
+        details.craftingContextRecipeID = details.recipeID
+        return true
+    end
+    return false
+end
+
+local function updateCraftControls(details)
+    if not details.createButton then return end
+    local contextReady = details.ownMode == true and ensureCraftingContext(details)
+    local safe, message = craftSafety(details.api)
+    local amount = parseAmount(details.api, details.amountInput:GetText())
+    local craftable = contextReady and safe and recipeIsCraftable(details)
+    local maximum = safe and maxCraftable(details) or nil
+    details.maxCraftable = maximum
+    details.createAllButton:SetText("Create All [" .. tostring(maximum or 0) .. "]")
+    details.createButton:SetEnabled(craftable and amount ~= nil and (maximum == nil or amount <= maximum))
+    details.createAllButton:SetEnabled(craftable and maximum ~= nil and maximum > 0)
+    if details.craftStatus then
+        if not contextReady then details.craftStatus:SetText("Crafting unavailable: profession context is not ready.")
+        elseif not safe then details.craftStatus:SetText(message)
+        elseif not craftable then details.craftStatus:SetText("This recipe cannot currently be crafted.")
+        elseif maximum == nil then details.craftStatus:SetText("Create All availability is unavailable.")
+        elseif maximum == 0 then details.craftStatus:SetText("No crafts currently available.")
+        elseif amount == nil then details.craftStatus:SetText("Enter an amount from 1 to " .. maximum .. ".")
+        elseif amount > maximum then details.craftStatus:SetText("Amount exceeds the available quantity.")
+        else details.craftStatus:SetText("") end
+    end
+end
+
+local function craftRecipe(details, quantity)
+    if not details.browser or not details.browser.craftingContextSkillLineID then
+        details.craftStatus:SetText("Crafting unavailable: profession context is not ready.")
+        return false
+    end
+    local safe, message = craftSafety(details.api)
+    local maximum = safe and maxCraftable(details) or nil
+    if not safe then details.craftStatus:SetText(message); return false end
+    if not recipeIsCraftable(details) or not quantity or quantity < 1 or (maximum and quantity > maximum) then
+        details.craftStatus:SetText("Crafting quantity is unavailable.")
+        return false
+    end
+    local ok, result = pcall(details.api.C_TradeSkillUI.CraftRecipe, details.recipeID, quantity)
+    if not ok or (result ~= nil and result ~= true) then
+        details.craftStatus:SetText("Crafting could not be started.")
+        return false
+    end
+    details.craftStatus:SetText("Craft request accepted.")
+    return true
+end
+
 local function chatSendFunction(api)
     local chatInfo = api.C_ChatInfo
     if type(chatInfo) == "table" then
@@ -483,6 +590,7 @@ local function createWhisperControls(details)
     details.amountInput:SetText("1")
     details.amountInput:SetScript("OnTextChanged", function()
         refreshCrafterWhisperState(details, nil, false)
+        updateCraftControls(details)
     end)
 
     local function makeAmountButton(label, offset, delta)
@@ -502,6 +610,20 @@ local function createWhisperControls(details)
     GGM.ApplyJournalFont(details.whisperButton.label, 16, "bold")
     details.whisperButton:SetScript("OnClick", function() sendCrafterWhisper(details) end)
 
+    details.createButton = GGM.CreateFlatButton(api, details, "Create", 180, 30, "primary")
+    details.createButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 106)
+    GGM.ApplyJournalFont(details.createButton.label, 16, "bold")
+    details.createButton:SetScript("OnClick", function()
+        craftRecipe(details, parseAmount(api, details.amountInput:GetText()))
+    end)
+
+    details.createAllButton = GGM.CreateFlatButton(api, details, "Create All [0]", 180, 30, "primary")
+    details.createAllButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 68)
+    GGM.ApplyJournalFont(details.createAllButton.label, 16, "bold")
+    details.createAllButton:SetScript("OnClick", function()
+        craftRecipe(details, details.maxCraftable)
+    end)
+
     text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details, "BOTTOMLEFT", 36, 126, 130)
         :SetText("Amount")
 
@@ -512,15 +634,64 @@ local function createWhisperControls(details)
     details.whisperPresenceStatus:SetHeight(18)
     details.whisperStatus:SetHeight(32)
 
+    details.craftStatus = text(details, "GameFontHighlightSmall", "BOTTOMLEFT", details,
+        "BOTTOMLEFT", 36, 25, CONTENT_WIDTH)
+    details.craftStatus:SetHeight(32)
+
     details.rosterEventFrame = api.CreateFrame("Frame", nil, details)
     details.rosterEventFrame:RegisterEvent("GUILD_ROSTER_UPDATE")
     details.rosterEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     details.rosterEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    details.rosterEventFrame:RegisterEvent("TRADE_SKILL_SHOW")
+    details.rosterEventFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
+    details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CRAFT_BEGIN")
+    details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CLOSE")
     details.rosterEventFrame:SetScript("OnEvent", function(_, event)
         if not shown(details) then return end
-        refreshCrafterWhisperState(details)
+        if event == "TRADE_SKILL_CLOSE" then
+            details.craftingContextRecipeID = nil
+            details.browser.craftingContextSkillLineID = nil
+            details.pendingCraftQuantity = nil
+            updateCraftControls(details)
+            return
+        end
+        if details.ownMode and (event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE") then
+            hideProfessionFrame(details)
+            updateCraftControls(details)
+            if details.pendingCraftQuantity then
+                local quantity = details.pendingCraftQuantity
+                details.pendingCraftQuantity = nil
+                craftRecipe(details, quantity)
+            end
+        else
+            refreshCrafterWhisperState(details)
+        end
     end)
     updateWhisperButton(details)
+    updateCraftControls(details)
+end
+
+local function setActionMode(details, ownMode)
+    local function visible(control, value)
+        if not control then return end
+        if value then control:Show() else control:Hide() end
+    end
+    details.ownMode = ownMode == true
+    if details.crafterHeading then
+        if details.ownMode then details.crafterHeading:SetText("CRAFTING")
+        else details.crafterHeading:SetText("KNOWN CRAFTERS") end
+    end
+    if details.crafterDropdown then
+        if details.ownMode then details.crafterDropdown:Hide() else details.crafterDropdown:Show() end
+    end
+    if details.crafterStatus then details.crafterStatus:SetText(""); visible(details.crafterStatus, not details.ownMode) end
+    visible(details.whisperPresenceStatus, not details.ownMode)
+    visible(details.whisperStatus, not details.ownMode)
+    visible(details.whisperButton, not details.ownMode)
+    visible(details.createButton, details.ownMode)
+    visible(details.createAllButton, details.ownMode)
+    visible(details.craftStatus, details.ownMode)
+    if details.ownMode then updateCraftControls(details) else updateWhisperButton(details) end
 end
 
 local function setRecipeTitle(details, name)
@@ -535,6 +706,7 @@ local function createWindow(browser, recipe)
     local name = "GuildGearMemoryRecipeDetailsFrame"
     local details = api.CreateFrame("Frame", name, api.UIParent)
     details.api = api
+    details.browser = browser
     details.background = details:CreateTexture(nil, "BACKGROUND", nil, -8)
     GGM.ApplyJournalSurface(details, "leather")
     details.paper = surface(api, details, "recipe", details, -7)
@@ -597,6 +769,7 @@ local function createWindow(browser, recipe)
     applyTextTheme(details.cachedStatus, "muted")
     createWhisperControls(details)
     createCrafterDropdown(details)
+    setActionMode(details, browser.professionLibraryMode == "Own")
     api.UISpecialFrames = api.UISpecialFrames or {}
     local registered = false
     for _, frameName in ipairs(api.UISpecialFrames) do if frameName == name then registered = true; break end end
@@ -604,6 +777,7 @@ local function createWindow(browser, recipe)
     details:SetScript("OnHide", function(self)
         self:StopMovingOrSizing()
         self.selectedCrafterKey, self.recipeID = nil, nil
+        self.craftingContextRecipeID = nil
         self.crafters = {}
         closeCrafterMenu(self)
     end)
@@ -627,6 +801,7 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     local preserveSelection = details.recipeID == canonical.recipeID
     if not preserveSelection then details.amountInput:SetText("1") end
     details.recipeID = canonical.recipeID
+    setActionMode(details, browser.professionLibraryMode == "Own")
     details.currentRecipeName = canonical.name
     setRecipeTitle(details, canonical.name)
     details.recipeIcon:SetTexture(canonical.outputIcon or UNKNOWN_ICON)
@@ -634,6 +809,8 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     updateCrafters(details, canonical, preserveSelection)
     renderMaterials(details, GGM.BuildRecipeMaterialDetails(browser.api, canonical.recipeID))
     details:Show()
+    if details.SetFrameStrata then details:SetFrameStrata("TOOLTIP") end
+    if details.Raise then details:Raise() end
     return details
 end
 
