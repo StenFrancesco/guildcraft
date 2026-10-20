@@ -184,6 +184,7 @@ function GGM.SaveActiveLinkedProfession(controller)
         GGM.lastProfessionSyncError = ok and syncErr or "profession-sync-save-unavailable"
     end
     if type(GGM.RefreshVisibleProfessionCatalog) == "function" then GGM.RefreshVisibleProfessionCatalog() end
+    if type(GGM.RefreshVisibleProfessionLibrary) == "function" then GGM.RefreshVisibleProfessionLibrary() end
     return "saved", nil
 end
 

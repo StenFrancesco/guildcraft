@@ -401,7 +401,7 @@ local UI = {
     characterDetailHeight = 510,
     characterDetailWidth = 721,
     professionLibraryX = 314,
-    professionLibraryTop = 109,
+    professionLibraryTop = 145,
     professionDetailX = 629,
     professionSidebarWidth = 297,
     professionRowWidth = 244,
@@ -822,6 +822,28 @@ function GGM.FilterProfessionRecipeBrowserEntries(entries, query)
     return filtered
 end
 
+local function openSelectedProfessionContext(frame, skillLineID)
+    if frame.professionLibraryMode ~= "Own" then return false end
+    local trade = frame.api and frame.api.C_TradeSkillUI
+    if type(trade) ~= "table" or type(trade.OpenTradeSkill) ~= "function" then return false end
+    local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
+    local wasShown = professionFrame and type(professionFrame.IsShown) == "function"
+        and professionFrame:IsShown() == true
+    local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
+    if not openOK or opened == false then return false end
+    frame.craftingContextSkillLineID = skillLineID
+    if professionFrame then
+        if wasShown == false then frame.craftingContextOpenedByGuildBook = true end
+        if type(professionFrame.SetFrameStrata) == "function" then
+            pcall(professionFrame.SetFrameStrata, professionFrame, "MEDIUM")
+        end
+        if type(professionFrame.SetFrameLevel) == "function" then
+            pcall(professionFrame.SetFrameLevel, professionFrame, 1)
+        end
+    end
+    return true
+end
+
 function GGM.SelectProfession(frame, selectedKey)
     local selectedProfession
     for _, profession in ipairs(PROFESSIONS) do if profession.key == selectedKey then selectedProfession = profession; break end end
@@ -829,6 +851,7 @@ function GGM.SelectProfession(frame, selectedKey)
     local changed = frame.selectedProfession ~= selectedKey
     if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.selectedProfession = selectedKey
+    frame.selectedProfessionID = selectedProfession.professionID
     frame.professionHeading:SetText(selectedKey)
     updateProfessionSubtitle(frame, selectedKey)
     if frame.professionHeroIcon then frame.professionHeroIcon:SetTexture(selectedProfession.icon) end
@@ -842,7 +865,59 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, selectedProfession.professionID, selectedProfession.key, frame.api)
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
     end
+    frame.craftingContextSkillLineID = nil
+    local frameVisible = type(frame.IsShown) ~= "function" or frame:IsShown()
+    if frameVisible then openSelectedProfessionContext(frame, selectedProfession.professionID) end
     if frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
+    return true
+end
+
+function GGM.RefreshVisibleProfessionLibrary(frame)
+    frame = frame or GGM.guildGearBrowserFrame
+    if not frame or type(frame.professionButtons) ~= "table" then return false end
+
+    local visibleEntries = {}
+    if frame.professionLibraryMode == "Own" then
+        local identity = nil
+        if type(GGM.BuildPlayerIdentity) == "function" then
+            local identityOk, playerIdentity = pcall(GGM.BuildPlayerIdentity, frame.api)
+            if identityOk then identity = playerIdentity end
+        end
+        local characterKey = identity and identity.key or nil
+        local characterGUID = identity and identity.guid or nil
+        visibleEntries = GGM.FilterProfessionLibraryEntries(
+            frame.professionButtons, frame.db, characterKey, characterGUID)
+    else
+        for _, button in ipairs(frame.professionButtons) do visibleEntries[#visibleEntries + 1] = button end
+    end
+
+    local visibleByKey = {}
+    for index, button in ipairs(visibleEntries) do
+        visibleByKey[button.key] = true
+        button:ClearAllPoints()
+        button:SetPoint("TOPLEFT", frame.professionSidebar, "TOPLEFT", 34,
+            -(62 + (index - 1) * UI.professionRowPitch))
+        button:Show()
+    end
+    for _, button in ipairs(frame.professionButtons) do
+        if not visibleByKey[button.key] then button:Hide() end
+    end
+
+    frame.visibleProfessionEntries = visibleEntries
+    if frame.professionLibraryEmpty then
+        if frame.professionLibraryMode == "Own" and #visibleEntries == 0 then
+            frame.professionLibraryEmpty:Show()
+        else
+            frame.professionLibraryEmpty:Hide()
+        end
+    end
+    if frame.professionLibraryToggle then
+        local own = frame.professionLibraryMode == "Own"
+        frame.professionLibraryToggle.allRadio:SetChecked(not own)
+        frame.professionLibraryToggle.ownRadio:SetChecked(own)
+        setTextColor(frame.professionLibraryToggle.allRadio.label, own and THEME.muted or THEME.text)
+        setTextColor(frame.professionLibraryToggle.ownRadio.label, own and THEME.text or THEME.muted)
+    end
     return true
 end
 
@@ -939,7 +1014,56 @@ local function createProfessionsPage(api, frame)
     sidebar.owner = frame
     frame.professionSidebar = sidebar
 
+    frame.professionLibraryMode = "All"
+    local toggle = api.CreateFrame("Button", nil, page)
+    toggle:SetSize(170, 28)
+    local function createProfessionRadio(label, x)
+        local radio = api.CreateFrame("CheckButton", nil, toggle)
+        radio:SetSize(82, 28)
+        radio:SetPoint("TOPLEFT", toggle, "TOPLEFT", x, 0)
+        radio.checkedTexture = radio:CreateTexture(nil, "ARTWORK")
+        radio.checkedTexture:SetSize(32, 32)
+        radio.checkedTexture:SetPoint("LEFT", radio, "LEFT", 0, 0)
+        radio.checkedTexture:SetTexture("Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-radio-checked")
+        radio.uncheckedTexture = radio:CreateTexture(nil, "ARTWORK")
+        radio.uncheckedTexture:SetSize(32, 32)
+        radio.uncheckedTexture:SetPoint("LEFT", radio, "LEFT", 0, 0)
+        radio.uncheckedTexture:SetTexture("Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-radio-unchecked")
+        radio:SetCheckedTexture(radio.checkedTexture)
+        radio:SetNormalTexture(radio.uncheckedTexture)
+        radio.label = createText(radio, "OVERLAY", "GameFontHighlight")
+        GGM.ApplyJournalFont(radio.label, 16, "bold")
+        radio.label:SetText(label)
+        radio.label:SetPoint("LEFT", radio, "LEFT", 30, 0)
+        radio.label:SetWidth(52)
+        radio:RegisterForClicks("LeftButtonUp")
+        return radio
+    end
+    toggle.allRadio = createProfessionRadio("ALL", 0)
+    toggle.ownRadio = createProfessionRadio("OWN", 88)
+    frame.professionLibraryToggle = toggle
+    frame.professionLibraryToggle:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, 34)
+    local function selectProfessionLibraryMode(mode)
+        if frame.professionLibraryMode ~= mode and GGM.HideRecipeDetailsWindow then
+            GGM.HideRecipeDetailsWindow(frame)
+        end
+        frame.professionLibraryMode = mode
+        GGM.RefreshVisibleProfessionLibrary(frame)
+    end
+    toggle.allRadio:SetScript("OnClick", function() selectProfessionLibraryMode("All") end)
+    toggle.ownRadio:SetScript("OnClick", function() selectProfessionLibraryMode("Own") end)
+    toggle.allRadio:SetChecked(true)
+    toggle.ownRadio:SetChecked(false)
+    frame.professionLibraryEmpty = createText(sidebar, "OVERLAY", "GameFontHighlight")
+    frame.professionLibraryEmpty:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -62)
+    frame.professionLibraryEmpty:SetWidth(UI.professionRowWidth)
+    frame.professionLibraryEmpty:SetJustifyH("CENTER")
+    frame.professionLibraryEmpty:SetText("No captured professions for this character.")
+    setTextColor(frame.professionLibraryEmpty, THEME.muted)
+    frame.professionLibraryEmpty:Hide()
+
     local eyebrow = createText(sidebar, "OVERLAY", "GameFontNormal")
+    frame.professionLibraryHeading = eyebrow
     GGM.ApplyJournalFont(eyebrow, 16, "bold")
     eyebrow:SetText("PROFESSION LIBRARY")
     setTextColor(eyebrow, THEME.text)
@@ -1062,6 +1186,7 @@ local function createProfessionsPage(api, frame)
     end)
 
     frame.professionsPage = page
+    GGM.RefreshVisibleProfessionLibrary(frame)
     GGM.SelectProfession(frame, "Alchemy")
 end
 
@@ -1097,7 +1222,12 @@ updateProfessionRecipeBrowser = function(frame)
         if not row then
             row = frame.api.CreateFrame("Button", nil, frame.professionRecipeContent)
             row:RegisterForClicks("LeftButtonUp")
-            row:SetScript("OnClick", function(self) GGM.ShowRecipeDetailsWindow(frame, self.recipe) end)
+            row:SetScript("OnClick", function(self)
+                if frame.professionLibraryMode == "Own" then
+                    openSelectedProfessionContext(frame, frame.selectedProfessionID)
+                end
+                GGM.ShowRecipeDetailsWindow(frame, self.recipe)
+            end)
             if row.SetHighlightTexture then row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD") end
             row.outputIcon = row:CreateTexture(nil, "ARTWORK")
             row.outputIcon:SetSize(30, 30)
@@ -1206,6 +1336,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     local showCharacter = selectedKey == "Character"
     if selectedKey == "Professions" then
         frame.professionsPage:Show()
+        frame.professionLibraryToggle:Show()
         GGM.SyncSelectedProfession(frame, false)
         if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
             local profession
@@ -1215,7 +1346,10 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
                 updateProfessionRecipeBrowser(frame)
             end
         end
-    else frame.professionsPage:Hide() end
+    else
+        frame.professionsPage:Hide()
+        frame.professionLibraryToggle:Hide()
+    end
     for pageKey, page in pairs(frame.placeholderPages) do if pageKey == selectedKey then page:Show() else page:Hide() end end
     if frame.bankPage then
         if selectedKey == "Bank" then
@@ -1349,6 +1483,7 @@ updateBrowserList = function(frame, api)
     else frame.listEmpty:Hide() end
 
     updateSearchHint(frame)
+    GGM.RefreshVisibleProfessionLibrary(frame)
     renderBrowserDetail(frame, frame.selectedEntry, api)
     if frame.activeTab ~= "Character" then setBrowserContentVisible(frame, false) end
 end
@@ -1523,6 +1658,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
 
     local frame = api.CreateFrame("Frame", frameName, api.UIParent)
     frame:SetSize(UI.windowWidth, UI.windowHeight)
+    if frame.SetFrameStrata then frame:SetFrameStrata("DIALOG") end
     local screen = api.UIParent
     if frame.SetScale and screen and type(screen.GetWidth) == "function" and type(screen.GetHeight) == "function" then
         local screenWidth, screenHeight = screen:GetWidth(), screen:GetHeight()
@@ -1537,6 +1673,15 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.api = api
     frame:SetScript("OnHide", function(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
+        local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
+        if self.craftingContextOpenedByGuildBook and professionFrame and type(professionFrame.Hide) == "function" then
+            pcall(professionFrame.Hide, professionFrame)
+        end
+        self.professionLibraryMode = "All"
+        self.selectedProfession = nil
+        self.selectedProfessionID = nil
+        self.craftingContextSkillLineID = nil
+        self.craftingContextOpenedByGuildBook = false
     end)
     frame.entries, frame.filteredEntries, frame.listRows, frame.slotButtons = {}, {}, {}, {}
     frame.browserView = "Guild"
@@ -1811,6 +1956,8 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     updateBrowserList(frame, api)
     GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Character")
     frame:Show()
+    if frame.SetFrameStrata then frame:SetFrameStrata("DIALOG") end
+    if frame.Raise then frame:Raise() end
     if frame.activeTab == "Bank" and type(GGM.RefreshVisibleBankView) == "function" then
         GGM.RefreshVisibleBankView()
     end
