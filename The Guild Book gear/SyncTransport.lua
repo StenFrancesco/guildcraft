@@ -59,7 +59,10 @@ pumpOutbound = function(transport)
         table.remove(transport.outboundFrames, 1)
     end
     local queued = transport.outboundFrames[1]
-    if not queued then return true, nil end
+    if not queued then
+        if type(transport.onIdle) == "function" then pcall(transport.onIdle) end
+        return true, nil
+    end
     local group = queued.group
     transport.inFlight = queued
     local completed, completionError = false, nil

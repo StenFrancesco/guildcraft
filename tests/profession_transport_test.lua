@@ -94,7 +94,7 @@ local function makeFrame(messageID, index, total, chunk)
 end
 
 local function receive(GGM, transport, frame, sender, prefix, channel)
-    return GGM.ReceiveProfessionFrame(transport, prefix or "GC_PROF3", frame, channel or "GUILD", sender or "Alice-Silvermoon")
+    return GGM.ReceiveProfessionFrame(transport, prefix or "GC_PROF4", frame, channel or "GUILD", sender or "Alice-Silvermoon")
 end
 
 T.test("profession fragment identity includes the delivery channel", function()
@@ -112,7 +112,7 @@ T.test("profession fragment identity includes the delivery channel", function()
     T.assertEqual(received[1].channel, "WHISPER")
 end)
 
-T.test("profession transport registers GC_PROF3 and reports API registration failures", function()
+T.test("profession transport registers GC_PROF4 and reports API registration failures", function()
     local GGM = loadModules()
     local api, c = makeApi()
     local transport = assert(GGM.CreateProfessionTransport(api, function() end))
@@ -121,7 +121,7 @@ T.test("profession transport registers GC_PROF3 and reports API registration fai
 
     T.assertTrue(ok)
     T.assertNil(err)
-    T.assertEqual(c.registered[1], "GC_PROF3")
+    T.assertEqual(c.registered[1], "GC_PROF4")
 
     c.registerResult = 1
     local failed, failedErr = GGM.RegisterProfessionTransport(transport)
@@ -148,7 +148,7 @@ T.test("profession transport yields bounded ordered WHISPER frames without a fix
 
     T.assertTrue(#c.sent > 1)
     for index, call in ipairs(c.sent) do
-        T.assertEqual(call.prefix, "GC_PROF3")
+        T.assertEqual(call.prefix, "GC_PROF4")
         T.assertEqual(call.channel, "WHISPER")
         T.assertEqual(call.target, "Bob-Silvermoon")
         T.assertTrue(#call.frame <= 240)
@@ -540,7 +540,7 @@ T.test("profession transport leaves guild sends independent of target presence",
     T.assertTrue(#c.sent > 1)
     T.assertEqual(presenceChecks, 0)
     for _, call in ipairs(c.sent) do
-        T.assertEqual(call.prefix, "GC_PROF3")
+        T.assertEqual(call.prefix, "GC_PROF4")
         T.assertEqual(call.channel, "GUILD")
         T.assertNil(call.target)
     end

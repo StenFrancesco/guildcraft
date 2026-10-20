@@ -19,6 +19,8 @@ Storage.lua
 ProfessionSyncData.lua
 ProfessionTransport.lua
 ProfessionSync.lua
+AutomaticSync.lua
+ProfessionAutomaticSync.lua
 SavedDatabases.lua
 SavedCharacterModel.lua
 RecipeDetails.lua

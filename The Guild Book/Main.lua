@@ -18,6 +18,9 @@ frame:RegisterEvent("TRADE_SKILL_CLOSE")
 frame:RegisterEvent("GUILD_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_GUILD_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+for _, event in ipairs({ "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "PLAYER_UPDATE_RESTING", "PLAYER_REGEN_ENABLED" }) do
+    frame:RegisterEvent(event)
+end
 
 local function refreshVisibleProfessionCatalog()
     if type(GGM.RefreshVisibleProfessionCatalog) == "function" then
@@ -34,6 +37,7 @@ local function refreshProfessionSyncRoster()
     end
     local ready, err = GGM.RefreshProfessionSyncRoster(GGM.professionSync)
     GGM.lastProfessionSyncError = err
+    if type(GGM.WakeProfessionSync) == "function" then GGM.WakeProfessionSync(GGM.professionSync) end
     if ready and GGM.professionPlayerLoggedIn and not GGM.professionLoginSyncIssued then
         if GGM.LoginProfessionSync(GGM.professionSync) then GGM.professionLoginSyncIssued = true end
     end
@@ -41,6 +45,12 @@ end
 
 frame:SetScript("OnEvent", function(_, event, ...)
     local arg1 = ...
+
+    if event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS"
+        or event == "PLAYER_UPDATE_RESTING" or event == "PLAYER_REGEN_ENABLED" then
+        if type(GGM.WakeProfessionSync) == "function" then GGM.WakeProfessionSync(GGM.professionSync) end
+        return
+    end
 
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" or event == "GUILD_ROSTER_UPDATE" then
         if type(GGM.RefreshVisibleBankView) == "function" then
@@ -100,6 +110,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
         GGM.professionPlayerLoggedIn = true
+        if GGM.professionSync and type(GGM.LoginProfessionSync) == "function" then
+            if GGM.LoginProfessionSync(GGM.professionSync) then GGM.professionLoginSyncIssued = true end
+        end
         refreshProfessionSyncRoster()
 
         local ownershipRecorded, ownershipErr = GGM.RecordLocalPlayerOwnership(

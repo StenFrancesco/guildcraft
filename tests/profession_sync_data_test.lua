@@ -76,6 +76,29 @@ T.test("profession manifests exclude inactive or corrupt snapshots", function()
     T.assertNil(G.GetProfessionSyncManifest(db, 164))
 end)
 
+T.test("recipe sync merge unions older knowledge without inventing observation time", function()
+    local G = load()
+    T.assertEqual(type(G.MergeProfessionSyncRecord), "function")
+    local db = G.InitializeDatabase(nil)
+    local identity = { guid = "Player-1-AAA", key = "Alice-Realm", name = "Alice", realm = "Realm" }
+    save(G, db, identity.guid, { 3, 8 }, 100)
+    local incoming = {
+        guid = identity.guid, complete = true, professionID = 164, professionName = "Blacksmithing", capturedAt = 90,
+        source = G.PROFESSION_SOURCE_PLAYER, status = "cached",
+        recipes = { { recipeID = 8, name = "Recipe 8" }, { recipeID = 9, name = "Imported 9" } },
+    }
+
+    T.assertTrue(G.MergeProfessionSyncRecord(db, identity, incoming, { guildMembershipVerified = true }))
+    local merged = assert(G.GetProfessionSyncRecord(db, identity.guid, 164))
+    T.assertEqual(#merged.recipes, 3)
+    T.assertEqual(merged.recipes[1].recipeID, 3)
+    T.assertEqual(merged.recipes[2].recipeID, 8)
+    T.assertEqual(merged.recipes[3].recipeID, 9)
+    T.assertEqual(merged.capturedAt, 100)
+    T.assertEqual(merged.source, G.PROFESSION_SOURCE_GUILD_LINK)
+    T.assertEqual(merged.recipes[3].name, "Imported 9")
+end)
+
 T.test("profession digests can be scoped to the current verified guild membership", function()
     local G = load()
     local a, b = G.InitializeDatabase(nil), G.InitializeDatabase(nil)
@@ -83,4 +106,22 @@ T.test("profession digests can be scoped to the current verified guild membershi
     save(G, a, "Player-1-BBB", { 8 })
     local members = { ["Player-1-AAA"] = true }
     T.assertEqual(G.GetProfessionSyncDigest(a, 164, members), G.GetProfessionSyncDigest(b, 164, members))
+end)
+
+T.test("an oversized or malformed recipe union preserves the saved catalog", function()
+    local G, db = load()
+    db = G.InitializeDatabase(nil)
+    local ids = {}
+    for index = 1, 4096 do ids[index] = index end
+    save(G, db, "Player-1-AAA", ids, 100)
+    local before = assert(G.GetProfessionSyncDigest(db, 164))
+    local incoming = { guid = "Player-1-AAA", complete = true, professionID = 164,
+        professionName = "Blacksmithing", capturedAt = 110, source = G.PROFESSION_SOURCE_PLAYER,
+        status = "cached", recipes = { { recipeID = 5000, name = "New recipe" } } }
+    local identity = { guid = incoming.guid, key = incoming.guid .. "-Realm", name = incoming.guid, realm = "Realm" }
+    T.assertFalse(G.MergeProfessionSyncRecord(db, identity, incoming, { guildMembershipVerified = true }))
+    T.assertEqual(G.GetProfessionSyncDigest(db, 164), before)
+    incoming.recipes = { { recipeID = 9 }, { recipeID = 3 } }
+    T.assertFalse(G.MergeProfessionSyncRecord(db, identity, incoming, { guildMembershipVerified = true }))
+    T.assertEqual(G.GetProfessionSyncDigest(db, 164), before)
 end)

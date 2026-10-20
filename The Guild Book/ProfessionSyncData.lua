@@ -76,6 +76,71 @@ function GGM.GetProfessionSyncRecord(db, guid, professionID)
     return capture, nil
 end
 
+local function hasRecipeLabel(recipe, recipeID)
+    return type(recipe.name) == "string" and recipe.name ~= "" and recipe.name ~= "Recipe " .. recipeID
+end
+
+-- Merge cached recipe knowledge without treating capture time as deletion
+-- authority. The newest real observation supplies the snapshot provenance;
+-- its timestamp is copied as-is and never replaced with the current time.
+function GGM.MergeProfessionSyncRecord(db, identity, incoming, options)
+    if type(identity) ~= "table" or type(incoming) ~= "table"
+        or not GGM.IsProfessionGUID(identity.guid) or incoming.guid ~= identity.guid then
+        return false, "profession-sync-identity-invalid"
+    end
+    local valid, validationErr = GGM.ValidateProfessionCapture(incoming)
+    if not valid then return false, validationErr end
+    if incoming.hash ~= nil then
+        local incomingHash, hashErr = GGM.HashProfessionRecipes(incoming.professionID, incoming.recipes)
+        if not incomingHash then return false, hashErr end
+        if incomingHash ~= incoming.hash then return false, "profession-sync-hash-invalid" end
+    end
+
+    local current, currentErr = GGM.GetProfessionSyncRecord(db, identity.guid, incoming.professionID)
+    if not current and currentErr ~= "profession-sync-record-missing" then return false, currentErr end
+    if not current then
+        return GGM.SaveProfessionSnapshot(db, identity, incoming, options)
+    end
+
+    local recipesByID, recipeIDs = {}, {}
+    local function addRecipes(rows, preferExisting)
+        for _, recipe in ipairs(rows) do
+            local recipeID = recipe.recipeID
+            local stored = recipesByID[recipeID]
+            if not stored then
+                stored = { recipeID = recipeID, name = recipe.name, outputIcon = recipe.outputIcon }
+                recipesByID[recipeID] = stored
+                recipeIDs[#recipeIDs + 1] = recipeID
+            else
+                if not hasRecipeLabel(stored, recipeID) and hasRecipeLabel(recipe, recipeID) then
+                    stored.name = recipe.name
+                elseif not preferExisting and not hasRecipeLabel(stored, recipeID) and recipe.name then
+                    stored.name = recipe.name
+                end
+                if not stored.outputIcon and recipe.outputIcon then stored.outputIcon = recipe.outputIcon end
+            end
+        end
+    end
+    addRecipes(current.recipes, true)
+    addRecipes(incoming.recipes, false)
+    table.sort(recipeIDs)
+    local recipes = {}
+    for _, recipeID in ipairs(recipeIDs) do recipes[#recipes + 1] = recipesByID[recipeID] end
+
+    local provenance = incoming.capturedAt > current.capturedAt and incoming or current
+    local merged = {
+        guid = identity.guid, professionID = incoming.professionID,
+        professionName = provenance.professionName, capturedAt = provenance.capturedAt,
+        source = provenance.source, status = "cached", complete = true, recipes = recipes,
+    }
+    valid, validationErr = GGM.ValidateProfessionCapture(merged)
+    if not valid then return false, validationErr end
+    local mergedHash, hashErr = GGM.HashProfessionRecipes(merged.professionID, merged.recipes)
+    if not mergedHash then return false, hashErr end
+    merged.hash = mergedHash
+    return GGM.SaveProfessionSnapshot(db, identity, merged, options)
+end
+
 function GGM.GetProfessionSyncManifest(db, professionID)
     if not GGM.IsProfessionSyncInteger(professionID, 1, 1000000) then return nil, "profession-sync-id-invalid" end
     local valid, err = GGM.EnsureProfessionIndex(db, true)
