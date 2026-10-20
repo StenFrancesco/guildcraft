@@ -108,14 +108,36 @@ T.test("manual profession synchronization bypasses the automatic login delay", f
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
 end)
 
-T.test("recipe automatic work is cancelled when the verified guild changes", function()
+T.test("recipe automatic work restarts with fresh professions on the verified guild switch wake", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
     a:ready(); b:ready(); automatic(b)
-    assert(b.G.LoginProfessionSync(b.sync)); bus:advance(10)
+    assert(b.G.LoginProfessionSync(b.sync)); bus:advance(300)
+    local oldGuild = b.sync.automaticGuild
+    T.assertNotNil(oldGuild)
     b.sync.guild = "OtherGuild:Realm"; b.G.WakeProfessionSync(b.sync)
+    T.assertFalse(b.sync.automaticController.stopped)
+    bus:advance(300)
+    T.assertEqual(b.sync.automaticGuild, "OtherGuild:Realm")
+    T.assertNotNil(b.sync.automaticRemaining)
+    T.assertTrue(b.sync.automaticController.recoveries <= 3)
+end)
+
+T.test("recipe automatic work waits for guild membership and roster readiness", function()
+    local bus = guild()
+    local b = bus:client("Bob")
+    b:ready(); automatic(b)
+    assert(b.G.LoginProfessionSync(b.sync)); bus:advance(300)
+    b.api.IsInGuild = function() return false end
+    b.G.WakeProfessionSync(b.sync)
     T.assertTrue(b.sync.automaticController.stopped)
-    local count = #bus.frames; bus:advance(8000); T.assertEqual(#bus.frames, count)
+    b.api.IsInGuild = function() return true end
+    b.sync.rosterReady = false
+    b.G.WakeProfessionSync(b.sync)
+    T.assertTrue(b.sync.automaticController.stopped)
+    b.sync.rosterReady = true
+    b.G.WakeProfessionSync(b.sync)
+    T.assertFalse(b.sync.automaticController.stopped)
 end)
 
 T.test("real recipe login event schedules synchronization without the character browser", function()

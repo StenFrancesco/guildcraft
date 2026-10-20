@@ -60,7 +60,16 @@ function GGM.StopAutomaticSync(controller)
 end
 
 function GGM.WakeAutomaticSync(controller)
-    if not controller or not controller.started or controller.stopped or not controller.pending
+    if not controller then return false end
+    -- Guild identity changes cancel the old run. A later guild/zone wake starts
+    -- a fresh bounded run for the current membership in the same session.
+    if controller.stopped then
+        controller.stopped, controller.started, controller.exhausted = false, false, nil
+        controller.lastStarted = nil
+        controller.nextAt, controller.pending = nil, false
+        return GGM.StartAutomaticSync(controller)
+    end
+    if not controller.started or not controller.pending
         or controller.running or controller.exhausted then return false end
     local current = clock(controller)
     if not current then return false end

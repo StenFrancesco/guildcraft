@@ -2,6 +2,16 @@ local _, GGM = ...
 
 local PROFESSIONS = { 164, 165, 171, 197, 202, 333 }
 
+local function resetAutomaticGuild(sync)
+    sync.automaticGuild, sync.automaticRemaining = nil, nil
+end
+
+local function initializeAutomaticRemaining(sync)
+    if sync.automaticRemaining then return end
+    sync.automaticRemaining = {}
+    for _, professionID in ipairs(PROFESSIONS) do sync.automaticRemaining[professionID] = true end
+end
+
 local function interrupt(sync)
     local attempt = sync.automaticAttempt
     if not attempt then return end
@@ -13,6 +23,7 @@ end
 
 local function run(sync, done, controller)
     if not sync.registered or not sync.rosterReady then done(true); return end
+    initializeAutomaticRemaining(sync)
     if sync.automaticGuild and sync.automaticGuild ~= sync.guild then
         GGM.StopAutomaticSync(controller)
         return
@@ -84,8 +95,7 @@ end
 function GGM.StartProfessionAutomaticSync(sync)
     if not sync or type(GGM.CreateAutomaticSyncController) ~= "function" then return false end
     if not sync.automaticController then
-        sync.automaticRemaining = {}
-        for _, professionID in ipairs(PROFESSIONS) do sync.automaticRemaining[professionID] = true end
+        initializeAutomaticRemaining(sync)
         sync.automaticController = GGM.CreateAutomaticSyncController(sync.api,
             function(done, controller) run(sync, done, controller) end,
             function() interrupt(sync) end)
@@ -95,16 +105,26 @@ end
 
 function GGM.WakeProfessionSync(sync)
     if not sync or not sync.automaticController then return end
-    if sync.automaticGuild and sync.guild ~= sync.automaticGuild then
-        GGM.StopAutomaticSync(sync.automaticController)
-        sync.automaticRemaining = {}
-        return
-    end
     local ok, inGuild = pcall(sync.api.IsInGuild)
+    local guildReadable = false
     if ok and type(sync.api.issecretvalue) == "function" then
         local public, secret = pcall(sync.api.issecretvalue, inGuild)
-        if public and secret == false and inGuild == false then GGM.StopAutomaticSync(sync.automaticController); return end
+        guildReadable = public and secret == false
     end
-    if not sync.rosterReady then interrupt(sync) end
+    if guildReadable and inGuild == false then
+        GGM.StopAutomaticSync(sync.automaticController)
+        resetAutomaticGuild(sync)
+        return
+    end
+    if not sync.registered or not sync.rosterReady then
+        if sync.automaticAttempt then interrupt(sync) end
+        return
+    end
+    if sync.automaticGuild and sync.guild ~= sync.automaticGuild then
+        GGM.StopAutomaticSync(sync.automaticController)
+        resetAutomaticGuild(sync)
+        GGM.WakeAutomaticSync(sync.automaticController)
+        return
+    end
     GGM.WakeAutomaticSync(sync.automaticController)
 end

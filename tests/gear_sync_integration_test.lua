@@ -192,6 +192,33 @@ T.test("gear automatic interruption preserves completed targets and waits for ci
     T.assertNotNil(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
     bob.left = true; bob.G.WakeGearSync(bob.sync)
     T.assertTrue(bob.sync.automaticController.stopped)
+    bob.left, bob.rosterBroken = false, true
+    bob.G.WakeGearSync(bob.sync)
+    T.assertTrue(bob.sync.automaticController.stopped)
+    bob.rosterBroken = false
+    bob.G.WakeGearSync(bob.sync)
+    T.assertFalse(bob.sync.automaticController.stopped)
+end)
+
+T.test("gear automatic work restarts on a verified guild switch wake", function()
+    local bus = guild()
+    bus:client("Alice")
+    local bob = bus:client("Bob")
+    assert(bob.G.LoginGearSync(bob.sync)); bus:advance(100)
+    local oldGuild = bob.sync.automaticGuild
+    T.assertEqual(oldGuild, "Guild:Silvermoon")
+
+    bob.guildName = "OtherGuild"
+    bob.G.WakeGearSync(bob.sync)
+    T.assertFalse(bob.sync.automaticController.stopped)
+    T.assertEqual(bob.sync.automaticGuild, nil)
+    T.assertEqual(bob.sync.automaticRemaining, nil)
+    T.assertEqual(bob.sync.automaticCursor, nil)
+
+    bus:advance(100)
+    T.assertFalse(bob.sync.automaticController.stopped)
+    T.assertEqual(bob.sync.automaticGuild, "OtherGuild:Silvermoon")
+    T.assertNotNil(bob.sync.automaticRemaining)
 end)
 
 T.test("busy gear response expires without sending a late snapshot", function()

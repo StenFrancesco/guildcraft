@@ -70,6 +70,17 @@ T.test("automatic completion and cancellation invalidate late callbacks", functi
     T.assertEqual(runs(), 1); T.assertFalse(c.pending)
 end)
 
+T.test("guild cancellation allows a fresh bounded automatic run after membership returns", function()
+    local G, _, c, advance, runs, done = fixture()
+    assert(G.StartAutomaticSync(c)); advance(300); T.assertEqual(runs(), 1)
+    c.recoveries = 2
+    G.StopAutomaticSync(c); done(true); advance(20000); T.assertEqual(runs(), 1)
+    assert(G.WakeAutomaticSync(c))
+    T.assertEqual(c.recoveries, 2)
+    advance(300); T.assertEqual(runs(), 2)
+    done(false); advance(20000); T.assertEqual(runs(), 2)
+end)
+
 T.test("city eligibility rejects inns unknown maps secret values and unavailable APIs", function()
     local G, api = fixture()
     T.assertTrue(G.IsAutomaticSyncMajorCity(api))

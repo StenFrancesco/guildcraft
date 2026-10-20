@@ -1,6 +1,11 @@
 local _, GGM = ...
 
 local MAX_TARGETS, MAX_IN_FLIGHT = 16, 4
+local function resetAutomaticGuild(sync)
+    sync.automaticGuild, sync.automaticRoster = nil, nil
+    sync.automaticRemaining, sync.automaticCursor = nil, nil
+end
+
 local function public(api, value)
     if type(api.issecretvalue) ~= "function" then return false end
     local ok, secret = pcall(api.issecretvalue, value)
@@ -158,17 +163,19 @@ function GGM.WakeGearSync(sync)
     local guildOK, inGuild = pcall(sync.api.IsInGuild)
     if guildOK and public(sync.api, inGuild) and inGuild == false then
         GGM.StopAutomaticSync(sync.automaticController)
-        sync.automaticRemaining = nil
+        resetAutomaticGuild(sync)
         return
     end
     local current = roster(sync)
     if current and sync.automaticGuild and current.guild ~= sync.automaticGuild then
         GGM.StopAutomaticSync(sync.automaticController)
-        sync.automaticRemaining = nil
+        resetAutomaticGuild(sync)
+        GGM.WakeAutomaticSync(sync.automaticController)
         return
     end
-    if not current and sync.automaticAttempt then
-        interrupt(sync)
+    if not current then
+        if sync.automaticAttempt then interrupt(sync) end
+        return
     end
     GGM.WakeAutomaticSync(sync.automaticController)
 end

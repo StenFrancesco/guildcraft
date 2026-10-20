@@ -36,6 +36,7 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 - Profession sharing uses protocol P4 (`GC_PROF4`). Participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
+- Leaving a guild or switching guilds cancels work for the previous guild. Once current membership and roster state are confirmed, a fresh bounded synchronization run is scheduled for the new guild.
 - The renamed addons use the SavedVariables globals shown above. Existing SavedVariables are not migrated to the new names, and this branch starts a fresh gear cache. Back up SavedVariables with the game closed if you need to keep existing data.
 
 ## Profession synchronization details
