@@ -643,6 +643,20 @@ T.test("real login retries missing item links and completes an earlier unanswere
     T.assertEqual(#bus.frames, frames)
 end)
 
+T.test("real login announces readiness when reconciliation errors after retaining a complete cache", function()
+    local bus = guild()
+    local owner, peer = bus:client("Owner"), bus:client("Peer")
+    assert(owner.G.CaptureAndStoreLocalPlayer(owner.api, owner.db))
+    owner.G.ReconcileAllGearSlots = function() return false, "gear-reconciliation-failed" end
+    local login = loadLoginBackend(bus, owner)
+    login("PLAYER_LOGIN")
+    bus:advance(10)
+
+    T.assertNotNil(owner.G.gearTracker)
+    T.assertEqual(owner.G.lastGearTrackingError, "gear-reconciliation-failed")
+    T.assertEqual(bus:count("GEAR_READY"), 1)
+end)
+
 T.test("real login exhaustion recovers through the owner request handler and retains stable tracking", function()
     local bus = guild()
     local owner, peer = bus:client("Owner"), bus:client("Peer")

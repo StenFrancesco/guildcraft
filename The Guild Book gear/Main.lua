@@ -174,9 +174,11 @@ local function retainGearTracker(tracker, err)
     GearMemory.lastGearTrackingError = err
     GearMemory.lastCaptureError = err
     GearMemory.trackingStartupExhausted = false
-    if tracker and not err then
-        GearMemory.lastGearTrackingError = nil
-        GearMemory.lastCaptureError = nil
+    if tracker then
+        if not err then
+            GearMemory.lastGearTrackingError = nil
+            GearMemory.lastCaptureError = nil
+        end
         maybeScheduleGearReady(false)
     end
     notifyDisplay(true)

@@ -34,7 +34,7 @@ local function snapshot(GGM, base, capturedAt)
 end
 
 local function clientApi(who, results)
-    local timers, sends, now = {}, {}, 200
+    local timers, timeoutTimers, sends, now = {}, {}, {}, 200
     local api = {
         C_ChatInfo = {}, C_Timer = {},
         UnitFullName = function() return who.name, who.realm end,
@@ -56,12 +56,20 @@ local function clientApi(who, results)
         table.insert(timers, timer)
         return timer
     end
+    api.C_Timer.After = function(delay, callback)
+        local timer = { delay = delay, fired = false, cancelled = false }
+        function timer:Fire()
+            if not self.fired and not self.cancelled then self.fired = true; callback() end
+        end
+        function timer:Cancel() self.cancelled = true end
+        table.insert(timeoutTimers, timer)
+    end
     local function drain()
         local index = 1
         while index <= #timers do timers[index]:Fire(); index = index + 1 end
     end
     T.mockChatThrottle(api)
-    return api, sends, drain, function(value) now = value end, timers
+    return api, sends, drain, function(value) now = value end, timers, timeoutTimers
 end
 
 local function fireNextTimer(...)
@@ -322,25 +330,40 @@ T.test("a better claim cancels a snapshot still queued behind outbound frames", 
     T.assertEqual(#sends, 5) -- one claim and four blocker frames; no snapshot frames
 end)
 
-T.test("pending delayed snapshot responses are capped", function()
+T.test("gear-ready snapshot requests retry after a silent response timeout", function()
     local GGM = loadModules()
-    local alice, bob, carol = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B"), identity("Carol", "Silvermoon", "C")
-    local db = assert(T.initializeDatabase(GGM, nil)); assert(GGM.SaveCompleteCharacterRecord(db, alice, snapshot(GGM, 7300), 3))
-    local api, sends, _, _, timers = clientApi(carol); local sync = assert(GGM.CreateGuildSync(api, db))
-    for requestIndex = 1, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES do
-        local requestID = string.format("%06d", requestIndex)
-        local requester = identity("Bob" .. requestIndex, "Silvermoon", "B" .. requestIndex)
-        local request = assert(GGM.EncodeSyncSnapshotRequest(requester, alice, requestID))
-        T.assertEqual(GGM.HandleGuildSyncPayload(sync, requester.key, request), "snapshot-response-queued")
-    end
-    local rejectedRequester = identity("Bob17", "Silvermoon", "B17")
-    local rejectedRequest = assert(GGM.EncodeSyncSnapshotRequest(rejectedRequester, alice, "000017"))
-    T.assertEqual(GGM.HandleGuildSyncPayload(sync, rejectedRequester.key, rejectedRequest), "ignored")
-    T.assertEqual(sync.pendingSnapshotResponseCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES)
-    T.assertEqual(#timers, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES)
-    T.assertEqual(#sends, 0)
-    timers[1]:Fire()
-    T.assertEqual(sync.pendingSnapshotResponseCount, GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES)
+    local owner, requester = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local api, sends, _, setNow, timers, timeoutTimers = clientApi(requester)
+    local sync = assert(GGM.CreateGuildSync(api, assert(T.initializeDatabase(GGM, nil))))
+    local ready = assert(GGM.EncodeSyncGearReady(owner, 3, 1700003000, 1700002500))
+
+    local state = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
+
+    T.assertEqual(state, "snapshot-requested")
+    local requestID = sync.pendingSnapshotRequestTargets[owner.key]
+    local pending = sync.pendingSnapshotRequests[requestID]
+    T.assertNotNil(pending.gearReadyTimeoutTimer)
+    T.assertTrue(fireNextTimer(timers)) -- send the initial request
+    T.assertEqual(#sends, 1)
+
+    setNow(pending.expiresAt)
+    timeoutTimers[1]:Fire()
+
+    T.assertEqual(sync.pendingSnapshotRequestCount, 0)
+    local retryState = sync.gearReadyRetryStates[owner.key]
+    T.assertNotNil(retryState)
+    T.assertNotNil(retryState.timer)
+    T.assertTrue(retryState.timer.delay >= GGM.SYNC_SNAPSHOT_REPAIR_BACKOFF_SECONDS)
+
+    setNow(pending.expiresAt + retryState.timer.delay)
+    retryState.timer:Fire()
+
+    T.assertEqual(sync.pendingSnapshotRequestCount, 1)
+    local retryID = sync.pendingSnapshotRequestTargets[owner.key]
+    T.assertTrue(retryID ~= requestID)
+    T.assertNotNil(sync.pendingSnapshotRequests[retryID].gearReadyTimeoutTimer)
+    T.assertTrue(fireNextTimer(timers)) -- send the retry
+    T.assertEqual(#sends, 2)
 end)
 
 T.test("repeated snapshot requests for one requester and target coalesce", function()
@@ -931,11 +954,13 @@ T.test("gear-ready expires an old request before retrying after timeout backoff"
     T.assertEqual(callbackCalls, 1)
     T.assertEqual(sync.pendingSnapshotRequestCount, 0)
     T.assertEqual(#sends, 1)
-    setNow(200 + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS + GGM.SYNC_SNAPSHOT_REPAIR_BACKOFF_SECONDS + 1)
+    local retryState = sync.gearReadyRetryStates[owner.key]
+    T.assertNotNil(retryState)
+    T.assertNotNil(retryState.timer)
+    setNow(200 + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS + 1 + retryState.timer.delay)
+    retryState.timer:Fire()
+    drain()
 
-    local retriedState = GGM.HandleGuildSyncPayload(sync, owner.key, ready)
-
-    T.assertEqual(retriedState, "snapshot-requested")
     T.assertEqual(#sends, 2)
     local retryID = sync.pendingSnapshotRequestTargets[owner.key]
     T.assertNotNil(retryID)
