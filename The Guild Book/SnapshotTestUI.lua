@@ -864,7 +864,7 @@ local function openSelectedProfessionContext(frame, skillLineID)
     local trade = frame.api and frame.api.C_TradeSkillUI
     if type(trade) ~= "table" or type(trade.OpenTradeSkill) ~= "function" then return false end
     local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
-    local frameWasShown = professionFrame ~= nil
+    local frameWasShown = false
     if professionFrame and type(professionFrame.IsShown) == "function" then
         local shownOK, wasShown = pcall(professionFrame.IsShown, professionFrame)
         frameWasShown = not shownOK or wasShown == true
