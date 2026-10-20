@@ -1224,7 +1224,9 @@ local function createProfessionsPage(api, frame)
     frame.professionStatus:SetJustifyH("LEFT")
     setTextColor(frame.professionStatus, THEME.textSoft)
 
-    frame.professionSyncButton = GGM.CreateFlatButton(api, panel, "Sync profession", 140, 27, "secondary")
+    frame.professionSyncButton = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    frame.professionSyncButton:SetSize(140, 27)
+    frame.professionSyncButton:SetText("Sync profession")
     frame.professionSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
     frame.professionSyncButton:SetScript("OnClick", function() GGM.SyncSelectedProfession(frame, true) end)
     frame.professionSyncStatus = createText(panel, "OVERLAY", "GameFontHighlightSmall")
@@ -1559,13 +1561,32 @@ end
 
 local function updateBrowserViewButtonStyles(frame)
     for _, button in ipairs({ frame.mineButton, frame.guildButton }) do
-        GGM.SetFlatButtonState(button, button.key == frame.browserView and "selected" or "idle")
+        local selected = button.key == frame.browserView
+        button.selected = selected
+        if selected then
+            if button.LockHighlight then button:LockHighlight() end
+        elseif button.UnlockHighlight then
+            button:UnlockHighlight()
+        end
     end
 end
 
 local function createBrowserViewButton(api, frame, key, label, x)
-    local button = GGM.CreateFlatButton(api, frame.searchPanel, label, UI.ownershipButtonWidth, UI.controlHeightCompact, "ghost")
+    local button = api.CreateFrame("Button", nil, frame.searchPanel, "UIPanelButtonTemplate")
+    button:SetSize(UI.ownershipButtonWidth, UI.controlHeightCompact)
     button:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", x, -62)
+    button.variant = "ghost"
+    button.label = button.Text
+    if not button.label then
+        button.label = createText(button, "OVERLAY", "GameFontNormalSmall")
+        button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+        local nativeSetText = button.SetText
+        button.SetText = function(self, value)
+            if nativeSetText then nativeSetText(self, value) end
+            self.label:SetText(value or "")
+        end
+    end
+    button:SetText(label)
     button.key = key
     button:SetScript("OnClick", function()
         frame.browserView = key
@@ -1890,7 +1911,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.listEmpty:Hide()
 
     frame.gearPanel = createGearPanel(api, frame)
-    frame.gearSyncButton = GGM.CreateFlatButton(api, frame.gearPanel, "Sync gear", 112, 27, "secondary")
+    frame.gearSyncButton = api.CreateFrame("Button", nil, frame.gearPanel, "UIPanelButtonTemplate")
+    frame.gearSyncButton:SetSize(112, 27)
+    frame.gearSyncButton:SetText("Sync gear")
     frame.gearSyncButton:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
     frame.gearSyncButton:SetScript("OnClick", function() GGM.SyncSelectedGear(frame) end)
     frame.gearSyncStatus = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
