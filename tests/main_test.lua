@@ -65,6 +65,7 @@ local function stubSnapshotUI(GGM, registerFn)
     GGM.RefreshProfessionSaveButton = GGM.RefreshProfessionSaveButton or function()
         return "hidden"
     end
+    GGM.TryAutoSaveProfession = GGM.TryAutoSaveProfession or function() return "ignored" end
     GGM.ClearProfessionSaveContext = GGM.ClearProfessionSaveContext or function() end
 end
 
@@ -387,9 +388,11 @@ T.test("guild chat routes message and sender only to profession provenance", fun
     end)
 end)
 
-T.test("trade skill show only refreshes the local profession save control", function()
+T.test("trade skill show refreshes and automatically saves the profession", function()
     local onEvent
     local refreshCount = 0
+    local autoSaveCount = 0
+    local scheduled
     local frame = {
         RegisterEvent = function() end,
         SetScript = function(_, _, handler) onEvent = handler end,
@@ -397,6 +400,7 @@ T.test("trade skill show only refreshes the local profession save control", func
 
     withGlobals({
         CreateFrame = function() return frame end,
+        C_Timer = { After = function(_, callback) scheduled = callback end },
         TheGuildBookDB = NIL,
     }, function()
         local GGM = {}
@@ -406,6 +410,11 @@ T.test("trade skill show only refreshes the local profession save control", func
         end
         GGM.CreateProfessionLinkSaveController = function() return {}, nil end
         GGM.RegisterProfessionLinkSaveController = function() return true, nil end
+        GGM.TryAutoSaveProfession = function(controller)
+            T.assertTrue(controller.panelOpen)
+            autoSaveCount = autoSaveCount + 1
+            return "saved"
+        end
         GGM.RefreshProfessionSaveButton = function()
             refreshCount = refreshCount + 1
             return "shown"
@@ -418,12 +427,17 @@ T.test("trade skill show only refreshes the local profession save control", func
         onEvent(frame, "TRADE_SKILL_SHOW")
 
         T.assertEqual(refreshCount, 1)
+        T.assertEqual(autoSaveCount, 0)
+        T.assertNotNil(scheduled)
+        scheduled()
+        T.assertEqual(autoSaveCount, 1)
     end)
 end)
 
 T.test("trade skill list update refreshes the local profession save control after linked data becomes ready", function()
     local onEvent
     local refreshCount = 0
+    local autoSaveCount = 0
     local frame = {
         RegisterEvent = function() end,
         SetScript = function(_, _, handler) onEvent = handler end,
@@ -440,6 +454,11 @@ T.test("trade skill list update refreshes the local profession save control afte
         end
         GGM.CreateProfessionLinkSaveController = function() return {}, nil end
         GGM.RegisterProfessionLinkSaveController = function() return true, nil end
+        GGM.TryAutoSaveProfession = function(controller)
+            T.assertTrue(controller.panelOpen)
+            autoSaveCount = autoSaveCount + 1
+            return "saved"
+        end
         GGM.RefreshProfessionSaveButton = function()
             refreshCount = refreshCount + 1
             return "shown"
@@ -449,9 +468,11 @@ T.test("trade skill list update refreshes the local profession save control afte
 
         T.loadAddonFile("The Guild Book/Main.lua", GGM)
         onEvent(frame, "ADDON_LOADED", "The Guild Book")
+        GGM.professionLinkSave.panelOpen = true
         onEvent(frame, "TRADE_SKILL_LIST_UPDATE")
 
         T.assertEqual(refreshCount, 1)
+        T.assertEqual(autoSaveCount, 1)
     end)
 end)
 
