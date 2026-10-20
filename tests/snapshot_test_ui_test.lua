@@ -617,6 +617,26 @@ T.test("profession sync UI is silent while hidden and offers selected automatic 
     T.assertEqual(calls[3].reason, "manual")
 end)
 
+T.test("profession sync button uses the retained manual request path", function()
+    local G = loadUI()
+    local calls = {}
+    G.professionSync = {}
+    G.RequestProfessionSync = function() return false, "profession-sync-busy" end
+    G.RequestProfessionSyncFromButton = function(sync, pid)
+        T.assertEqual(sync, G.professionSync)
+        calls[#calls + 1] = pid
+        return true
+    end
+    G.GetProfessionSyncStatus = function() return "Sync queued: waiting for current comparison" end
+    local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    G.SelectProfession(frame, "Blacksmithing")
+    frame.professionSyncButton.scripts.OnClick(frame.professionSyncButton)
+    T.assertEqual(#calls, 1)
+    T.assertEqual(calls[1], 164)
+    T.assertEqual(frame.professionSyncStatus:GetText(), "Sync queued: waiting for current comparison")
+end)
+
 T.test("profession sync status has an opaque backing and readable text contrast", function()
     local G = loadUI()
     local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
