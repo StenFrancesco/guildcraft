@@ -1,4 +1,5 @@
 local _, GGM = ...
+local resolveCharacterKey
 
 local function isPositiveInteger(value, maximum)
     return type(value) == "number" and value > 0 and value <= maximum and value == math.floor(value)
@@ -86,7 +87,7 @@ local function readConfirmedSequence(record)
 end
 
 local function identitiesCompatible(left, right)
-    if left.key ~= right.key or left.name ~= right.name or left.realm ~= right.realm then
+    if left.name ~= right.name or left.realm:gsub("%s", ""):lower() ~= right.realm:gsub("%s", ""):lower() then
         return false
     end
 
@@ -117,6 +118,7 @@ function GGM.UpdateLocalCharacterModelIdentity(db, identity)
     end
 
     local updatedIdentity = copyIdentity(identity)
+    updatedIdentity.key, updatedIdentity.name, updatedIdentity.realm = record.identity.key, record.identity.name, record.identity.realm
     local previousIdentity = copyIdentity(record.identity)
     if updatedIdentity.raceID == nil then
         if previousIdentity.raceID ~= nil then
@@ -228,6 +230,16 @@ function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequen
         return false, identityErr
     end
 
+    local resolvedKey, resolveErr = resolveCharacterKey(db, identity.key)
+    if not resolvedKey then return false, resolveErr end
+    if resolvedKey ~= identity.key then
+        local existing, existingErr = GGM.GetCharacterRecord(db, resolvedKey)
+        if not existing then return false, existingErr end
+        if not identitiesCompatible(existing.identity, identity) then return false, "identity-mismatch" end
+        identity = copyIdentity(identity)
+        identity.key, identity.name, identity.realm = existing.identity.key, existing.identity.name, existing.identity.realm
+    end
+
     local compactGear, compactErr = GGM.CreateStoredGear(snapshot)
     if not compactGear then return false, compactErr end
 
@@ -259,6 +271,26 @@ function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequen
     return true, nil
 end
 
+-- Preserve existing saved keys while accepting the realm spellings used by
+-- UnitFullName and addon transport. Ambiguous aliases are never merged.
+resolveCharacterKey = function(db, characterKey)
+    if db.characters[characterKey] ~= nil or type(characterKey) ~= "string" then return characterKey end
+    local name, realm = characterKey:match("^([^-]+)%-(.+)$")
+    if not name then return characterKey end
+    realm = realm:gsub("%s", ""):lower()
+    local found
+    for key in pairs(db.characters) do
+        if type(key) == "string" then
+            local otherName, otherRealm = key:match("^([^-]+)%-(.+)$")
+            if otherName == name and otherRealm:gsub("%s", ""):lower() == realm then
+                if found then return nil, "identity-alias-ambiguous" end
+                found = key
+            end
+        end
+    end
+    return found or characterKey
+end
+
 function GGM.GetCompleteCharacterRecord(db, characterKey)
     if type(db) ~= "table" or type(db.characters) ~= "table" then
         return nil, "database-invalid"
@@ -268,6 +300,9 @@ function GGM.GetCompleteCharacterRecord(db, characterKey)
         return nil, "unsupported-schema-version:" .. tostring(db.schemaVersion)
     end
 
+    local resolvedKey, resolveErr = resolveCharacterKey(db, characterKey)
+    if not resolvedKey then return nil, resolveErr end
+    characterKey = resolvedKey
     local record = db.characters[characterKey]
     if type(record) ~= "table" or record.complete ~= true then
         return nil, "record-missing"
@@ -300,6 +335,9 @@ function GGM.GetCharacterRecord(db, characterKey)
     if db.schemaVersion ~= GGM.SCHEMA_VERSION then
         return nil, "unsupported-schema-version:" .. tostring(db.schemaVersion)
     end
+    local resolvedKey, resolveErr = resolveCharacterKey(db, characterKey)
+    if not resolvedKey then return nil, resolveErr end
+    characterKey = resolvedKey
     local record = db.characters[characterKey]
     if type(record) ~= "table" then return nil, "record-missing" end
     local identityValid, identityErr = validateIdentity(record.identity)
@@ -317,6 +355,10 @@ function GGM.GetCharacterRecord(db, characterKey)
 
     if record.refreshNeeded == true then
         if record.incompleteReason ~= "sequence-gap" then return nil, "record-incomplete-invalid" end
+        if record.requiredBaselineObservedAt ~= nil
+            and not isIntegerInRange(record.requiredBaselineObservedAt, 0, GGM.SYNC_MAX_TIMESTAMP) then
+            return nil, "record-incomplete-invalid"
+        end
         local confirmedSequence = readConfirmedSequence(record)
         if not isIntegerInRange(record.requiredBaselineSequence, 0, GGM.SYNC_MAX_CONFIRMED_SEQUENCE)
             or record.requiredBaselineSequence <= confirmedSequence then
@@ -358,7 +400,10 @@ function GGM.UpdateConfirmedCharacterSlot(db, characterKey, slotKey, slotValue, 
 
     local stored, storeErr = GGM.SetStoredGearSlot(record.gear, slotKey, slotValue)
     if not stored then return false, storeErr end
-    record.gear.capturedAt = confirmedAt
+    local observationTimes = GGM.CopyGearObservationTimes(record.gear)
+    observationTimes[GGM.FindTrackedSlot(slotKey).inventorySlotID] = confirmedAt
+    record.gear.slotObservedAt = observationTimes
+    record.gear.capturedAt = math.max(record.gear.capturedAt, confirmedAt)
     local nextSequence = sequence + 1
     record.confirmedSequence = nextSequence
 
@@ -393,19 +438,22 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
         return false, sequenceErr
     end
 
+    local floor = GGM.GetGearObservationFloor(record.gear)
+    -- A complete observation covers earlier owner messages even when their
+    -- sequence was unknown at inspection time. Learn ordering, keep the gear.
+    if record.complete == true and confirmedAt <= floor then
+        record.confirmedSequence = math.max(existingSequence, confirmedSequence)
+        return true, nil
+    end
     if record.refreshNeeded == true then
-        if confirmedSequence < existingSequence then return false, "confirmed-sequence-regression" end
         if confirmedSequence > record.requiredBaselineSequence then
             record.requiredBaselineSequence = confirmedSequence
+            record.requiredBaselineObservedAt = math.max(record.requiredBaselineObservedAt or 0, confirmedAt)
             return false, "confirmed-sequence-gap-advanced"
         end
         return false, "confirmed-sequence-gap"
     end
     if record.complete ~= true then return false, "record-missing" end
-
-    if confirmedSequence < existingSequence then
-        return false, "confirmed-sequence-regression"
-    end
 
     if confirmedSequence > existingSequence + 1 then
         record.complete = false
@@ -413,16 +461,86 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
         record.refreshNeeded = true
         record.incompleteReason = "sequence-gap"
         record.requiredBaselineSequence = confirmedSequence
+        record.requiredBaselineObservedAt = confirmedAt
         record.gear.complete = false
         return false, "confirmed-sequence-gap"
     end
 
-    local stored, storeErr = GGM.SetStoredGearSlot(record.gear, slotKey, slotValue)
-    if not stored then return false, storeErr end
-    record.gear.capturedAt = confirmedAt
-    record.confirmedSequence = confirmedSequence
-
+    local slotID = GGM.FindTrackedSlot(slotKey).inventorySlotID
+    local observedAt = GGM.GetGearSlotObservedAt(record.gear, slotID)
+    if confirmedAt > observedAt then
+        local observationTimes = GGM.CopyGearObservationTimes(record.gear)
+        local stored, storeErr = GGM.SetStoredGearSlot(record.gear, slotKey, slotValue)
+        if not stored then return false, storeErr end
+        observationTimes[slotID] = confirmedAt
+        record.gear.slotObservedAt = observationTimes
+        record.gear.capturedAt = math.max(record.gear.capturedAt, confirmedAt)
+    end
+    record.confirmedSequence = math.max(existingSequence, confirmedSequence)
     return true, nil
+end
+
+local function mergeCompleteObservation(db, identity, snapshot, confirmedSequence, direct)
+    local candidate, candidateErr = GGM.CreateStoredGear(snapshot)
+    if not candidate then return false, candidateErr end
+    local resolvedKey, resolveErr = resolveCharacterKey(db, identity.key)
+    if not resolvedKey then return false, resolveErr end
+    local previous = db.characters[resolvedKey]
+    if previous == nil then
+        return GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequence or 0)
+    end
+    local existing, existingErr = GGM.GetCharacterRecord(db, identity.key)
+    if not existing then return false, existingErr end
+    if not identitiesCompatible(existing.identity, identity) then return false, "identity-mismatch" end
+    if resolvedKey ~= identity.key then
+        identity = copyIdentity(identity)
+        identity.key, identity.name, identity.realm = existing.identity.key, existing.identity.name, existing.identity.realm
+    end
+    local knownSequence = GGM.GetConfirmedSequence(existing)
+    local incomingSequence = confirmedSequence or knownSequence
+    if existing.refreshNeeded == true then
+        local coveredByTime = (direct and existing.requiredBaselineObservedAt == nil)
+            or (existing.requiredBaselineObservedAt ~= nil
+                and GGM.GetGearObservationFloor(candidate) >= existing.requiredBaselineObservedAt)
+        if not coveredByTime and incomingSequence < existing.requiredBaselineSequence then
+            return false, "confirmed-sequence-before-required-baseline"
+        end
+        knownSequence = math.max(knownSequence, existing.requiredBaselineSequence)
+    end
+    local candidateTimes = GGM.CopyGearObservationTimes(candidate)
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        local slotID = slot.inventorySlotID
+        local oldAt = GGM.GetGearSlotObservedAt(existing.gear, slotID)
+        local newAt = candidateTimes[slotID]
+        if oldAt > newAt or (oldAt == newAt and not direct) then
+            candidate.slots[slotID] = existing.gear.slots[slotID]
+            candidate.unavailableSlots[slotID] = existing.gear.unavailableSlots[slotID]
+            candidateTimes[slotID] = oldAt
+        end
+    end
+    candidate.slotObservedAt = candidateTimes
+    candidate.capturedAt = math.max(candidate.capturedAt, existing.gear.capturedAt)
+    local valid, validateErr = GGM.ValidateStoredGear(candidate, true)
+    if not valid then return false, validateErr end
+    db.characters[identity.key] = {
+        complete = true,
+        identity = copyIdentity(identity),
+        gear = candidate,
+        confirmedSequence = math.max(knownSequence, incomingSequence),
+    }
+    -- Inspection APIs may omit optional model information available in cache.
+    if direct and db.characters[identity.key].identity.raceID == nil then
+        copyModelIdentity(existing.identity, db.characters[identity.key].identity)
+    end
+    return true, nil
+end
+
+function GGM.SaveObservedCharacterRecord(db, identity, snapshot)
+    if type(db) ~= "table" or type(db.characters) ~= "table" then return false, "database-invalid" end
+    if db.schemaVersion ~= GGM.SCHEMA_VERSION then return false, "unsupported-schema-version:" .. tostring(db.schemaVersion) end
+    local valid, err = validateIdentity(identity)
+    if not valid then return false, err end
+    return mergeCompleteObservation(db, identity, snapshot, nil, true)
 end
 
 function GGM.SaveReceivedCompleteCharacterRecord(db, identity, snapshot, confirmedSequence)
@@ -448,31 +566,5 @@ function GGM.SaveReceivedCompleteCharacterRecord(db, identity, snapshot, confirm
         return false, "confirmed-sequence-invalid"
     end
 
-    local existing = db.characters[identity.key]
-    if type(existing) == "table" then
-        local existingRecord, existingErr = GGM.GetCharacterRecord(db, identity.key)
-        if not existingRecord then
-            return false, existingErr
-        end
-
-        if not identitiesCompatible(existingRecord.identity, identity) then
-            return false, "identity-mismatch"
-        end
-
-        local existingSequence, sequenceErr = readConfirmedSequence(existingRecord)
-        if existingSequence == nil then
-            return false, sequenceErr
-        end
-
-        if existingRecord.refreshNeeded == true
-            and confirmedSequence < existingRecord.requiredBaselineSequence then
-            return false, "confirmed-sequence-before-required-baseline"
-        end
-
-        if confirmedSequence < existingSequence then
-            return false, "confirmed-sequence-regression"
-        end
-    end
-
-    return GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequence)
+    return mergeCompleteObservation(db, identity, snapshot, confirmedSequence, false)
 end

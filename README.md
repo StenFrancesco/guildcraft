@@ -40,8 +40,22 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 
 ## Gear synchronization
 
+Inspecting a guild member automatically saves their equipment after the inspection
+finishes and refreshes the Characters page. The member does not need the addon.
+Incomplete or cancelled inspections leave existing saved gear intact.
+
+Inspection snapshots and owner snapshots use the same gear cache and can be
+shared through **Sync gear**. Each slot retains the server time when it was
+observed, including empty slots, so delayed updates and older cached snapshots
+cannot overwrite newer observations. Receiving or forwarding a snapshot keeps
+its original times. Conflicting network observations within the same server
+second retain the saved slot; a direct inspection can replace it.
+
+Gear sharing uses protocol 6 and requires matching addon versions among peers.
+Existing gear caches remain readable. Update all three addon folders together.
+
 On the Characters page, select a saved character and click **Sync gear** to
-request the newest confirmed snapshot available from responding online guild
+request the freshest complete snapshot available from responding online guild
 addon users. The character can be offline if another participant has their
 snapshot cached. The panel keeps its saved equipment visible while waiting and
 shows completion, failure, or timeout feedback. A successful manual refresh has
@@ -51,8 +65,9 @@ uses the same request path.
 A valid owner gear update automatically requests a complete baseline when the
 character is missing or a missed update leaves a sequence gap. Requests coalesce
 per character, and repeated failed repairs back off. A newer confirmed baseline
-can be repaired during the normal cooldown after a short backoff. Older cached
-snapshots cannot replace the sequence required by the observed owner update.
+can be repaired during the normal cooldown after a short backoff. A complete observation taken after a missed update can repair the baseline even
+when the observer does not know the owner’s update number. Older observations
+cannot replace newer saved slots.
 Committed changes refresh the visible character panel; opening the browser or
 selecting a character does not send gear requests. Gear synchronization requires
 guild membership and compatible participating copies of The Guild Book gear.
@@ -154,6 +169,6 @@ In this workspace, the bundled runtime can be used with `./tools/lua/lua.exe tes
 
 Status checked 14 October 2026. GitHub currently marks all three open PRs as drafts, so none is marked ready for merge.
 
-- [#52 Synchronize guild profession caches through bounded whispers](https://github.com/StenFrancesco/guildcraft/pull/52) — Draft; GitHub reports it as mergeable. Live in-game delivery and throttling checks are still outstanding.
-- [#51 Store recipe crafters by GUID instead of local IDs](https://github.com/StenFrancesco/guildcraft/pull/51) — Draft; depends on #50 and is based on its rename branch. Retarget it after #50 is integrated.
-- [#50 Rename Guild Gear Memory addons to The Guild Book](https://github.com/StenFrancesco/guildcraft/pull/50) — Draft; GitHub currently reports a merge conflict. Its description reports static checks only; tests and packaging were not run.
+- [#52 Synchronize guild profession caches through bounded whispers](https://github.com/StenFrancesco/guildcraft/pull/52) â€” Draft; GitHub reports it as mergeable. Live in-game delivery and throttling checks are still outstanding.
+- [#51 Store recipe crafters by GUID instead of local IDs](https://github.com/StenFrancesco/guildcraft/pull/51) â€” Draft; depends on #50 and is based on its rename branch. Retarget it after #50 is integrated.
+- [#50 Rename Guild Gear Memory addons to The Guild Book](https://github.com/StenFrancesco/guildcraft/pull/50) â€” Draft; GitHub currently reports a merge conflict. Its description reports static checks only; tests and packaging were not run.

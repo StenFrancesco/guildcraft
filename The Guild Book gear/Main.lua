@@ -2,7 +2,7 @@ local ADDON_NAME, GearMemory = ...
 local api = _G
 
 local frame = CreateFrame("Frame")
-for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "CHAT_MSG_ADDON" }) do
+for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANGED", "CHAT_MSG_ADDON", "INSPECT_READY" }) do
     frame:RegisterEvent(event)
 end
 
@@ -45,11 +45,26 @@ frame:SetScript("OnEvent", function(_, event, ...)
             else syncErr = registerErr end
         end
         GearMemory.lastSyncError = syncErr
+        if type(GearMemory.InstallInspectGearCapture) == "function" then
+            local inspectCapture, inspectErr = GearMemory.InstallInspectGearCapture(api, database, function()
+                notifyDisplay(true)
+            end)
+            GearMemory.inspectGearCapture = inspectCapture
+            GearMemory.lastInspectCaptureError = inspectErr
+        end
         notifyDisplay()
         return
     end
 
     if not GearMemory.db or GearMemory.startupError then return end
+
+    if event == "INSPECT_READY" then
+        if type(GearMemory.HandleInspectGearReady) ~= "function" or not GearMemory.inspectGearCapture then return end
+        local _, inspectErr = GearMemory.HandleInspectGearReady(GearMemory.inspectGearCapture, arg1)
+        if inspectErr then GearMemory.lastInspectCaptureError = inspectErr
+        else GearMemory.lastInspectCaptureError = nil end
+        return
+    end
 
     if event == "PLAYER_LOGIN" then
         if GearMemory.gearTracker or GearMemory.trackingStartupScheduled then return end

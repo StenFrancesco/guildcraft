@@ -283,6 +283,8 @@ T.test("GC_GEAR manual refresh after cooldown receives the newest peer snapshot"
     alice.drop = true
     bus:advance(bob.G.SYNC_SNAPSHOT_REQUEST_COOLDOWN_SECONDS)
     baseline.slots.HEAD = { inventorySlotID = 1, itemID = 9898, itemLink = "|Hitem:9898|h[New]|h" }
+    baseline.capturedAt = carol.api.GetServerTime()
+    baseline.slotObservedAt = nil
     assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 2))
     assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
     bus:advance(15)
@@ -304,4 +306,82 @@ T.test("GC_GEAR chooses the newest available offline cache and sends one complet
     T.assertEqual(bob.db.characters[alice.identity.key].confirmedSequence, 3)
     T.assertEqual(bob.db.characters[alice.identity.key].gear.slots[1], "item:9654")
     T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+T.test("GC_GEAR selects a newer inspection over a higher owner sequence and shares it normally", function()
+    local bus = guild()
+    local alice, bob, carol, dave = bus:client("Alice"), bus:client("Bob"), bus:client("Carol"), bus:client("Dave")
+    alice:startTracking()
+    alice.drop = true
+    local old = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, alice.db.characters[alice.identity.key].gear))
+    assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, old, 40))
+    assert(bob.G.SaveCompleteCharacterRecord(bob.db, alice.identity, old, 40))
+    bus:advance(10)
+    local fresh = assert(alice.G.CapturePlayerGearSnapshot(alice.api))
+    fresh.slots.HEAD = { inventorySlotID = 1, itemID = 9876, itemLink = "|Hitem:9876|h[Inspected]|h" }
+    assert(dave.G.SaveObservedCharacterRecord(dave.db, alice.identity, fresh))
+    T.assertEqual(dave.db.characters[alice.identity.key].confirmedSequence, 0)
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(30)
+    T.assertEqual(bob.db.characters[alice.identity.key].gear.slots[1], "item:9876")
+    T.assertEqual(bob.db.characters[alice.identity.key].gear.capturedAt, fresh.capturedAt)
+    T.assertEqual(bob.db.characters[alice.identity.key].confirmedSequence, 40)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+T.test("GC_GEAR fresh inspection permits a response during an older snapshot cooldown", function()
+    local bus = guild()
+    local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    alice:startTracking(); alice.drop = true
+    local baseline = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, alice.db.characters[alice.identity.key].gear))
+    assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 0))
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(15)
+    local fresh = assert(alice.G.CapturePlayerGearSnapshot(alice.api))
+    fresh.slots.HEAD = { inventorySlotID = 1, itemID = 9123, itemLink = "|Hitem:9123|h[Inspect]|h" }
+    assert(carol.G.SaveObservedCharacterRecord(carol.db, alice.identity, fresh))
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity, 1, fresh.capturedAt))
+    bus:advance(20)
+    T.assertEqual(bob.db.characters[alice.identity.key].gear.slots[1], "item:9123")
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 2)
+end)
+
+T.test("GC_GEAR a later owner observation remains eligible after a complete inspection", function()
+    local bus = guild()
+    local alice, bob, carol, dave = bus:client("Alice"), bus:client("Bob"), bus:client("Carol"), bus:client("Dave")
+    alice:startTracking(); alice.drop = true
+    local old = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, alice.db.characters[alice.identity.key].gear))
+    assert(dave.G.SaveCompleteCharacterRecord(dave.db, alice.identity, old, 0))
+    bus:advance(10)
+    local inspected = assert(alice.G.CapturePlayerGearSnapshot(alice.api))
+    assert(carol.G.SaveObservedCharacterRecord(carol.db, alice.identity, inspected))
+    bus:advance(10)
+    assert(dave.G.ApplyReceivedCharacterSlot(dave.db, alice.identity.key, "HEAD",
+        { inventorySlotID = 1, itemID = 9991, itemLink = "|Hitem:9991|h[Later]|h" }, dave.api.GetServerTime(), 1))
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(30)
+    T.assertEqual(bob.db.characters[alice.identity.key].gear.slots[1], "item:9991")
+end)
+
+T.test("GC_GEAR shares and updates an inspected character using a realm spelling alias", function()
+    local bus = guild()
+    local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    alice:startTracking(); alice.drop = true
+    local baseline = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, alice.db.characters[alice.identity.key].gear))
+    assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 0))
+    local alias = { key = "Alice-Silver moon", name = "Alice", realm = "Silver moon", guid = alice.identity.guid }
+    assert(bob.G.SaveObservedCharacterRecord(bob.db, alias, baseline))
+    bus:advance(10)
+    baseline.capturedAt = carol.api.GetServerTime()
+    baseline.slotObservedAt = nil
+    baseline.slots.HEAD = { inventorySlotID = 1, itemID = 9912, itemLink = "|Hitem:9912|h[New]|h" }
+    assert(carol.G.SaveObservedCharacterRecord(carol.db, alice.identity, baseline))
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alias))
+    bus:advance(30)
+    T.assertEqual(bob.db.characters[alias.key].gear.slots[1], "item:9912")
+    T.assertNil(bob.db.characters[alice.identity.key])
+    local update = assert(bob.G.EncodeSyncSlotUpdate(alice.identity, 1, "HEAD",
+        { inventorySlotID = 1, itemID = 9913, itemLink = "|Hitem:9913|h[Later]|h" }, bob.api.GetServerTime()))
+    T.assertEqual(bob.G.HandleGuildSyncPayload(bob.sync, alice.identity.key, update), "slot-applied")
+    T.assertEqual(bob.db.characters[alias.key].gear.slots[1], "item:9913")
 end)

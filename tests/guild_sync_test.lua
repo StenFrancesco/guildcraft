@@ -311,7 +311,7 @@ T.test("a better claim cancels a snapshot still queued behind outbound frames", 
     T.assertEqual(sync.pendingSnapshotResponseCount, 1)
     T.assertEqual(#sync.transport.outboundFrames, 4 + fullFrameCount)
 
-    local betterClaim = assert(GGM.EncodeSyncSnapshotResponseClaim(alice, bob, dave, 4, "000001"))
+    local betterClaim = assert(GGM.EncodeSyncSnapshotResponseClaim(alice, bob, dave, 4, "000001", 1700002000))
     T.assertEqual(GGM.HandleGuildSyncPayload(sync, dave.key, betterClaim), "snapshot-response-claim-accepted")
     T.assertEqual(sync.pendingSnapshotResponseCount, 0)
     T.assertEqual(#sync.transport.outboundFrames, 4)
@@ -465,7 +465,7 @@ T.test("received local snapshot refreshes the active gear tracker baseline", fun
     assert(GGM.RequestCompleteSnapshot(sync, alice))
     local request = assert(GGM.DecodeSyncMessage(sends[1].message:match("^F1|%d%d%d%d%d%d|%d%d|%d%d|(.*)$")))
     sync.pendingSnapshotRequests[request.requestID].selectedResponderKey = carol.key
-    local payload = assert(GGM.EncodeSyncSnapshotResponse(alice, alice, carol, snapshot(GGM, 9000), 5, request.requestID))
+    local payload = assert(GGM.EncodeSyncSnapshotResponse(alice, alice, carol, snapshot(GGM, 9000, 1700002500), 5, request.requestID))
 
     local state, err = GGM.HandleGuildSyncPayload(sync, carol.key, payload)
 
@@ -504,12 +504,12 @@ T.test("stale snapshot response remains pending for a later better response", fu
     local api, sends, drain = clientApi(bob); local sync = assert(GGM.CreateGuildSync(api, db))
     assert(GGM.RequestCompleteSnapshot(sync, alice)); drain()
     local request = assert(GGM.DecodeSyncMessage(sends[1].message:match("^F1|%d%d%d%d%d%d|%d%d|%d%d|(.*)$")))
-    local claim = assert(GGM.EncodeSyncSnapshotResponseClaim(alice, bob, carol, 10, request.requestID))
+    local claim = assert(GGM.EncodeSyncSnapshotResponseClaim(alice, bob, carol, 10, request.requestID, 1700002000))
     T.assertEqual(GGM.HandleGuildSyncPayload(sync, carol.key, claim), "snapshot-response-claim-recorded")
-    local stale = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 9000), 8, request.requestID))
+    local stale = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 9000, 1700001000), 8, request.requestID))
     T.assertEqual(GGM.HandleGuildSyncPayload(sync, carol.key, stale), "ignored")
     T.assertEqual(sync.pendingSnapshotRequestCount, 1)
-    local better = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 9100), 10, request.requestID))
+    local better = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 9100, 1700003000), 10, request.requestID))
     T.assertEqual(GGM.HandleGuildSyncPayload(sync, carol.key, better), "snapshot-saved")
     T.assertEqual(sync.pendingSnapshotRequestCount, 0)
     T.assertEqual(db.characters[alice.key].confirmedSequence, 10)
@@ -583,7 +583,7 @@ T.test("confirmed publication uses the persisted sequence and slot", function()
     T.assertTrue(ok); T.assertNil(err); drain(); T.assertTrue(#sends > 0)
 end)
 
-T.test("confirmed publication reconstructs protocol five slot data from compact storage", function()
+T.test("confirmed publication reconstructs protocol six slot data from compact storage", function()
     local GGM = loadModules()
     local alice = identity("Alice", "Silvermoon", "A")
     local db = assert(T.initializeDatabase(GGM, nil))

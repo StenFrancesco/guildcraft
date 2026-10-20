@@ -1444,7 +1444,7 @@ T.test("received empty and unavailable updates persist compact slot states", fun
     T.assertEqual(record.gear.capturedAt, 1700000420)
 end)
 
-T.test("received slot update rejects a sequence regression without mutation", function()
+T.test("newer slot observation applies without moving known owner sequence backwards", function()
     local GGM = loadModules()
     local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
@@ -1459,12 +1459,12 @@ T.test("received slot update rejects a sequence regression without mutation", fu
         7
     )
 
-    T.assertFalse(ok)
-    T.assertEqual(err, "confirmed-sequence-regression")
+    T.assertTrue(ok)
+    T.assertNil(err)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
-    T.assertEqual(record.gear.slots[1], "item:2001")
+    T.assertEqual(record.gear.slots[1], "item:9300")
     T.assertEqual(record.confirmedSequence, 8)
-    T.assertEqual(record.gear.capturedAt, 1700000000)
+    T.assertEqual(record.gear.capturedAt, 1700000800)
 end)
 
 T.test("sequence gaps preserve values but require a full baseline before becoming complete", function()
@@ -1514,7 +1514,7 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
     end
 
     local baseline = makeSnapshot(GGM)
-    baseline.capturedAt = 1700001000
+    baseline.capturedAt = 1700000901
     for _, belowRequiredSequence in ipairs({ 6, 7 }) do
         baseline.slots.HEAD.itemID = 3000 + belowRequiredSequence
         baseline.slots.HEAD.itemLink = "|Hitem:" .. (3000 + belowRequiredSequence) .. "|h[Too Old]|h"
@@ -1527,6 +1527,7 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
         T.assertEqual(stillStale.confirmedSequence, 4)
         T.assertEqual(stillStale.gear.slots[1], "item:2001")
     end
+    baseline.capturedAt = 1700001000
     baseline.slots.HEAD.itemID = 3008
     baseline.slots.HEAD.itemLink = "|Hitem:3008|h[Repair At Required Sequence]|h"
     T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, identity, baseline, 8))
@@ -1590,7 +1591,7 @@ T.test("received slot update rejects a mismatched inventory slot id without muta
     T.assertEqual(record.confirmedSequence, 0)
 end)
 
-T.test("received complete snapshot cannot move confirmed sequence backwards", function()
+T.test("newer complete observation preserves known owner sequence even with a lower incoming sequence", function()
     local GGM = loadModules()
     local db = assert(T.initializeDatabase(GGM, nil))
     local identity = makeIdentity()
@@ -1604,11 +1605,11 @@ T.test("received complete snapshot cannot move confirmed sequence backwards", fu
 
     local ok, err = GGM.SaveReceivedCompleteCharacterRecord(db, identity, older, 7)
 
-    T.assertFalse(ok)
-    T.assertEqual(err, "confirmed-sequence-regression")
+    T.assertTrue(ok)
+    T.assertNil(err)
     local record = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
     T.assertEqual(record.confirmedSequence, 8)
-    T.assertEqual(record.gear.slots[1], "item:2001")
+    T.assertEqual(record.gear.slots[1], "item:9999")
 end)
 
 T.test("received complete snapshot may replace at equal or higher sequence", function()
