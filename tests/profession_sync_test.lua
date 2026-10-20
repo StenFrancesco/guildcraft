@@ -700,6 +700,24 @@ T.test("login discovery collects replies for 27 seconds", function()
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
 end)
 
+T.test("unselected login responder reservations expire after discovery", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    T.assertTrue(a.G.RequestProfessionSync(a.sync, 164, "login"))
+    bus:advance(0)
+    local reservation = b.sync.active
+    T.assertNotNil(reservation, "the responder reserves its slot while collecting login claims")
+    T.assertEqual(reservation.reason, "login")
+
+    -- The initiator no longer receives the responder's claim, so it cannot
+    -- select this peer or send S to release it explicitly.
+    a.drop = true
+    bus:advance(29)
+    T.assertNil(b.sync.active, "an unselected login reservation must not block peers for the 300-second TTL")
+    T.assertNil(b.sync.sessions[reservation.initiator .. ":" .. reservation.id])
+end)
+
 T.test("manual button still exchanges records within two seconds", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")

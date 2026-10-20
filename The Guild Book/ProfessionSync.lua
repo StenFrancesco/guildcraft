@@ -266,6 +266,18 @@ local function createSession(sync, initiator, id, professionID, digest, reason, 
         end
         sync.sessions[sessionKey(initiator, id)] = nil
     end) then failed(sync, "profession-sync-timer-unavailable"); return nil end
+    if reason == "login" and initiator ~= sync.selfKey then
+        -- Keep the responder reserved through the login election, then release
+        -- it if no selection arrived. Selected exchanges retain the normal TTL.
+        if not timer(sync, LOGIN_ELECTION_SECONDS + 1, function()
+            if not session.finished and not session.selected then
+                session.finished = true
+                if sync.active == session then sync.active = nil end
+                sync.sessions[sessionKey(initiator, id)] = nil
+                timer(sync, 0.5, function() drainPending(sync) end)
+            end
+        end) then failed(sync, "profession-sync-timer-unavailable"); return nil end
+    end
     return session
 end
 
