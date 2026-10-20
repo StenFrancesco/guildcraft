@@ -188,12 +188,13 @@ function GGM.BuildGuildGearBrowserDetail(record, api)
         local icon = slotTexture
         if itemID then icon = getItemIcon(api, itemID) or slotTexture end
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
-        local displayName = slotDisplayNames[trackedSlot.key]
+        local displayName = itemLink and itemLink:match("|h%[(.-)%]|h") or slotDisplayNames[trackedSlot.key]
         table.insert(slots, {
             key = trackedSlot.key,
             inventorySlotID = state.inventorySlotID,
             itemID = itemID,
             itemLink = itemLink,
+            itemString = state.itemString,
             empty = empty,
             unavailable = unavailable,
             valueText = unavailable and "No data" or nil,
@@ -738,6 +739,8 @@ local function renderBrowserDetail(frame, entry, api)
             if not slot.empty and not slot.unavailable then button.glow:Show() else button.glow:Hide() end
         end
         button.label:SetText(slot.displayName)
+        button.label:SetHeight(slot.itemID and 32 or 14)
+        button.pendingItemString = slot.itemID and slot.displayName == "Item " .. tostring(slot.itemID) and slot.itemString or nil
         setText(button.status, slot.statusText)
         button.empty = slot.empty
         button.unavailable = slot.unavailable
@@ -1495,6 +1498,8 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
 
     button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
     button.label:SetText(slotDisplayNames[trackedSlot.key])
+    GGM.ApplyJournalFont(button.label, 12)
+    if button.label.SetWordWrap then button.label:SetWordWrap(true) end
     setTextColor(button.label, THEME.textSoft)
     button.status = createText(button, "OVERLAY", "GameFontDisableSmall")
     setTextColor(button.status, THEME.muted)
@@ -1508,10 +1513,10 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     end
 
     if layout.group == "left" then
-        button.label:SetWidth(98); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
+        button.label:SetWidth(146); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
         button.status:SetWidth(98); button.status:SetJustifyH("LEFT"); button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -2)
     elseif layout.group == "right" then
-        button.label:SetWidth(98); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -9, 5)
+        button.label:SetWidth(146); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -9, 5)
         button.status:SetWidth(98); button.status:SetJustifyH("RIGHT"); button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -2)
     else
         button.label:SetWidth(92); button.label:SetJustifyH("CENTER"); button.label:SetPoint("TOP", button, "BOTTOM", 0, -5)
@@ -1701,6 +1706,17 @@ function GGM.CreateGuildGearBrowserWindow(api)
         if frame.gearSyncElapsed < 1 then return end
         frame.gearSyncElapsed = 0
         refreshGearSyncControls(frame)
+        for _, button in ipairs(frame.slotButtons or {}) do
+            if button.pendingItemString then
+                local link = GGM.BuildItemHyperlink(api, button.pendingItemString)
+                local name = link and link:match("|h%[(.-)%]|h")
+                if name then
+                    button.label:SetText(name)
+                    button.itemLink = link
+                    if name ~= "Item " .. tostring(button.itemID) then button.pendingItemString = nil end
+                end
+            end
+        end
     end)
     frame.characterLine = createText(frame.gearPanel, "OVERLAY", "GameFontNormalHuge")
     GGM.ApplyJournalFont(frame.characterLine, 30, "bold")

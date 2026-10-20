@@ -2267,7 +2267,7 @@ T.test("compact absent optional and required slots render as empty", function()
     T.assertTrue(frame.slotButtons[shirtIndex].empty)
     T.assertEqual(frame.slotButtons[shirtIndex].label.text, "Shirt")
     T.assertEqual(frame.slotButtons[shirtIndex].status.text, "Empty")
-    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 98)
+    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 146)
     T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 98)
 end)
 
@@ -2290,9 +2290,9 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
         local button = frame.slotButtons[index]
         T.assertFalse(row.unavailable)
         local expectedWidth = button.paperDollGroup == "bottom" and 92 or 98
-        T.assertTrue(button.label.width <= expectedWidth)
+        T.assertTrue(button.label.width <= (button.paperDollGroup == "bottom" and 92 or 146))
         T.assertTrue(button.status.width <= expectedWidth)
-        T.assertTrue(#button.label.text <= 9)
+        T.assertEqual(button.label.text, row.displayName)
         T.assertTrue(#(button.status.text or "") <= 7)
         T.assertEqual(button.key, row.key)
         T.assertEqual(button.itemLink, row.itemLink)
@@ -2361,4 +2361,49 @@ T.test("gear refresh shows cooldown rejection even after a prior successful sync
     local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
     frame.gearSyncButton.scripts.OnClick()
     T.assertEqual(frame.gearSyncStatus.text, "Please wait before requesting this character again.")
+end)
+
+T.test("equipped gear labels show item names from modern and legacy item APIs", function()
+    for _, modern in ipairs({ true, false }) do
+        local G, api = loadUI(), makeBrowserAPI()
+        local name = "Crown of the Very Long Forgotten Kingdom"
+        if modern then api.C_Item = { GetItemNameByID = function() return name end }
+        else api.GetItemInfo = function() return name end end
+        local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+        for _, button in ipairs(frame.slotButtons) do
+            T.assertEqual(button.label.text, name)
+            T.assertEqual(button.label.height, 32)
+        end
+    end
+end)
+
+T.test("uncached equipped item names refresh when item data becomes available", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local available = false
+    api.GetItemInfo = function() if available then return "Crown of Memories" end end
+    local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+    local button = frame.slotButtons[1]
+    T.assertEqual(button.label.text, "Item " .. button.itemID)
+    available = true
+    frame.gearSyncButton.scripts.OnUpdate(nil, 1)
+    T.assertEqual(button.label.text, "Crown of Memories")
+    T.assertTrue(string.find(button.itemLink, "[Crown of Memories]", 1, true) ~= nil)
+end)
+
+T.test("item-name refresh follows the selected character without replacing empty slot labels", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local alice, beta = makeRecord(G), makeRecord(G)
+    beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    beta.gear.slots.HEAD = { inventorySlotID = 1, itemID = false, itemLink = false }
+    local available = false
+    api.GetItemInfo = function() if available then return "Alice's Crown" end end
+    local frame = showBrowser(G, api, makeDB(G, { alice, beta }))
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    available = true
+    frame.gearSyncButton.scripts.OnUpdate(nil, 1)
+    local head = frame.slotButtons[1]
+    T.assertEqual(head.label.text, "Head")
+    T.assertEqual(head.status.text, "Empty")
+    T.assertEqual(head.label.height, 14)
+    T.assertNil(head.itemLink)
 end)
