@@ -2310,3 +2310,55 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     T.assertFalse(frame.detailModel.refreshNeeded)
     T.assertEqual(frame.completenessLine.text, "Complete")
 end)
+
+T.test("gear sync button requests only the selected saved character and renders lifecycle status", function()
+    local G = loadUI()
+    local api = makeBrowserAPI()
+    local alice, beta = makeRecord(G), makeRecord(G)
+    beta.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
+    local requested, count, status, busy = nil, 0, "", false
+    G.guildSync = {}
+    G.RequestCompleteSnapshot = function(sync, target)
+        T.assertTrue(sync == G.guildSync)
+        requested, count, status, busy = target, count + 1, "Waiting for a gear snapshot...", true
+        return true
+    end
+    G.GetGearSyncStatus = function() return status, busy end
+    local frame = showBrowser(G, api, makeDB(G, { alice, beta }))
+    T.assertEqual(count, 0)
+    T.assertTrue(frame.gearSyncButton.visible)
+    frame.listRows[2].scripts.OnClick(frame.listRows[2])
+    T.assertEqual(count, 0)
+    frame.gearSyncButton.scripts.OnClick()
+    T.assertEqual(requested.key, "Beatrice-ArgentDawn")
+    T.assertEqual(count, 1)
+    T.assertEqual(frame.gearSyncStatus.text, "Waiting for a gear snapshot...")
+    status, busy = "Gear snapshot synchronized.", false
+    G.RefreshVisibleGearSyncStatus()
+    T.assertEqual(frame.gearSyncStatus.text, status)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertFalse(frame.gearSyncButton.visible)
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    T.assertTrue(frame.gearSyncButton.visible)
+end)
+
+T.test("gear sync button hides without selection and reports unavailable transport", function()
+    local G = loadUI()
+    local api = makeBrowserAPI()
+    local frame = showBrowser(G, api, makeDB(G, {}))
+    T.assertFalse(frame.gearSyncButton.visible)
+    frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+    frame.gearSyncButton.scripts.OnClick()
+    T.assertEqual(frame.gearSyncStatus.text, "Gear sync is unavailable.")
+end)
+
+T.test("gear refresh shows cooldown rejection even after a prior successful synchronization", function()
+    local G = loadUI()
+    local api = makeBrowserAPI()
+    G.guildSync = {}
+    G.GetGearSyncStatus = function() return "Gear snapshot synchronized.", false end
+    G.RequestCompleteSnapshot = function() return false, "sync-snapshot-request-cooldown" end
+    local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
+    frame.gearSyncButton.scripts.OnClick()
+    T.assertEqual(frame.gearSyncStatus.text, "Please wait before requesting this character again.")
+end)

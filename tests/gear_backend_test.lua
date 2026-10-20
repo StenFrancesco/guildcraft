@@ -271,4 +271,17 @@ T.test("gear backend owns departed member cache cleanup", function()
     T.assertEqual(#c.sent, 0)
 end)
 
+T.test("gear backend refreshes visible gear only for committed changes", function()
+    local c = client()
+    local G = display(c)
+    local refreshes, statuses = 0, 0
+    G.RefreshVisibleGuildGearBrowser = function() refreshes = refreshes + 1 end
+    G.RefreshVisibleGearSyncStatus = function() statuses = statuses + 1 end
+    c.api.GuildGearMemoryGearChanged(false)
+    T.assertEqual(refreshes, 0)
+    T.assertEqual(statuses, 1)
+    c.api.GuildGearMemoryGearChanged(true)
+    T.assertEqual(refreshes, 1)
+end)
+
 return { client = client, loadManifest = loadManifest }

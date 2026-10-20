@@ -139,7 +139,7 @@ T.test("GC_GEAR clients exchange one explicit cached baseline with multiple resp
     T.assertEqual(#bus.frames, count)
 end)
 
-T.test("GC_GEAR stability deltas detect missed updates and repair only on explicit request", function()
+T.test("GC_GEAR stability deltas detect missed updates and automatically repair the complete baseline", function()
     local bus = guild()
     local alice, bob = bus:client("Alice"), bus:client("Bob")
     alice:startTracking()
@@ -163,12 +163,7 @@ T.test("GC_GEAR stability deltas detect missed updates and repair only on explic
     bob.drop = false
     alice:change(2, 4002)
     bus:advance(310)
-    local stale = bob.db.characters[alice.identity.key]
-    T.assertTrue(stale.refreshNeeded)
-    T.assertFalse(stale.complete)
-    T.assertEqual(stale.gear.slots[1], "item:3001")
-    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 1)
-    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 2)
     bus:advance(90)
     local repaired = assert(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
     T.assertEqual(repaired.gear.slots[1], "item:4001")
@@ -259,4 +254,54 @@ T.test("GC_GEAR snapshot throttling releases the responder without retrying", fu
     local count = #bus.frames
     bus:advance(600)
     T.assertEqual(#bus.frames, count)
+end)
+
+T.test("GC_GEAR first owner update acquires a missing baseline without manual requests", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice:startTracking()
+    alice:change(1, 8123)
+    bus:advance(390)
+    local received = assert(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    T.assertEqual(received.gear.slots[1], "item:8123")
+    T.assertEqual(received.confirmedSequence, 1)
+    T.assertEqual(bus:count("SNAPSHOT_REQUEST"), 1)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
+end)
+
+T.test("GC_GEAR manual refresh after cooldown receives the newest peer snapshot", function()
+    local bus = guild()
+    local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    alice:startTracking()
+    local baseline = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, alice.db.characters[alice.identity.key].gear))
+    assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 0))
+    alice.drop = true
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    -- A complete request takes a few seconds, not the full response cooldown.
+    bus:advance(15)
+    assert(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
+    alice.drop = true
+    bus:advance(bob.G.SYNC_SNAPSHOT_REQUEST_COOLDOWN_SECONDS)
+    baseline.slots.HEAD = { inventorySlotID = 1, itemID = 9898, itemLink = "|Hitem:9898|h[New]|h" }
+    assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 2))
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(15)
+    T.assertEqual(bob.db.characters[alice.identity.key].gear.slots[1], "item:9898")
+    T.assertEqual(bob.db.characters[alice.identity.key].confirmedSequence, 2)
+end)
+
+T.test("GC_GEAR chooses the newest available offline cache and sends one complete response", function()
+    local bus = guild()
+    local alice, bob, carol, dave = bus:client("Alice"), bus:client("Bob"), bus:client("Carol"), bus:client("Dave")
+    alice:startTracking()
+    alice.drop = true
+    local baseline = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, alice.db.characters[alice.identity.key].gear))
+    assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 1))
+    baseline.slots.HEAD = { inventorySlotID = 1, itemID = 9654, itemLink = "|Hitem:9654|h[Newest]|h" }
+    assert(dave.G.SaveCompleteCharacterRecord(dave.db, alice.identity, baseline, 3))
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(90)
+    T.assertEqual(bob.db.characters[alice.identity.key].confirmedSequence, 3)
+    T.assertEqual(bob.db.characters[alice.identity.key].gear.slots[1], "item:9654")
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
 end)

@@ -1,4 +1,5 @@
 local _, GGM = ...
+local REQUEST_ERRORS
 
 local function gearUnavailableMessage(db)
     local reason = type(db) == "table" and db.gearUnavailableReason or nil
@@ -649,6 +650,46 @@ local function createEmptyStateCard(api, parent, iconPath, title, body)
     return card
 end
 
+local function refreshGearSyncControls(frame)
+    if not frame.gearSyncButton then return end
+    local entry = frame.selectedEntry
+    local visible = frame.activeTab == "Character" and entry ~= nil
+    if not visible then frame.gearSyncButton:Hide(); frame.gearSyncStatus:Hide(); return end
+    frame.gearSyncButton:Show()
+    frame.gearSyncStatus:Show()
+    local status, busy, err = "", false, nil
+    if type(GGM.GetGearSyncStatus) == "function" then
+        status, busy, err = GGM.GetGearSyncStatus(GGM.guildSync, entry.key)
+    end
+    local localError = frame.gearSyncError
+    if localError and localError.targetKey == entry.key then
+        err = localError.error
+        if busy then frame.gearSyncError = nil; err = nil end
+    end
+    if err then status = REQUEST_ERRORS[err] or "Gear sync failed. Try again." end
+    frame.gearSyncStatus:SetText(status)
+    if frame.gearSyncButton.SetEnabled then frame.gearSyncButton:SetEnabled(not busy) end
+end
+
+function GGM.SyncSelectedGear(frame)
+    local entry = frame and frame.selectedEntry
+    if not entry or frame.activeTab ~= "Character" then return false end
+    local ok, err = false, "sync-unavailable"
+    if GGM.guildSync and type(GGM.RequestCompleteSnapshot) == "function" then
+        ok, err = GGM.RequestCompleteSnapshot(GGM.guildSync, entry.record.identity)
+    end
+    frame.gearSyncError = not ok and { targetKey = entry.key, error = err } or nil
+    GGM.lastSyncError = err
+    refreshGearSyncControls(frame)
+    return ok, err
+end
+
+function GGM.RefreshVisibleGearSyncStatus(dataChanged)
+    local frame = GGM.guildGearBrowserFrame
+    if frame and dataChanged == true then frame.gearSyncError = nil end
+    if frame and frame:IsShown() then refreshGearSyncControls(frame) end
+end
+
 local function renderBrowserDetail(frame, entry, api)
     if type(GGM.ClearSavedCharacterModel) == "function" then
         GGM.ClearSavedCharacterModel(frame.characterModelView)
@@ -657,6 +698,7 @@ local function renderBrowserDetail(frame, entry, api)
     end
     if frame.modelUnavailableLabel then frame.modelUnavailableLabel:Hide() end
     frame.detailModel = nil
+    refreshGearSyncControls(frame)
     for _, control in ipairs({ frame.characterLine, frame.realmLine, frame.capturedLine, frame.completenessLine }) do
         if control then control:Hide() end
     end
@@ -751,6 +793,7 @@ local function renderBrowserDetail(frame, entry, api)
 end
 
 local function setBrowserContentVisible(frame, visible)
+    refreshGearSyncControls(frame)
     for _, control in ipairs({ frame.searchPanel, frame.listPanel, frame.gearPanel }) do
         if control then if visible then control:Show() else control:Hide() end end
     end
@@ -1670,6 +1713,23 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.listEmpty:Hide()
 
     frame.gearPanel = createGearPanel(api, frame)
+    frame.gearSyncButton = GGM.CreateFlatButton(api, frame.gearPanel, "Sync gear", 112, 27, "secondary")
+    frame.gearSyncButton:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -34, -48)
+    frame.gearSyncButton:SetScript("OnClick", function() GGM.SyncSelectedGear(frame) end)
+    frame.gearSyncStatus = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
+    GGM.ApplyJournalFont(frame.gearSyncStatus, 12)
+    frame.gearSyncStatus:SetPoint("TOPRIGHT", frame.gearPanel, "TOPRIGHT", -34, -83)
+    frame.gearSyncStatus:SetSize(280, 30)
+    frame.gearSyncStatus:SetJustifyH("RIGHT")
+    setTextColor(frame.gearSyncStatus, THEME.textSoft)
+    frame.gearSyncButton:Hide()
+    frame.gearSyncStatus:Hide()
+    frame.gearSyncButton:SetScript("OnUpdate", function(_, elapsed)
+        frame.gearSyncElapsed = (frame.gearSyncElapsed or 0) + elapsed
+        if frame.gearSyncElapsed < 1 then return end
+        frame.gearSyncElapsed = 0
+        refreshGearSyncControls(frame)
+    end)
     frame.characterLine = createText(frame.gearPanel, "OVERLAY", "GameFontNormalHuge")
     GGM.ApplyJournalFont(frame.characterLine, 30, "bold")
     frame.characterLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 34, -50)
@@ -1865,7 +1925,7 @@ local function chatEmitter(api)
     return function() end
 end
 
-local REQUEST_ERRORS = {
+REQUEST_ERRORS = {
     ["request-target-invalid"] = "Usage: /ggm request Name-Realm",
     ["sync-unavailable"] = "Gear sync is unavailable.",
     ["sync-snapshot-request-pending"] = "A gear request for this character is already pending.",

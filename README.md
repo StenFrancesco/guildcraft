@@ -38,6 +38,25 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 - Login, roster readiness, and elapsed time alone do not trigger profession traffic. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
 - The renamed addons use the SavedVariables globals shown above. Existing SavedVariables are not migrated to the new names, and this branch starts a fresh gear cache. Back up SavedVariables with the game closed if you need to keep existing data.
 
+## Gear synchronization
+
+On the Characters page, select a saved character and click **Sync gear** to
+request the newest confirmed snapshot available from responding online guild
+addon users. The character can be offline if another participant has their
+snapshot cached. The panel keeps its saved equipment visible while waiting and
+shows completion, failure, or timeout feedback. A successful manual refresh has
+a 60-second cooldown, matching the cache responders. `/ggm request Name-Realm`
+uses the same request path.
+
+A valid owner gear update automatically requests a complete baseline when the
+character is missing or a missed update leaves a sequence gap. Requests coalesce
+per character, and repeated failed repairs back off. A newer confirmed baseline
+can be repaired during the normal cooldown after a short backoff. Older cached
+snapshots cannot replace the sequence required by the observed owner update.
+Committed changes refresh the visible character panel; opening the browser or
+selecting a character does not send gear requests. Gear synchronization requires
+guild membership and compatible participating copies of The Guild Book gear.
+
 ## Profession synchronization details
 
 The Professions tab shares complete last-known recipe snapshots with guild

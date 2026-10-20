@@ -6,15 +6,15 @@ for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_EQUIPMENT_CHANG
     frame:RegisterEvent(event)
 end
 
-local function notifyDisplay()
-    if type(api.GuildGearMemoryGearChanged) == "function" then pcall(api.GuildGearMemoryGearChanged) end
+local function notifyDisplay(dataChanged)
+    if type(api.GuildGearMemoryGearChanged) == "function" then pcall(api.GuildGearMemoryGearChanged, dataChanged == true) end
 end
 
 local function publishConfirmedSlot(...)
-    if not GearMemory.guildSync then return end
+    if not GearMemory.guildSync then notifyDisplay(true); return end
     local queued, err = GearMemory.PublishConfirmedSlot(GearMemory.guildSync, ...)
     if queued then GearMemory.lastSyncError = nil else GearMemory.lastSyncError = err end
-    notifyDisplay()
+    notifyDisplay(true)
 end
 
 frame:SetScript("OnEvent", function(_, event, ...)
@@ -39,7 +39,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
         local sync, syncErr = GearMemory.CreateGuildSync(api, database)
         if sync then
             local registered, registerErr = GearMemory.RegisterGuildSync(sync)
-            if registered then GearMemory.guildSync = sync else syncErr = registerErr end
+            if registered then
+                GearMemory.guildSync = sync
+                sync.onChanged = notifyDisplay
+            else syncErr = registerErr end
         end
         GearMemory.lastSyncError = syncErr
         notifyDisplay()
@@ -61,7 +64,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             if GearMemory.guildSync then GearMemory.guildSync.localGearTracker = tracker end
             GearMemory.lastGearTrackingError = err
             GearMemory.lastCaptureError = err
-            notifyDisplay()
+            notifyDisplay(true)
         end)
         return
     end
