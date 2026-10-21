@@ -24,6 +24,7 @@ local suites = {
     "tests.gear_sync_integration_test",
     "tests.profession_snapshot_test",
     "tests.profession_transport_test",
+    "tests.profession_compression_test",
     "tests.profession_sync_data_test",
     "tests.profession_sync_test",
     "tests.profession_automatic_sync_test",

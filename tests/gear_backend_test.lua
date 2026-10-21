@@ -2,8 +2,8 @@ local T = require("tests.testlib")
 
 local function loadManifest(folder, api, namespace, skipMain)
     for line in io.lines(folder .. "/" .. folder .. ".toc") do
-        local file = line:match("^([%w]+%.lua)%s*$")
-        if file and not (skipMain and file == "Main.lua") then
+        local file = line:match("^([%w/]+%.lua)%s*$")
+        if file and file ~= "Libs/ChatThrottleLib/ChatThrottleLib.lua" and not (skipMain and file == "Main.lua") then
             local chunk = assert(loadfile(folder .. "/" .. file))
             setfenv(chunk, api)
             chunk(folder, namespace)
@@ -14,7 +14,7 @@ end
 local function client(saved)
     local c = { frames = {}, timers = {}, sent = {}, now = 100, items = {} }
     for id = 1, 19 do c.items[id] = 1000 + id end
-    local api = setmetatable({ TheGuildBookGearDB = saved }, { __index = _G })
+    local api = setmetatable({ TheGuildBookGearDB = saved, strmatch = string.match }, { __index = _G })
     api._G = api
     api.CreateFrame = function()
         local frame = { events = {} }
