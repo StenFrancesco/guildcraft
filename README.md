@@ -80,8 +80,14 @@ members using the same protocol version. A first profession selection can start
 a comparison, and a meaningful local snapshot save can announce that change.
 Gear and recipes synchronize automatically after a random login delay of zero
 to five minutes. Neither requires opening the character browser. The
-**Sync profession** button starts immediately, subject to the existing cooldown,
-and checks up to four
+**Sync profession** button starts immediately when the sync slot is available.
+If a comparison or the existing 60-second cooldown is in progress, the click is
+retained and the status shows that it is queued. Repeated clicks for the same
+profession share one request; clicking a different profession replaces the queued
+choice. Automatic work yields after its current transfer so the button request
+can run next, and unfinished automatic work remains eligible for city recovery.
+Queued requests are bounded and are cancelled when guild synchronization resets.
+Each manual operation checks up to four
 eligible guild peers one at a time, with the existing 60-second cooldown. A
 status reports how many peer caches matched or were compared; it does not claim
 agreement across the guild. If more than four peers are eligible, unfinished

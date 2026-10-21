@@ -674,6 +674,26 @@ T.test("profession library scrolls all nine rows within its sidebar", function()
         "the final profession row should fit exactly at the end of the scroll range")
 end)
 
+T.test("profession sync button uses the retained manual request path", function()
+    local G = loadUI()
+    local calls = {}
+    G.professionSync = {}
+    G.RequestProfessionSync = function() return false, "profession-sync-busy" end
+    G.RequestProfessionSyncFromButton = function(sync, pid)
+        T.assertEqual(sync, G.professionSync)
+        calls[#calls + 1] = pid
+        return true
+    end
+    G.GetProfessionSyncStatus = function() return "Sync queued: waiting for current comparison" end
+    local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    G.SelectProfession(frame, "Blacksmithing")
+    frame.professionSyncButton.scripts.OnClick(frame.professionSyncButton)
+    T.assertEqual(#calls, 1)
+    T.assertEqual(calls[1], 164)
+    T.assertEqual(frame.professionSyncStatus:GetText(), "Sync queued: waiting for current comparison")
+end)
+
 T.test("shared status is left aligned without a backing bar", function()
     local G = loadUI()
     local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
