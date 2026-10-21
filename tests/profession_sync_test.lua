@@ -1961,6 +1961,19 @@ T.test("a new button profession replaces a queued cooldown request even when it 
     T.assertEqual(bus:count("Q", b.identity.key), 2, "replaced cooldown work must never send")
 end)
 
+T.test("a different button click clears a queued profession when combat blocks the new choice", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection")); bus:advance(5)
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    T.assertEqual(b.sync.buttonRequest.professionID, 164)
+    b.api.InCombatLockdown = function() return true end
+    local accepted = b.G.RequestProfessionSyncFromButton(b.sync, 202)
+    T.assertFalse(accepted)
+    T.assertNil(b.sync.buttonRequest, "the previous queued profession must not survive a different click")
+end)
+
 T.test("queued profession button work expires without creating idle traffic", function()
     local bus = guild()
     local a, b = bus:client("Alice"), bus:client("Bob")
@@ -2008,6 +2021,50 @@ T.test("ready automatic comparisons drain after a queued button request becomes 
     bus:advance(61)
     T.assertNil(b.sync.buttonRequest)
     T.assertNil(b.sync.pending[202], "the ready automatic comparison should drain after the button retry fails")
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 202), "Catch-up needed")
+end)
+
+T.test("ready automatic comparisons drain when a queued button retry timer cannot be scheduled", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    b.sync.manualOperation = { busy = true }
+    b.sync.cooldowns[164] = 100
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    b.sync.manualOperation = nil
+    b.api.C_Timer.NewTimer = function() return nil end
+    bus:advance(1)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready automatic comparison should drain after retry scheduling fails")
+end)
+
+T.test("ready automatic comparisons drain when a queued button request expires", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    b.sync.manualOperation = { busy = true }
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    b.sync.buttonRequest.deadline = 0
+    b.sync.manualOperation = nil
+    bus:advance(1)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready automatic comparison should drain after request expiry")
+end)
+
+T.test("ready automatic comparisons are handled when a queued button request becomes unsafe", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    b.sync.active = { busy = true }
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    b.sync.active = nil
+    b.api.InCombatLockdown = function() return true end
+    bus:advance(1)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready comparison should be handled after unsafe request removal")
     T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 202), "Catch-up needed")
 end)
 

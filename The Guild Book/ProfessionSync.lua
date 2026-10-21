@@ -1480,7 +1480,7 @@ function GGM.RequestProfessionSyncFromButton(sync, professionID)
         return true
     end
     if sync and sync.buttonRequest and sync.buttonRequest.professionID == professionID then return true end
-    if sync and SUPPORTED[professionID] and safe(sync) then sync.buttonRequest = nil end
+    if sync and SUPPORTED[professionID] then sync.buttonRequest = nil end
     local accepted, err = GGM.RequestProfessionSync(sync, professionID, "manual")
     if accepted then
         if sync.manualOperation then sync.manualOperation.fromButton = true end
@@ -1495,6 +1495,7 @@ function GGM.RequestProfessionSyncFromButton(sync, professionID)
         if not safe(sync) or now(sync) >= request.deadline then
             sync.buttonRequest = nil
             notify(sync, professionID, "Catch-up needed")
+            drainPending(sync)
             return
         end
         local ok, failure = GGM.RequestProfessionSync(sync, professionID, "manual")
@@ -1518,6 +1519,7 @@ function GGM.RequestProfessionSyncFromButton(sync, professionID)
         if not timer(sync, math.min(delay, request.deadline - now(sync)), pump) then
             sync.buttonRequest = nil
             notify(sync, professionID, "Sync unavailable")
+            drainPending(sync)
         end
     end
     pump()
