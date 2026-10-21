@@ -44,6 +44,9 @@ offline display. Older records can also gain it from cached character or guild
 roster information when selected. If the class cannot be determined, the frame
 shows a question mark. Race and gender labels remain below the icon.
 
+The Characters footer keeps the equipment helper text on the left and the
+Last Captured label with its date/time on the right, with separate space for each.
+
 If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers and the gear message protocol keep their existing names and formats.
 
 ## Data and synchronization

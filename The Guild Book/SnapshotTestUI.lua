@@ -1930,18 +1930,6 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.realmLine:SetJustifyH("LEFT")
     if frame.realmLine.SetWordWrap then frame.realmLine:SetWordWrap(false) end
     setTextColor(frame.realmLine, THEME.muted)
-    frame.snapshotCaption = createSectionLabel(frame.gearPanel, "LAST CAPTURED")
-    GGM.ApplyJournalFont(frame.snapshotCaption, 11, "bold")
-    frame.snapshotCaption:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 34, -121)
-    frame.capturedLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
-    -- A bounded region avoids relying on a hidden caption's auto-sized bounds
-    -- while selection changes hide and repopulate the header.
-    frame.capturedLine:SetSize(152, 16)
-    frame.capturedLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 140, -121)
-    GGM.ApplyJournalFont(frame.capturedLine, 12)
-    frame.capturedLine:SetJustifyH("LEFT")
-    setTextColor(frame.capturedLine, THEME.textSoft)
-
     frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
     frame.modelStage:SetSize(208, 218)
     frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -164)
@@ -2013,8 +2001,29 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.detailFooter:SetHeight(20)
     frame.detailFooter.background:Hide()
     for _, edge in ipairs(frame.detailFooter.border) do edge:Hide() end
+
+    frame.capturedLine = createText(frame.detailFooter, "OVERLAY", "GameFontHighlightSmall")
+    frame.capturedLine:SetSize(152, 16)
+    frame.capturedLine:SetPoint("RIGHT", frame.detailFooter, "RIGHT", -8, 0)
+    GGM.ApplyJournalFont(frame.capturedLine, 12)
+    frame.capturedLine:SetJustifyH("RIGHT")
+    if frame.capturedLine.SetWordWrap then frame.capturedLine:SetWordWrap(false) end
+    setTextColor(frame.capturedLine, THEME.textSoft)
+
+    frame.snapshotCaption = createSectionLabel(frame.detailFooter, "LAST CAPTURED")
+    GGM.ApplyJournalFont(frame.snapshotCaption, 11, "bold")
+    frame.snapshotCaption:SetSize(104, 16)
+    frame.snapshotCaption:SetPoint("RIGHT", frame.capturedLine, "LEFT", -8, 0)
+    frame.snapshotCaption:SetJustifyH("RIGHT")
+    if frame.snapshotCaption.SetWordWrap then frame.snapshotCaption:SetWordWrap(false) end
+
     local footerText = createText(frame.detailFooter, "OVERLAY", "GameFontDisableSmall")
-    footerText:SetPoint("CENTER", frame.detailFooter, "CENTER", 0, 0)
+    footerText:SetPoint("LEFT", frame.detailFooter, "LEFT", 8, 0)
+    -- Fixed capture bounds reserve space even while selection changes hide it.
+    footerText:SetPoint("RIGHT", frame.snapshotCaption, "LEFT", -12, 0)
+    footerText:SetHeight(16)
+    footerText:SetJustifyH("LEFT")
+    if footerText.SetWordWrap then footerText:SetWordWrap(false) end
     GGM.ApplyJournalFont(footerText, 12)
     footerText:SetText("Last-known equipment · Hover a slot to view the saved item")
     setTextColor(footerText, THEME.muted)

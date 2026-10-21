@@ -748,8 +748,14 @@ T.test("character content stays within the journal's painted page borders", func
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
         "native scrollbar extends beyond the library border")
-    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.gearSyncButton.point.x,
-        "sync button overlaps the capture date")
+    T.assertEqual(frame.capturedLine.point.relativeTo, frame.detailFooter,
+        "capture date must be in the footer rather than beside the sync button")
+    T.assertEqual(frame.capturedLine.point.point, "RIGHT")
+    T.assertEqual(frame.capturedLine.justifyH, "RIGHT")
+    T.assertEqual(frame.snapshotCaption.point.relativeTo, frame.capturedLine)
+    T.assertEqual(frame.snapshotCaption.point.relativePoint, "LEFT")
+    T.assertTrue(frame.snapshotCaption.point.x <= -8,
+        "capture label needs a gap before the timestamp")
 end)
 
 T.test("journal headings reserve space for subtitles inside their columns", function()
