@@ -142,4 +142,73 @@ T.test("incompressible records stay plain and codec limits apply before decoding
     T.assertNil(G.DecodeProfessionPayload("Z1|1|1|x"))
 end)
 
+-- Build valid DEFLATE with empty non-final fixed blocks, then a final stored
+-- block. Bits are packed least-significant first, including the stored padding.
+local function emptyBlockStream(count, payload)
+    local bits = string.rep("0100000000", count) .. "100"
+    bits = bits .. string.rep("0", (8 - #bits % 8) % 8)
+    local bytes = {}
+    for i = 1, #bits, 8 do
+        local byte = 0
+        for bit = 0, 7 do
+            if bits:sub(i + bit, i + bit) == "1" then byte = byte + 2 ^ bit end
+        end
+        bytes[#bytes + 1] = string.char(byte)
+    end
+    local length = #payload
+    local complement = 65535 - length
+    return table.concat(bytes) .. string.char(length % 256, math.floor(length / 256),
+        complement % 256, math.floor(complement / 256)) .. payload
+end
+
+local function compressedEnvelope(lib, compressed, payload)
+    return "Z1|" .. #payload .. "|" .. lib:Adler32(payload) .. "|" .. lib:EncodeForWoWAddonChannel(compressed)
+end
+
+T.test("private inflater rejects excessive zero-output blocks within the wire limit", function()
+    local G, lib = load()
+    local payload = "P5|D|Bob|1|164|test"
+    local compressed = emptyBlockStream(43000, payload)
+    local envelope = compressedEnvelope(lib, compressed, payload)
+    T.assertTrue(#envelope <= 65536)
+    -- The shared upstream API establishes that this is valid DEFLATE, not a
+    -- malformed fixture, and remains unaffected by the private work budget.
+    T.assertEqual(lib:DecompressDeflate(compressed), payload)
+    local result, status = G.DecompressProfessionDeflate(compressed, #payload)
+    T.assertNil(result)
+    T.assertEqual(status, -101)
+    T.assertNil(G.DecodeProfessionPayload(envelope))
+end)
+
+T.test("private block budget accepts 128 blocks rejects 129 and resets per record", function()
+    local G, lib = load()
+    local payload = "P5|D|Bob|1|164|test"
+    local allowed = emptyBlockStream(127, payload)
+    T.assertEqual(G.DecompressProfessionDeflate(allowed, #payload), payload)
+    local result, status = G.DecompressProfessionDeflate(emptyBlockStream(128, payload), #payload)
+    T.assertNil(result)
+    T.assertEqual(status, -101)
+    T.assertEqual(G.DecodeProfessionPayload(compressedEnvelope(lib, allowed, payload)), payload)
+end)
+
+T.test("excessive-block envelopes never reach the transport payload handler", function()
+    local G, lib = load()
+    T.loadAddonFile("The Guild Book/ProfessionTransport.lua", G)
+    local client = require("tests.profession_sync_fixture")():client("Alice")
+    local called = 0
+    local transport = assert(G.CreateProfessionTransport(client.api, function() called = called + 1 end))
+    local payload = "P5|D|Bob|1|164|test"
+    local envelope = compressedEnvelope(lib, emptyBlockStream(43000, payload), payload)
+    local total = math.ceil(#envelope / 222)
+    local state, err
+    for i = 1, total do
+        local frame = string.format("F1|000001|%03d|%03d|%s", i, total, envelope:sub((i-1)*222+1,i*222))
+        state, err = G.ReceiveProfessionFrame(transport,"GC_PROF5",frame,"WHISPER","Bob-Realm")
+    end
+    T.assertNil(state)
+    T.assertEqual(err, "profession-compressed-payload-invalid")
+    T.assertEqual(called, 0)
+    T.assertNil(next(transport.inboundAssemblies))
+end)
+
 return { load = load, record = record }

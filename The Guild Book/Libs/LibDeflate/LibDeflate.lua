@@ -1,4 +1,4 @@
--- ALTERED for The Guild Book: private output-bounded inflater; upstream APIs unchanged.
+-- ALTERED for The Guild Book: private output/work-bounded inflater; upstream APIs unchanged.
 local _, GuildBook = ...
 --[[--
 LibDeflate 1.0.2-release <br>
@@ -2622,6 +2622,12 @@ local function Inflate(state)
 
 	local is_last_block
 	while not is_last_block do
+		-- Empty blocks consume no output budget. Bound block/header work as well,
+		-- before building Huffman tables or decoding any symbols in this block.
+		if state.blocksRemaining then
+			if state.blocksRemaining == 0 then return nil, -101 end
+			state.blocksRemaining = state.blocksRemaining - 1
+		end
 		is_last_block = (ReadBits(1) == 1)
 		local block_type = ReadBits(2)
 		local status
@@ -2650,6 +2656,9 @@ end
 local function DecompressDeflateInternal(str, dictionary, maxOutput)
 	local state = CreateDecompressState(str, dictionary)
 	state.outputRemaining = maxOutput
+	-- Private callers allow at most 128 blocks; the bundled compressor emits at
+	-- most two for a 64 KiB record. Shared upstream calls remain unrestricted.
+	state.blocksRemaining = maxOutput and 128 or nil
 	local result, status = Inflate(state)
 	if not result then
 		return nil, status

@@ -173,7 +173,9 @@ union merge, storage and acknowledgement flow. Saved variables do not change.
 
 Compressed envelopes include the original byte length and Adler-32 checksum.
 The private decoder stops during inflation at the declared length (at most
-65,536 bytes), rather than expanding an oversized record first. Invalid lengths,
+65,536 bytes), rather than expanding an oversized record first. It also accepts
+at most 128 DEFLATE blocks per record, bounding empty-block processing as well
+as output size. Invalid lengths,
 encoding, truncated/trailing compressed input, checksums or decoded message kinds
 are rejected before storage or acknowledgement. Missing compression dependencies
 disable profession synchronization. The embedded LibDeflate source has a clearly
