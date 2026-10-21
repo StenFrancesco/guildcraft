@@ -31,7 +31,7 @@ GGM.SYNC_MAX_PENDING_SNAPSHOT_RESPONSES = 16
 -- phases, including the one-frame request and claim and maximum-size snapshot.
 GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS = GGM.SYNC_SNAPSHOT_RESPONSE_MAX_DELAY_SECONDS
     + GGM.SYNC_SNAPSHOT_RESPONSE_OFFER_SETTLE_SECONDS
-    + (3 * GGM.SYNC_MAX_OUTBOUND_FRAMES + GGM.SYNC_MAX_FRAME_COUNT + 2) * GGM.SYNC_SEND_INTERVAL_SECONDS
+    + (3 * GGM.SYNC_MAX_OUTBOUND_FRAMES + GGM.SYNC_MAX_FRAME_COUNT + 4) * GGM.SYNC_SEND_INTERVAL_SECONDS
 -- Match responder cooldown so a permitted manual refresh can receive a reply.
 GGM.SYNC_SNAPSHOT_REQUEST_COOLDOWN_SECONDS = GGM.SYNC_SNAPSHOT_RESPONSE_COOLDOWN_SECONDS
 GGM.SYNC_SNAPSHOT_REPAIR_BACKOFF_SECONDS = 5
@@ -50,6 +50,20 @@ GGM.SYNC_MAX_CONFIRMED_SEQUENCE = 2147483647
 GGM.SYNC_MAX_TIMESTAMP = 4294967295
 GGM.SYNC_MAX_RACE_ID = 255
 GGM.SYNC_MAX_DISPLAY_ID = 2147483647
+
+local CLASSIC_CLASS_TOKENS = {
+    WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true, PRIEST = true,
+    SHAMAN = true, MAGE = true, WARLOCK = true, DRUID = true,
+}
+
+function GGM.NormalizeClassicClassToken(value)
+    local ok, token = pcall(function()
+        if type(value) ~= "string" then return nil end
+        local normalized = value:upper()
+        return CLASSIC_CLASS_TOKENS[normalized] and normalized or nil
+    end)
+    return ok and token or nil
+end
 
 GGM.TRACKED_SLOTS = {
     { key = "HEAD", inventoryName = "HeadSlot", inventorySlotID = 1 },

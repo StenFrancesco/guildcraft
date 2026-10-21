@@ -28,6 +28,25 @@ Interface/AddOns/
 
 Enable the three addons in the game's AddOns list, then open the browser with `/ggm`. The addon databases are stored separately under `WTF/Account/<account>/SavedVariables` when you log out or reload; the addon folders do not go there.
 
+The browser initially opens Professions after login or reload. The left navigation
+is ordered Professions, Characters, then Bank. Closing and reopening the browser
+within the same session preserves the last selected tab.
+The profession filters are ordered Own, then All. Own is selected by default,
+including when reopening the browser, and lists the current character's captured
+professions. All shows the full profession list. When Own has captured entries,
+the browser selects a listed profession instead of an unowned default.
+
+The Characters page shows the selected character's Classic class icon in the
+portrait frame. It uses built-in game artwork and saves an optional `classToken`
+with the character's identity. The class is captured on login and inspection,
+shared with complete gear snapshots between updated clients, and retained for
+offline display. Older records can also gain it from cached character or guild
+roster information when selected. If the class cannot be determined, the frame
+shows a question mark. Race and gender labels remain below the icon.
+
+The Characters footer keeps the equipment helper text on the left and the
+Last Captured label with its date/time on the right, with separate space for each.
+
 If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers and the gear message protocol keep their existing names and formats.
 
 ## Data and synchronization
@@ -52,12 +71,14 @@ cannot overwrite newer observations. Receiving or forwarding a snapshot keeps
 its original times. Conflicting network observations within the same server
 second retain the saved slot; a direct inspection can replace it.
 
-Gear sharing keeps its existing protocol-6 request, update and snapshot formats.
-The gear addon adds an optional compact readiness hint. Automatic discovery of
-never-inspected characters requires peers that understand this hint. Older
-protocol-6 peers keep their existing manual and incremental sync behavior, but
-cannot discover a fresh character from the new hint. Existing gear caches remain
-readable. Update all three addon folders together.
+Gear sharing uses protocol 6. Updated clients may send an optional class-identity
+companion message before a complete gear snapshot and an optional compact
+readiness hint. The existing protocol-6 request, update, and snapshot messages
+are unchanged, so older peers retain manual and incremental sync but cannot
+discover a fresh character through the new hint. Class metadata is accepted
+only with the selected responder's valid snapshot for a pending request; missing
+class metadata never clears a known class. Existing gear caches remain readable.
+Update all three addon folders together.
 
 At login, the gear addon tries to capture and persist the local character's
 complete gear after delays of 1, 2, 4, 8, 16 and 30 seconds when an item link is

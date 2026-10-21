@@ -315,23 +315,22 @@ local JOURNAL_TEXTURES = {
     leather = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leather.tga",
     button = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button.tga",
     professionButton = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button-framed.tga",
-    window = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-window.tga",
+    window = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-window.blp",
     professionMask = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-page-mask.tga",
-    armory = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\character-armory-vignette.tga",
-    gearPage = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\gear-journal-page.tga",
+    gearPage = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\gear-journal-page.blp",
     font = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif.ttf",
     boldFont = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif-bold.ttf",
     italicFont = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\journal-serif-italic.ttf",
     professions = {
-        Alchemy = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\alchemy-page.tga",
-        Blacksmithing = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\blacksmithing-page.tga",
+        Alchemy = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\alchemy-page.blp",
+        Blacksmithing = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\blacksmithing-page.blp",
         Cooking = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\cooking-page.tga",
-        Enchanting = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\enchanting-page.tga",
-        Engineering = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\engineering-page.tga",
+        Enchanting = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\enchanting-page.blp",
+        Engineering = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\engineering-page.blp",
         ["First Aid"] = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\first-aid-page.tga",
         Fishing = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\fishing-page.tga",
-        Leatherworking = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leatherworking-page.tga",
-        Tailoring = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\tailoring-page.tga",
+        Leatherworking = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leatherworking-page.blp",
+        Tailoring = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\tailoring-page.blp",
     },
     professionFallback = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\parchment.tga",
 }
@@ -943,9 +942,9 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, selectedProfession.professionID, selectedProfession.key, frame.api)
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
     end
-    frame.craftingContextSkillLineID = nil
-    frame.craftingContextOpenedByGuildBook = nil
-    if frame.professionLibraryMode == "Own" then
+    if frame.professionLibraryMode == "Own" and frame.db and frame.activeTab == "Professions" then
+        frame.craftingContextSkillLineID = nil
+        frame.craftingContextOpenedByGuildBook = nil
         openSelectedProfessionContext(frame, selectedProfession.professionID)
     end
     if frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
@@ -1152,7 +1151,7 @@ local function createProfessionsPage(api, frame)
         GGM.RefreshVisibleProfessionLibrary(frame)
     end)
 
-    frame.professionLibraryMode = "All"
+    frame.professionLibraryMode = "Own"
     local toggle = api.CreateFrame("Button", nil, page)
     toggle:SetSize(170, 28)
     local function createProfessionRadio(label, x)
@@ -1177,8 +1176,8 @@ local function createProfessionsPage(api, frame)
         radio:RegisterForClicks("LeftButtonUp")
         return radio
     end
-    toggle.allRadio = createProfessionRadio("ALL", 0)
-    toggle.ownRadio = createProfessionRadio("OWN", 88)
+    toggle.ownRadio = createProfessionRadio("OWN", 0)
+    toggle.allRadio = createProfessionRadio("ALL", 88)
     frame.professionLibraryToggle = toggle
     frame.professionLibraryToggle:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, 34)
     local function selectProfessionLibraryMode(mode)
@@ -1198,8 +1197,8 @@ local function createProfessionsPage(api, frame)
     end
     toggle.allRadio:SetScript("OnClick", function() selectProfessionLibraryMode("All") end)
     toggle.ownRadio:SetScript("OnClick", function() selectProfessionLibraryMode("Own") end)
-    toggle.allRadio:SetChecked(true)
-    toggle.ownRadio:SetChecked(false)
+    toggle.ownRadio:SetChecked(true)
+    toggle.allRadio:SetChecked(false)
     frame.professionLibraryEmpty = createText(sidebar, "OVERLAY", "GameFontHighlight")
     frame.professionLibraryEmpty:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -62)
     frame.professionLibraryEmpty:SetWidth(UI.professionRowWidth)
@@ -1485,7 +1484,7 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if selectedKey == "Professions" then
         frame.professionsPage:Show()
         frame.professionLibraryToggle:Show()
-        GGM.SyncSelectedProfession(frame, false)
+        if frame.db then GGM.SyncSelectedProfession(frame, false) end
         if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
             local profession
             for _, item in ipairs(PROFESSIONS) do if item.key == frame.selectedProfession then profession = item; break end end
@@ -1850,7 +1849,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
                 pcall(professionFrame.Hide, professionFrame)
             end
         end
-        self.professionLibraryMode = "All"
+        self.professionLibraryMode = "Own"
         self.selectedProfession = nil
         self.selectedProfessionID = nil
         self.craftingContextSkillLineID = nil
@@ -1895,8 +1894,8 @@ function GGM.CreateGuildGearBrowserWindow(api)
     navLabel:SetPoint("TOPLEFT", frame.navigationRail, "TOPLEFT", 38, -100)
     setTextColor(navLabel, THEME.railMuted)
     frame.navigationTabs = {
-        createNavigationTab(api, frame, "Character", "Characters", "Gear snapshots", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", -122),
-        createNavigationTab(api, frame, "Professions", "Professions", "Recipe memory", "Interface\\Icons\\Trade_BlackSmithing", -185),
+        createNavigationTab(api, frame, "Professions", "Professions", "Recipe memory", "Interface\\Icons\\Trade_BlackSmithing", -122),
+        createNavigationTab(api, frame, "Character", "Characters", "Gear snapshots", "Interface\\PaperDoll\\UI-PaperDoll-Slot-Chest", -185),
         createNavigationTab(api, frame, "Bank", "Bank", "Shared storage", "Interface\\Icons\\INV_Misc_Bag_10", -248),
     }
 
@@ -2035,18 +2034,6 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.realmLine:SetJustifyH("LEFT")
     if frame.realmLine.SetWordWrap then frame.realmLine:SetWordWrap(false) end
     setTextColor(frame.realmLine, THEME.muted)
-    frame.snapshotCaption = createSectionLabel(frame.gearPanel, "LAST CAPTURED")
-    GGM.ApplyJournalFont(frame.snapshotCaption, 11, "bold")
-    frame.snapshotCaption:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 34, -121)
-    frame.capturedLine = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
-    -- A bounded region avoids relying on a hidden caption's auto-sized bounds
-    -- while selection changes hide and repopulate the header.
-    frame.capturedLine:SetSize(152, 16)
-    frame.capturedLine:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 140, -121)
-    GGM.ApplyJournalFont(frame.capturedLine, 12)
-    frame.capturedLine:SetJustifyH("LEFT")
-    setTextColor(frame.capturedLine, THEME.textSoft)
-
     frame.modelStage = createSurface(api, frame.gearPanel, THEME.panel, THEME.borderSoft)
     frame.modelStage:SetSize(208, 218)
     frame.modelStage:SetPoint("TOP", frame.gearPanel, "TOP", 0, -164)
@@ -2118,8 +2105,29 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.detailFooter:SetHeight(20)
     frame.detailFooter.background:Hide()
     for _, edge in ipairs(frame.detailFooter.border) do edge:Hide() end
+
+    frame.capturedLine = createText(frame.detailFooter, "OVERLAY", "GameFontHighlightSmall")
+    frame.capturedLine:SetSize(152, 16)
+    frame.capturedLine:SetPoint("RIGHT", frame.detailFooter, "RIGHT", -8, 0)
+    GGM.ApplyJournalFont(frame.capturedLine, 12)
+    frame.capturedLine:SetJustifyH("RIGHT")
+    if frame.capturedLine.SetWordWrap then frame.capturedLine:SetWordWrap(false) end
+    setTextColor(frame.capturedLine, THEME.textSoft)
+
+    frame.snapshotCaption = createSectionLabel(frame.detailFooter, "LAST CAPTURED")
+    GGM.ApplyJournalFont(frame.snapshotCaption, 11, "bold")
+    frame.snapshotCaption:SetSize(104, 16)
+    frame.snapshotCaption:SetPoint("RIGHT", frame.capturedLine, "LEFT", -8, 0)
+    frame.snapshotCaption:SetJustifyH("RIGHT")
+    if frame.snapshotCaption.SetWordWrap then frame.snapshotCaption:SetWordWrap(false) end
+
     local footerText = createText(frame.detailFooter, "OVERLAY", "GameFontDisableSmall")
-    footerText:SetPoint("CENTER", frame.detailFooter, "CENTER", 0, 0)
+    footerText:SetPoint("LEFT", frame.detailFooter, "LEFT", 8, 0)
+    -- Fixed capture bounds reserve space even while selection changes hide it.
+    footerText:SetPoint("RIGHT", frame.snapshotCaption, "LEFT", -12, 0)
+    footerText:SetHeight(16)
+    footerText:SetJustifyH("LEFT")
+    if footerText.SetWordWrap then footerText:SetWordWrap(false) end
     GGM.ApplyJournalFont(footerText, 12)
     footerText:SetText("Last-known equipment · Hover a slot to view the saved item")
     setTextColor(footerText, THEME.muted)
@@ -2139,7 +2147,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     end
 
     createProfessionsPage(api, frame)
-    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
     return frame
 end
 
@@ -2150,14 +2158,25 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     local selectedKey = frame.selectedEntry and frame.selectedEntry.key or nil
     frame.entries = GGM.BuildGuildGearBrowserEntries(db)
     frame.db = db
-    GGM.SelectProfession(frame, frame.selectedProfession or "Alchemy")
+    GGM.RefreshVisibleProfessionLibrary(frame)
+    local selectedProfession = frame.selectedProfession
+    if frame.professionLibraryMode == "Own" then
+        local selectionVisible = false
+        for _, entry in ipairs(frame.visibleProfessionEntries or {}) do
+            if entry.key == selectedProfession then selectionVisible = true; break end
+        end
+        if not selectionVisible and frame.visibleProfessionEntries[1] then
+            selectedProfession = frame.visibleProfessionEntries[1].key
+        end
+    end
+    GGM.SelectProfession(frame, selectedProfession or "Alchemy")
     frame.searchBox:SetText(query)
     frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, query)
     frame.selectedEntry = nil
     for _, entry in ipairs(frame.filteredEntries) do if entry.key == selectedKey then frame.selectedEntry = entry; break end end
     if not frame.selectedEntry then frame.selectedEntry = frame.filteredEntries[1] end
     updateBrowserList(frame, api)
-    GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Character")
+    GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Professions")
     frame:Show()
     if frame.SetFrameStrata then frame:SetFrameStrata("DIALOG") end
     if frame.Raise then frame:Raise() end

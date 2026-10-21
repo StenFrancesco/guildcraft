@@ -1,4 +1,4 @@
-"""Export generated source artwork as uncompressed 32-bit runtime textures."""
+"""Export opaque source artwork as uncompressed 24-bit runtime textures."""
 
 import json
 from pathlib import Path
@@ -24,26 +24,28 @@ def main():
         "design": "Artisan Journal",
         "generation": "Built-in ImageGen; gpt-6-luna subagents, max effort",
         "runtime_verified": False,
-        "format": "Uncompressed 32-bit RGBA TGA",
+        "format": "Uncompressed 24-bit RGB TGA",
         "textures": {},
     }
     for name in SURFACES:
-        size = (512, 512)
+        size = (256, 256)
         with Image.open(SOURCE / f"{name}.png") as source:
             source.load()
             source_size = source.size
             # Technical runtime sizing only; generated art remains in Source.
             texture = source.convert("RGBA").resize(size, Image.Resampling.LANCZOS)
+        assert texture.getchannel("A").getextrema() == (255, 255), "Surface must remain opaque"
+        texture = texture.convert("RGB")
         path = MEDIA / f"{name}.tga"
         texture.save(path, format="TGA", compression=None)
         with Image.open(path) as exported:
             exported.load()
-            assert exported.size == size and exported.mode == "RGBA"
+            assert exported.size == size and exported.mode == "RGB"
             assert exported.tobytes() == texture.tobytes()
         header = path.read_bytes()[:18]
         assert header[2] == 2, "Expected uncompressed true-color TGA"
         assert struct.unpack_from("<HH", header, 12) == size
-        assert header[16] == 32 and header[17] & 15 == 8
+        assert header[16] == 24 and header[17] & 15 == 0
         manifest["textures"][name] = {
             "file": path.name,
             "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\" + path.name,
@@ -52,7 +54,7 @@ def main():
             "source_size": list(source_size),
             "role": "reusable surface",
         }
-        print(f"Verified {path.name}: {size[0]} x {size[1]}, RGBA, uncompressed")
+        print(f"Verified {path.name}: {size[0]} x {size[1]}, RGB, uncompressed")
 
     (MEDIA / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     archive = ROOT / "ui-concepts" / "artisan-journal-runtime-assets.zip"

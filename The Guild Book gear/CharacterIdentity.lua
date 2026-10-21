@@ -8,6 +8,12 @@ local function positiveInteger(value)
     return type(value) == "number" and value > 0 and value == math.floor(value)
 end
 
+function GGM.ReadUnitClassToken(api, unit)
+    if type(api.UnitClass) ~= "function" then return nil end
+    local ok, _, token = pcall(api.UnitClass, unit)
+    return ok and GGM.NormalizeClassicClassToken(token) or nil
+end
+
 local function observedModelIdentity(api)
     local raceID
     local sex
@@ -62,6 +68,7 @@ function GGM.BuildPlayerIdentity(api)
         name = name,
         realm = realm,
         guid = api.UnitGUID("player"),
+        classToken = GGM.ReadUnitClassToken(api, "player"),
         raceID = raceID,
         sex = sex,
         displayID = displayID,

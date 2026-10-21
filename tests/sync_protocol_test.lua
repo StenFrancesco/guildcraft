@@ -55,6 +55,27 @@ local function copyFields(fields)
     return copied
 end
 
+T.test("optional class metadata round trips without changing protocol-six snapshot bytes", function()
+    local GGM = loadModules()
+    local target = makeIdentity("Alice", "Silvermoon", "Player-1")
+    local requester = makeIdentity("Bob", "Silvermoon", "Player-2")
+    local responder = makeIdentity("Carol", "Silvermoon", "Player-3")
+    local snapshot = makeSnapshot(GGM)
+    local legacy = assert(GGM.EncodeSyncSnapshotResponse(target, requester, responder, snapshot, 2, "000001"))
+    target.classToken = "HUNTER"
+    T.assertEqual(assert(GGM.EncodeSyncSnapshotResponse(target, requester, responder, snapshot, 2, "000001")), legacy)
+    local payload = assert(GGM.EncodeSyncClassIdentity(target, requester, responder, "000001"))
+    local decoded = assert(GGM.DecodeSyncMessage(payload))
+    T.assertEqual(decoded.type, "CLASS_IDENTITY")
+    T.assertEqual(decoded.classToken, "HUNTER")
+    T.assertEqual(decoded.target.guid, target.guid)
+    local header, fields = parseFields(payload)
+    fields[6] = "EVOKER"
+    local invalid, err = GGM.DecodeSyncMessage(buildPayload(header, fields))
+    T.assertNil(invalid)
+    T.assertEqual(err, "sync-class-token-invalid")
+end)
+
 T.test("slot update protocol round trips explicit bounded fields", function()
     local GGM = loadModules()
     local identity = makeIdentity("Alice", "Silvermoon", "Player-1234-AAAA")

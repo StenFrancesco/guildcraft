@@ -204,6 +204,22 @@ function GGM.EncodeSyncSnapshotResponseClaim(target, requester, responder, confi
     return encodePayload("C", fields)
 end
 
+-- A companion payload leaves the existing protocol-6 gear snapshot unchanged.
+function GGM.EncodeSyncClassIdentity(target, requester, responder, requestID)
+    for _, identity in ipairs({ target, requester, responder }) do
+        local valid, err = GGM.ValidateSyncIdentity(identity)
+        if not valid then return nil, err end
+    end
+    local valid, err = validateRequestID(requestID)
+    if not valid then return nil, err end
+    local classToken = GGM.NormalizeClassicClassToken(target.classToken)
+    if not classToken then return nil, "sync-class-token-invalid" end
+    return encodePayload("I", {
+        target.key, requester.key, responder.key, requestID,
+        type(target.guid) == "string" and target.guid or "", classToken,
+    })
+end
+
 function GGM.EncodeSyncSnapshotResponse(target, requester, responder, snapshot, confirmedSequence, requestID)
     local targetValid, targetErr = GGM.ValidateSyncIdentity(target)
     if not targetValid then return nil, targetErr end
@@ -324,10 +340,28 @@ function GGM.DecodeSyncMessage(payload)
     elseif typeCode == "R" then fieldCount = 7
     elseif typeCode == "S" then fieldCount = 18 + (#GGM.TRACKED_SLOTS * 5)
     elseif typeCode == "C" then fieldCount = 7
+    elseif typeCode == "I" then fieldCount = 6
     else return nil, "sync-message-type-unknown" end
     local fields, cursor, fieldsErr = readFields(payload, 3, fieldCount)
     if not fields then return nil, fieldsErr end
     if cursor ~= #payload + 1 then return nil, "sync-payload-trailing-data" end
+    if typeCode == "I" then
+        for index = 1, 3 do
+            local valid, err = validateBoundedString(fields[index], GGM.SYNC_MAX_IDENTITY_KEY_BYTES, "sync-class-identity-key", false)
+            if not valid then return nil, err end
+        end
+        local requestValid, requestErr = validateRequestID(fields[4])
+        if not requestValid then return nil, requestErr end
+        local guidValid, guidErr = validateBoundedString(fields[5], GGM.SYNC_MAX_GUID_BYTES, "sync-class-guid", true)
+        if not guidValid then return nil, guidErr end
+        local classToken = GGM.NormalizeClassicClassToken(fields[6])
+        if not classToken then return nil, "sync-class-token-invalid" end
+        return {
+            type = "CLASS_IDENTITY", target = { key = fields[1], guid = fields[5] ~= "" and fields[5] or nil },
+            requester = { key = fields[2] }, responder = { key = fields[3] },
+            requestID = fields[4], classToken = classToken,
+        }, nil
+    end
     if typeCode == "U" then
         local identity, identityErr = decodeIdentity(fields, 1)
         if not identity then return nil, identityErr end

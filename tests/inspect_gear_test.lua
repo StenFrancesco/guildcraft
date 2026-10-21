@@ -4,6 +4,7 @@ local function newFixture(options)
     options = options or {}
     local GGM = {}
     T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
+    T.loadAddonFile("The Guild Book gear/CharacterIdentity.lua", GGM)
     T.loadAddonFile("The Guild Book gear/GearData.lua", GGM)
     T.loadAddonFile("The Guild Book gear/GearSnapshot.lua", GGM)
     if options.useRealStorage then T.loadAddonFile("The Guild Book gear/Storage.lua", GGM) end
@@ -103,6 +104,7 @@ end
 
 T.test("inspect hooks observe existing requests and save one complete guild gear observation", function()
     local f = newFixture()
+    f.api.UnitClass = function() return "Localized class", "SHAMAN" end
     T.assertNotNil(f.state)
     T.assertNil(f.installErr)
     T.assertNotNil(f.hooks.NotifyInspect)
@@ -118,6 +120,7 @@ T.test("inspect hooks observe existing requests and save one complete guild gear
     T.assertEqual(f.saves[1].db, f.db)
     T.assertEqual(f.saves[1].identity.key, "Target-Realm")
     T.assertEqual(f.saves[1].identity.guid, "Player-1-Target")
+    T.assertEqual(f.saves[1].identity.classToken, "SHAMAN")
     T.assertTrue(f.saves[1].snapshot.complete)
     T.assertEqual(f.saves[1].snapshot.capturedAt, 123456)
     T.assertEqual(f.saves[1].snapshot.slots.HEAD.itemID, 12345)

@@ -2,14 +2,14 @@
   "design": "Artisan Journal",
   "generation": "Built-in ImageGen; gpt-6-luna subagents, max effort",
   "runtime_verified": false,
-  "format": "Uncompressed 32-bit RGBA TGA",
+  "format": "Uncompressed 24-bit RGB TGA",
   "textures": {
     "parchment": {
       "file": "parchment.tga",
       "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\parchment.tga",
       "size": [
-        512,
-        512
+        256,
+        256
       ],
       "source": "tests/Source/parchment.png",
       "source_size": [
@@ -22,8 +22,8 @@
       "file": "leather.tga",
       "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leather.tga",
       "size": [
-        512,
-        512
+        256,
+        256
       ],
       "source": "tests/Source/leather.png",
       "source_size": [
@@ -36,8 +36,8 @@
       "file": "profession-button.tga",
       "wow_path": "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-button.tga",
       "size": [
-        512,
-        512
+        256,
+        256
       ],
       "source": "tests/Source/profession-button.png",
       "source_size": [

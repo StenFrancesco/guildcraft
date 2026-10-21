@@ -113,6 +113,7 @@ local function readIdentity(api, unit)
         name = name,
         realm = realm,
         guid = guid,
+        classToken = GGM.ReadUnitClassToken(api, unit),
     }
     if #identity.key > (GGM.SYNC_MAX_IDENTITY_KEY_BYTES or 80) then
         return nil, "inspect-identity-unavailable"

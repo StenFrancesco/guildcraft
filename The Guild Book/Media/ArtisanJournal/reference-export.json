@@ -8,7 +8,8 @@
     "size": [
       1024,
       1024
-    ]
+    ],
+    "file": "alchemy-page.blp"
   },
   "blacksmithing-page": {
     "source": "blacksmithing-page.png",
@@ -19,7 +20,8 @@
     "size": [
       1024,
       1024
-    ]
+    ],
+    "file": "blacksmithing-page.blp"
   },
   "cooking-page": {
     "source": "cooking-page.png",
@@ -41,7 +43,8 @@
     "size": [
       1024,
       1024
-    ]
+    ],
+    "file": "enchanting-page.blp"
   },
   "engineering-page": {
     "source": "engineering-page.png",
@@ -52,7 +55,8 @@
     "size": [
       1024,
       1024
-    ]
+    ],
+    "file": "engineering-page.blp"
   },
   "first-aid-page": {
     "source": "first-aid-page.png",
@@ -85,7 +89,8 @@
     "size": [
       1024,
       1024
-    ]
+    ],
+    "file": "leatherworking-page.blp"
   },
   "tailoring-page": {
     "source": "tailoring-page.png",
@@ -96,7 +101,8 @@
     "size": [
       1024,
       1024
-    ]
+    ],
+    "file": "tailoring-page.blp"
   },
   "journal-window": {
     "source": "journal-window-v2.png",
@@ -107,7 +113,8 @@
     "size": [
       2048,
       1024
-    ]
+    ],
+    "file": "journal-window.blp"
   },
   "profession-button-framed": {
     "source": "profession-button-framed-v2.png",
@@ -116,8 +123,9 @@
       724
     ],
     "size": [
-      1024,
-      256
-    ]
+      512,
+      128
+    ],
+    "file": "profession-button-framed.tga"
   }
 }

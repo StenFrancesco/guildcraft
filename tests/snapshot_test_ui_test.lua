@@ -447,9 +447,11 @@ local function newControl()
     function control:SetTextInsets(...) self.textInsets = { ... } end
     function control:SetPoint(point, relativeTo, relativePoint, x, y)
         self.point = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
+        self.points = self.points or {}
+        self.points[point] = self.point
     end
     function control:SetAllPoints(relativeTo) self.allPointsTo = relativeTo end
-    function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end
+    function control:ClearAllPoints() self.point = nil; self.points = nil; self.allPointsTo = nil end
     function control:SetClampedToScreen(value) self.clampedToScreen = value end
     function control:SetJustifyH(value) self.justifyH = value end
     function control:SetAutoFocus() end
@@ -550,8 +552,12 @@ local function makeModelBrowserAPI(failModelCreation)
         if raceID == 2 then return { raceName = "Orc", clientFileString = "Orc" } end
     end }
     api.C_Texture = { GetAtlasInfo = function(atlas)
-        if atlas == "raceicon128-human-male" or atlas == "raceicon128-orc-female" then return {} end
+        if atlas == "classicon-warrior" or atlas == "classicon-mage" then return {} end
     end }
+    api.GetPlayerInfoByGUID = function(guid)
+        if guid == "Player-portrait-Alice" then return "Warrior", "WARRIOR" end
+        if guid == "Player-portrait-Beatrice" then return "Mage", "MAGE" end
+    end
     local createFrame = api.CreateFrame
     api.CreateFrame = function(frameType, name, parent)
         if failModelCreation and frameType == "Frame" and parent
@@ -562,6 +568,7 @@ local function makeModelBrowserAPI(failModelCreation)
 end
 
 local function setSavedModelIdentity(record)
+    record.identity.guid = "Player-portrait-" .. record.identity.name
     record.identity.raceID, record.identity.sex, record.identity.displayID = 1, 2, 101
     local visualSlotIDs = { HEAD = 1, SHOULDER = 3, CHEST = 5, WAIST = 6, LEGS = 7, FEET = 8,
         WRIST = 9, HANDS = 10, BACK = 15, MAIN_HAND = 16, OFF_HAND = 17, TABARD = 19 }
@@ -607,9 +614,103 @@ local function makeDB(GGM, records)
 end
 
 local function showBrowser(GGM, api, db)
+    -- Gear fixtures explicitly open Characters; the default-view case uses the
+    -- public opening function directly so it exercises the real initial tab.
+    if not GGM.guildGearBrowserFrame then
+        GGM.guildGearBrowserFrame = GGM.CreateGuildGearBrowserWindow(api)
+        GGM.guildGearBrowserFrame.professionLibraryMode = "All"
+        GGM.SelectGuildGearBrowserTab(GGM.guildGearBrowserFrame, "Character")
+    end
     GGM.ShowGuildGearBrowserWindow(api, db)
     return GGM.guildGearBrowserFrame
 end
+
+T.test("browser opens Professions first, orders navigation, and remembers the session tab", function()
+    local GGM = loadUI()
+    local api, db = makeBrowserAPI(), makeDB(GGM)
+    local syncCalls = 0
+    GGM.professionSync = {}
+    GGM.RequestProfessionSync = function()
+        syncCalls = syncCalls + 1
+        return true
+    end
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    GGM.guildGearBrowserFrame = frame
+    T.assertEqual(syncCalls, 0, "constructing a hidden browser must not start profession sync")
+    T.assertEqual(frame.activeTab, "Professions")
+    T.assertEqual(frame.navigationTabs[1].key, "Professions")
+    T.assertEqual(frame.navigationTabs[2].key, "Character")
+    T.assertEqual(frame.navigationTabs[3].key, "Bank")
+    T.assertTrue(frame.navigationTabs[1].point.y > frame.navigationTabs[2].point.y)
+    T.assertTrue(frame.navigationTabs[2].point.y > frame.navigationTabs[3].point.y)
+
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(frame.activeTab, "Professions")
+    T.assertEqual(frame.pageTitle.text, "Professions")
+    T.assertTrue(frame.professionsPage:IsShown())
+    T.assertTrue(frame.navigationTabs[1].accent:IsShown())
+    T.assertFalse(frame.navigationTabs[2].accent:IsShown())
+    T.assertEqual(syncCalls, 1, "opening the default page uses the existing bounded selection sync")
+
+    for index = 2, 3 do
+        local tab = frame.navigationTabs[index]
+        tab.scripts.OnClick(tab)
+        frame:Hide()
+        GGM.ShowGuildGearBrowserWindow(api, db)
+        T.assertEqual(frame.activeTab, tab.key, "reopening must preserve the selected session tab")
+        T.assertTrue(tab.accent:IsShown())
+    end
+    frame.activeTab = nil
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(frame.activeTab, "Professions", "missing selection falls back to Professions")
+end)
+
+T.test("Own is the first default filter and both filters retain their meaning after reopening", function()
+    local GGM = loadUI()
+    local api, db = makeBrowserAPI(), makeDB(GGM)
+    function api.UnitFullName() return "Alice", "Silvermoon" end
+    function api.GetRealmName() return "Silvermoon" end
+    function api.UnitGUID() return "Player-1" end
+    db.professions = { ["Alice-Silvermoon"] = {
+        identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1" },
+        snapshots = {
+            [202] = { complete = true, professionID = 202, professionName = "Engineering",
+                capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS },
+            [197] = { complete = true, professionID = 197, professionName = "Tailoring",
+                capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS },
+        },
+    } }
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    local frame = GGM.guildGearBrowserFrame
+    local toggle = frame.professionLibraryToggle
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertEqual(toggle.ownRadio.label.text, "OWN")
+    T.assertEqual(toggle.allRadio.label.text, "ALL")
+    T.assertTrue(toggle.ownRadio.point.x < toggle.allRadio.point.x)
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, 2)
+    T.assertEqual(frame.selectedProfession, "Engineering")
+    T.assertFalse(frame.professionButtons[1]:IsShown(), "unowned Alchemy must not appear in Own")
+
+    toggle.allRadio.scripts.OnClick(toggle.allRadio)
+    T.assertEqual(frame.professionLibraryMode, "All")
+    T.assertTrue(toggle.allRadio:GetChecked())
+    T.assertFalse(toggle.ownRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, #frame.professionButtons)
+    toggle.ownRadio.scripts.OnClick(toggle.ownRadio)
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, 2)
+    toggle.allRadio.scripts.OnClick(toggle.allRadio)
+    frame:Hide()
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, 2)
+end)
 
 T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
     local G = loadUI()
@@ -737,8 +838,14 @@ T.test("character content stays within the journal's painted page borders", func
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
         "native scrollbar extends beyond the library border")
-    T.assertTrue(frame.capturedLine.point.x + frame.capturedLine.width + 8 <= frame.gearSyncButton.point.x,
-        "sync button overlaps the capture date")
+    T.assertEqual(frame.capturedLine.point.relativeTo, frame.detailFooter,
+        "capture date must be in the footer rather than beside the sync button")
+    T.assertEqual(frame.capturedLine.point.point, "RIGHT")
+    T.assertEqual(frame.capturedLine.justifyH, "RIGHT")
+    T.assertEqual(frame.snapshotCaption.point.relativeTo, frame.capturedLine)
+    T.assertEqual(frame.snapshotCaption.point.relativePoint, "LEFT")
+    T.assertTrue(frame.snapshotCaption.point.x <= -8,
+        "capture label needs a gap before the timestamp")
 end)
 
 T.test("journal headings reserve space for subtitles inside their columns", function()
@@ -1152,10 +1259,12 @@ end)
 T.test("closing the guild book only closes a profession context it opened", function()
     local GGM = loadUI()
     local closeCalls, hideCalls = 0, 0
+    local openCalls = 0
     local openedSkillLineID
     local api = makeBrowserAPI()
     api.C_TradeSkillUI = {
         OpenTradeSkill = function(skillLineID)
+            openCalls = openCalls + 1
             openedSkillLineID = skillLineID
             return true
         end,
@@ -1166,6 +1275,7 @@ T.test("closing the guild book only closes a profession context it opened", func
         Hide = function() hideCalls = hideCalls + 1 end,
     }
     local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame.db = makeDB(GGM)
 
     frame.scripts.OnHide(frame)
     T.assertEqual(closeCalls, 0, "an independently opened profession context must remain open")
@@ -1175,6 +1285,15 @@ T.test("closing the guild book only closes a profession context it opened", func
     GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(openedSkillLineID, frame.selectedProfessionID)
     T.assertEqual(frame.craftingContextSkillLineID, frame.selectedProfessionID)
+
+    GGM.guildGearBrowserFrame, GGM.db = frame, frame.db
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    frame:Show()
+    T.assertTrue(GGM.RefreshVisibleGuildGearBrowser())
+    T.assertEqual(openCalls, 1, "a Characters refresh must not open a profession context")
+    T.assertEqual(frame.craftingContextSkillLineID, openedSkillLineID)
+    T.assertTrue(frame.craftingContextOpenedByGuildBook,
+        "a Characters refresh must preserve ownership so closing can clean up")
 
     frame.scripts.OnHide(frame)
     T.assertEqual(closeCalls, 1)
@@ -1534,7 +1653,7 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     T.assertEqual(frame.width, 1400)
     T.assertEqual(frame.height, 630)
     T.assertNil(frame.template)
-    T.assertEqual(frame.background.texture, mediaPath .. "journal-window.tga")
+    T.assertEqual(frame.background.texture, mediaPath .. "journal-window.blp")
     T.assertTrue(frame.background.allPointsTo == frame)
     T.assertTrue(frame.movable)
     T.assertTrue(frame.clampedToScreen)
@@ -1561,6 +1680,7 @@ T.test("closing the browser leaves a profession frame open if it was already ope
     api.ProfessionsFrame = professionFrame
     api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
     local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame.db = makeDB(GGM)
     frame:Show()
     frame.professionLibraryMode = "Own"
 
@@ -1585,6 +1705,7 @@ T.test("closing the browser hides a profession frame that it opened", function()
     api.ProfessionsFrame = professionFrame
     api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
     local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame.db = makeDB(GGM)
     frame:Show()
     frame.professionLibraryMode = "Own"
 
@@ -1639,8 +1760,9 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(toggle.ownRadio.label.text, "OWN")
     T.assertEqual(toggle.allRadio.label.journalFont, frame.professionLibraryHeading.journalFont)
     T.assertEqual(toggle.allRadio.label.journalFontSize, frame.professionLibraryHeading.journalFontSize)
-    T.assertTrue(toggle.allRadio:GetChecked())
-    T.assertFalse(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertTrue(toggle.ownRadio.point.x < toggle.allRadio.point.x)
     T.assertTrue(toggle.height >= 20, "radio controls need a dedicated horizontal layout height")
     T.assertEqual(toggle.allRadio.point.relativeTo, toggle)
     T.assertEqual(toggle.ownRadio.point.relativeTo, toggle)
@@ -1858,15 +1980,15 @@ T.test("profession selection changes the full page artwork for each supported pr
         "Interface", "AddOns", "The Guild Book", "Media", "ArtisanJournal", "",
     }, separator)
     local expected = {
-        { key = "Alchemy", texture = mediaPath .. "alchemy-page.tga" },
-        { key = "Blacksmithing", texture = mediaPath .. "blacksmithing-page.tga" },
+        { key = "Alchemy", texture = mediaPath .. "alchemy-page.blp" },
+        { key = "Blacksmithing", texture = mediaPath .. "blacksmithing-page.blp" },
         { key = "Cooking", texture = mediaPath .. "cooking-page.tga" },
-        { key = "Enchanting", texture = mediaPath .. "enchanting-page.tga" },
-        { key = "Engineering", texture = mediaPath .. "engineering-page.tga" },
+        { key = "Enchanting", texture = mediaPath .. "enchanting-page.blp" },
+        { key = "Engineering", texture = mediaPath .. "engineering-page.blp" },
         { key = "First Aid", texture = mediaPath .. "first-aid-page.tga" },
         { key = "Fishing", texture = mediaPath .. "fishing-page.tga" },
-        { key = "Leatherworking", texture = mediaPath .. "leatherworking-page.tga" },
-        { key = "Tailoring", texture = mediaPath .. "tailoring-page.tga" },
+        { key = "Leatherworking", texture = mediaPath .. "leatherworking-page.blp" },
+        { key = "Tailoring", texture = mediaPath .. "tailoring-page.blp" },
     }
 
     for _, profession in ipairs(expected) do
@@ -1907,7 +2029,8 @@ T.test("profession page defers catalog construction until database assignment an
     T.assertEqual(frame.selectedProfession, "Alchemy")
     T.assertNil(frame.db)
     GGM.ShowGuildGearBrowserWindow(api, db)
-    T.assertEqual(#calls, 1)
+    local initialBuilds = #calls
+    T.assertTrue(initialBuilds > 0)
     T.assertTrue(calls[1].db == db)
     T.assertEqual(calls[1].professionID, 171)
     T.assertTrue(calls[1].api == api)
@@ -1927,7 +2050,7 @@ T.test("profession page defers catalog construction until database assignment an
         T.assertEqual(button.key, profession.key)
         button.scripts.OnClick(button)
         T.assertEqual(frame.selectedProfession, profession.key)
-        T.assertEqual(#calls, index, "each profession selection should build one local catalog")
+        T.assertEqual(#calls, initialBuilds + index - 1, "each profession selection should build one local catalog")
         T.assertEqual(calls[#calls].professionID, profession.id)
     end
 end)
@@ -1976,14 +2099,14 @@ T.test("profession search filters cached recipes only, changing profession clear
     frame.professionButtons[2].scripts.OnClick(frame.professionButtons[2])
     T.assertEqual(frame.professionSearchBox:GetText(), "")
     T.assertEqual(#frame.filteredProfessionRecipes, 2)
-    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertEqual(#calls, builderCalls + 2)
     T.assertEqual(frame.professionSearchBox:GetText(), "")
 
     frame.professionSearchBox:SetText("ring")
     builderCalls = #calls
-    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertEqual(#calls, builderCalls + 1)
     T.assertEqual(frame.professionSearchBox:GetText(), "ring")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
@@ -2339,12 +2462,12 @@ T.test("browser portrait selection updates from A to B and clears on no selectio
     local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
 
     T.assertTrue(frame.characterModelView.model.visible)
-    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
+    T.assertEqual(frame.characterModelView.caption.text, "Class icon unavailable")
     T.assertTrue(frame.characterModelView.questionMark.visible)
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertTrue(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-mage")
     T.assertEqual(frame.characterLine.text, "Beatrice")
     T.assertEqual(frame.capturedLine.text, "saved-1700000200")
     T.assertNil(frame.completenessBadge)
@@ -2356,7 +2479,7 @@ T.test("browser portrait selection updates from A to B and clears on no selectio
     T.assertFalse(frame.characterLine.visible)
 end)
 
-T.test("browser replaces one saved race portrait with another and clears it on empty selection", function()
+T.test("browser replaces one class icon with another and clears it on empty selection", function()
     local GGM = loadUI()
     local alpha, beta = makeRecord(GGM), makeRecord(GGM)
     setSavedModelIdentity(alpha)
@@ -2373,11 +2496,11 @@ T.test("browser replaces one saved race portrait with another and clears it on e
     local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
     local view = frame.characterModelView.model
     T.assertTrue(view.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-warrior")
 
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertTrue(view.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-mage")
     T.assertEqual(frame.characterModelView.raceLabel.text, "Orc")
 
     frame.searchBox:SetText("no match")
@@ -2404,7 +2527,7 @@ T.test("failed 2D portrait frame creation leaves saved detail visible with unava
     for _, slot in ipairs(frame.slotButtons) do T.assertTrue(slot.visible) end
 end)
 
-T.test("missing saved display ID still renders the race portrait", function()
+T.test("missing saved display ID still renders the class icon", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
     setSavedModelIdentity(record)
@@ -2412,7 +2535,7 @@ T.test("missing saved display ID still renders the race portrait", function()
     local frame = showBrowser(GGM, makeModelBrowserAPI(), makeDB(GGM, { record }))
 
     T.assertTrue(frame.characterModelView.model.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-warrior")
     T.assertFalse(frame.modelUnavailableLabel.visible)
     T.assertTrue(frame.capturedLine.visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
@@ -2429,17 +2552,17 @@ T.test("browser missing portrait data preserves incomplete and refresh-needed ge
     local api = makeModelBrowserAPI()
     local frame = showBrowser(GGM, api, makeDB(GGM, { legacy }))
 
-    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
+    T.assertEqual(frame.characterModelView.caption.text, "Class icon unavailable")
     T.assertNil(frame.completenessBadge)
     T.assertEqual(frame.capturedLine.text, "saved-1700000100")
     T.assertTrue(frame.slotButtons[1].visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { legacy }))
     T.assertNil(frame.completenessBadge)
-    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
-    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     T.assertTrue(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
     T.assertNil(frame.completenessBadge)
@@ -2469,13 +2592,13 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     T.assertTrue(emptySlot.status.width <= 92)
 end)
 
-T.test("opening and selecting browser entries never inspects, requests, captures, writes, or sends", function()
+T.test("opening and selecting browser entries only backfills class metadata without gear capture or network activity", function()
     local GGM = loadUI()
     local first, second = makeRecord(GGM), makeRecord(GGM)
     second.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
     setSavedModelIdentity(first)
     setSavedModelIdentity(second)
-    local forbidden = function() error("browser interaction must remain local and read-only") end
+    local forbidden = function() error("browser interaction must not capture gear or send messages") end
     for _, name in ipairs({
         "InspectUnit", "NotifyInspect", "CanInspect", "RequestCompleteSnapshot", "CaptureAndStoreLocalPlayer",
         "CapturePlayerGearSnapshot", "SaveCompleteCharacterRecord", "UpdateConfirmedCharacterSlot",
@@ -2509,7 +2632,10 @@ T.test("opening and selecting browser entries never inspects, requests, captures
         end
         return true
     end
-    local before = copyTable(db)
+    local expected = copyTable(db)
+    -- Cached class lookup may enrich legacy identities; every other saved field must stay unchanged.
+    expected.characters["Alice-Silvermoon"].identity.classToken = "WARRIOR"
+    expected.characters["Beatrice-ArgentDawn"].identity.classToken = "MAGE"
     local frame = showBrowser(GGM, api, db)
 
     frame.searchBox:SetText("beatrice")
@@ -2518,11 +2644,11 @@ T.test("opening and selecting browser entries never inspects, requests, captures
 
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
 
-    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
 
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
-    T.assertTrue(tablesEqual(db, before), "browser interaction must not mutate any SavedVariables data")
+    T.assertTrue(tablesEqual(db, expected), "browser interaction may only backfill the selected characters' class tokens")
 end)
 
 T.test("ggm slash command opens the local guild gear browser", function()
@@ -2773,13 +2899,24 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     T.assertTrue(page.visible)
     T.assertEqual(page.entries[1].label, "Guild Bank")
     T.assertTrue(page.entries[1].record == guildBank, "guild tab should use the realm returned with guild identity")
-    local titleTop = -frame.pageTitle.point.y
-    local headerBottom = titleTop + frame.pageTitle.font.size + math.abs(frame.pageSubtitle.point.y)
-        + frame.pageSubtitle.font.size
-    local listTop = 64 - page.listScroll.point.y
     T.assertEqual(page.libraryTitle.text, "BANK LIBRARY")
-    T.assertNil(page.libraryHelper, "bank page should use the shared subtitle instead of a duplicate helper")
-    T.assertTrue(listTop >= headerBottom + 8, "bank list must begin below the shared page heading")
+    T.assertFalse(frame.pageSubtitle.visible, "Bank uses its library helper instead of a duplicate shared subtitle")
+    T.assertNotNil(page.libraryHelper)
+    T.assertTrue(page.libraryHelper.point.relativeTo == page.libraryTitle)
+    T.assertEqual(page.libraryHelper.point.relativePoint, "BOTTOMLEFT")
+    T.assertTrue(page.libraryHelper.point.y < 0, "helper must sit below the library heading")
+    local helperBottom = -page.libraryTitle.point.y + page.libraryTitle.font.size
+        - page.libraryHelper.point.y + page.libraryHelper.font.size
+    T.assertTrue(-page.searchBox.point.y > helperBottom, "search must sit below the helper")
+    T.assertTrue(-page.listCount.point.y > -page.searchBox.point.y + page.searchBox.height,
+        "entry count must sit below search")
+    T.assertTrue(-page.listDivider.point.y > -page.listCount.point.y + page.listCount.font.size,
+        "divider must sit below the entry count")
+    T.assertTrue(-page.listScroll.points.TOPLEFT.y > -page.listDivider.point.y + page.listDivider.height,
+        "bank list must begin below the divider")
+    T.assertTrue(page.listScroll.points.BOTTOMLEFT.relativeTo == page,
+        "bank list must stretch to the page bottom")
+    T.assertEqual(page.listEmpty.justifyH, "LEFT")
     T.assertEqual(page.selectedEntry.kind, "guild")
     T.assertTrue(page.listScroll.scrollChild == page.listContent)
     T.assertTrue(page.tabScroll.scrollChild == page.tabContent)

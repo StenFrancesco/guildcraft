@@ -32,6 +32,7 @@ local function copyIdentity(identity)
         name = identity.name,
         realm = identity.realm,
         guid = identity.guid,
+        classToken = GGM.NormalizeClassicClassToken(identity.classToken),
     }
     copyModelIdentity(identity, copied)
     return copied
@@ -120,6 +121,7 @@ function GGM.UpdateLocalCharacterModelIdentity(db, identity)
     local updatedIdentity = copyIdentity(identity)
     updatedIdentity.key, updatedIdentity.name, updatedIdentity.realm = record.identity.key, record.identity.name, record.identity.realm
     local previousIdentity = copyIdentity(record.identity)
+    updatedIdentity.classToken = updatedIdentity.classToken or previousIdentity.classToken
     if updatedIdentity.raceID == nil then
         if previousIdentity.raceID ~= nil then
             updatedIdentity.raceID = previousIdentity.raceID
@@ -261,9 +263,16 @@ function GGM.SaveCompleteCharacterRecord(db, identity, snapshot, confirmedSequen
         return false, "confirmed-sequence-invalid"
     end
 
+    local savedIdentity = copyIdentity(identity)
+    local previous = db.characters[identity.key]
+    if type(previous) == "table" and type(previous.identity) == "table"
+        and identitiesCompatible(previous.identity, identity) then
+        savedIdentity.classToken = savedIdentity.classToken
+            or GGM.NormalizeClassicClassToken(previous.identity.classToken)
+    end
     db.characters[identity.key] = {
         complete = true,
-        identity = copyIdentity(identity),
+        identity = savedIdentity,
         gear = compactGear,
         confirmedSequence = sequence,
     }
@@ -528,6 +537,8 @@ local function mergeCompleteObservation(db, identity, snapshot, confirmedSequenc
         gear = candidate,
         confirmedSequence = math.max(knownSequence, incomingSequence),
     }
+    db.characters[identity.key].identity.classToken = db.characters[identity.key].identity.classToken
+        or GGM.NormalizeClassicClassToken(existing.identity.classToken)
     -- Inspection APIs may omit optional model information available in cache.
     if direct and db.characters[identity.key].identity.raceID == nil then
         copyModelIdentity(existing.identity, db.characters[identity.key].identity)
