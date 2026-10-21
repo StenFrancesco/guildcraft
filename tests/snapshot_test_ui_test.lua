@@ -589,9 +589,103 @@ local function makeDB(GGM, records)
 end
 
 local function showBrowser(GGM, api, db)
+    -- Gear fixtures explicitly open Characters; the default-view case uses the
+    -- public opening function directly so it exercises the real initial tab.
+    if not GGM.guildGearBrowserFrame then
+        GGM.guildGearBrowserFrame = GGM.CreateGuildGearBrowserWindow(api)
+        GGM.guildGearBrowserFrame.professionLibraryMode = "All"
+        GGM.SelectGuildGearBrowserTab(GGM.guildGearBrowserFrame, "Character")
+    end
     GGM.ShowGuildGearBrowserWindow(api, db)
     return GGM.guildGearBrowserFrame
 end
+
+T.test("browser opens Professions first, orders navigation, and remembers the session tab", function()
+    local GGM = loadUI()
+    local api, db = makeBrowserAPI(), makeDB(GGM)
+    local syncCalls = 0
+    GGM.professionSync = {}
+    GGM.RequestProfessionSync = function()
+        syncCalls = syncCalls + 1
+        return true
+    end
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    GGM.guildGearBrowserFrame = frame
+    T.assertEqual(syncCalls, 0, "constructing a hidden browser must not start profession sync")
+    T.assertEqual(frame.activeTab, "Professions")
+    T.assertEqual(frame.navigationTabs[1].key, "Professions")
+    T.assertEqual(frame.navigationTabs[2].key, "Character")
+    T.assertEqual(frame.navigationTabs[3].key, "Bank")
+    T.assertTrue(frame.navigationTabs[1].point.y > frame.navigationTabs[2].point.y)
+    T.assertTrue(frame.navigationTabs[2].point.y > frame.navigationTabs[3].point.y)
+
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(frame.activeTab, "Professions")
+    T.assertEqual(frame.pageTitle.text, "Professions")
+    T.assertTrue(frame.professionsPage:IsShown())
+    T.assertTrue(frame.navigationTabs[1].accent:IsShown())
+    T.assertFalse(frame.navigationTabs[2].accent:IsShown())
+    T.assertEqual(syncCalls, 1, "opening the default page uses the existing bounded selection sync")
+
+    for index = 2, 3 do
+        local tab = frame.navigationTabs[index]
+        tab.scripts.OnClick(tab)
+        frame:Hide()
+        GGM.ShowGuildGearBrowserWindow(api, db)
+        T.assertEqual(frame.activeTab, tab.key, "reopening must preserve the selected session tab")
+        T.assertTrue(tab.accent:IsShown())
+    end
+    frame.activeTab = nil
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(frame.activeTab, "Professions", "missing selection falls back to Professions")
+end)
+
+T.test("Own is the first default filter and both filters retain their meaning after reopening", function()
+    local GGM = loadUI()
+    local api, db = makeBrowserAPI(), makeDB(GGM)
+    function api.UnitFullName() return "Alice", "Silvermoon" end
+    function api.GetRealmName() return "Silvermoon" end
+    function api.UnitGUID() return "Player-1" end
+    db.professions = { ["Alice-Silvermoon"] = {
+        identity = { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1" },
+        snapshots = {
+            [202] = { complete = true, professionID = 202, professionName = "Engineering",
+                capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS },
+            [197] = { complete = true, professionID = 197, professionName = "Tailoring",
+                capturedAt = 1700000000, source = GGM.PROFESSION_SOURCE_PLAYER, status = GGM.PROFESSION_CACHE_STATUS },
+        },
+    } }
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    local frame = GGM.guildGearBrowserFrame
+    local toggle = frame.professionLibraryToggle
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertEqual(toggle.ownRadio.label.text, "OWN")
+    T.assertEqual(toggle.allRadio.label.text, "ALL")
+    T.assertTrue(toggle.ownRadio.point.x < toggle.allRadio.point.x)
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, 2)
+    T.assertEqual(frame.selectedProfession, "Engineering")
+    T.assertFalse(frame.professionButtons[1]:IsShown(), "unowned Alchemy must not appear in Own")
+
+    toggle.allRadio.scripts.OnClick(toggle.allRadio)
+    T.assertEqual(frame.professionLibraryMode, "All")
+    T.assertTrue(toggle.allRadio:GetChecked())
+    T.assertFalse(toggle.ownRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, #frame.professionButtons)
+    toggle.ownRadio.scripts.OnClick(toggle.ownRadio)
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, 2)
+    toggle.allRadio.scripts.OnClick(toggle.allRadio)
+    frame:Hide()
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertEqual(#frame.visibleProfessionEntries, 2)
+end)
 
 T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
     local G = loadUI()
@@ -1064,10 +1158,12 @@ end)
 T.test("closing the guild book only closes a profession context it opened", function()
     local GGM = loadUI()
     local closeCalls, hideCalls = 0, 0
+    local openCalls = 0
     local openedSkillLineID
     local api = makeBrowserAPI()
     api.C_TradeSkillUI = {
         OpenTradeSkill = function(skillLineID)
+            openCalls = openCalls + 1
             openedSkillLineID = skillLineID
             return true
         end,
@@ -1078,6 +1174,7 @@ T.test("closing the guild book only closes a profession context it opened", func
         Hide = function() hideCalls = hideCalls + 1 end,
     }
     local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame.db = makeDB(GGM)
 
     frame.scripts.OnHide(frame)
     T.assertEqual(closeCalls, 0, "an independently opened profession context must remain open")
@@ -1087,6 +1184,15 @@ T.test("closing the guild book only closes a profession context it opened", func
     GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(openedSkillLineID, frame.selectedProfessionID)
     T.assertEqual(frame.craftingContextSkillLineID, frame.selectedProfessionID)
+
+    GGM.guildGearBrowserFrame, GGM.db = frame, frame.db
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    frame:Show()
+    T.assertTrue(GGM.RefreshVisibleGuildGearBrowser())
+    T.assertEqual(openCalls, 1, "a Characters refresh must not open a profession context")
+    T.assertEqual(frame.craftingContextSkillLineID, openedSkillLineID)
+    T.assertTrue(frame.craftingContextOpenedByGuildBook,
+        "a Characters refresh must preserve ownership so closing can clean up")
 
     frame.scripts.OnHide(frame)
     T.assertEqual(closeCalls, 1)
@@ -1473,6 +1579,7 @@ T.test("closing the browser leaves a profession frame open if it was already ope
     api.ProfessionsFrame = professionFrame
     api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
     local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame.db = makeDB(GGM)
     frame:Show()
     frame.professionLibraryMode = "Own"
 
@@ -1497,6 +1604,7 @@ T.test("closing the browser hides a profession frame that it opened", function()
     api.ProfessionsFrame = professionFrame
     api.C_TradeSkillUI = { OpenTradeSkill = function() return true end }
     local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame.db = makeDB(GGM)
     frame:Show()
     frame.professionLibraryMode = "Own"
 
@@ -1551,8 +1659,9 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(toggle.ownRadio.label.text, "OWN")
     T.assertEqual(toggle.allRadio.label.journalFont, frame.professionLibraryHeading.journalFont)
     T.assertEqual(toggle.allRadio.label.journalFontSize, frame.professionLibraryHeading.journalFontSize)
-    T.assertTrue(toggle.allRadio:GetChecked())
-    T.assertFalse(toggle.ownRadio:GetChecked())
+    T.assertFalse(toggle.allRadio:GetChecked())
+    T.assertTrue(toggle.ownRadio:GetChecked())
+    T.assertTrue(toggle.ownRadio.point.x < toggle.allRadio.point.x)
     T.assertTrue(toggle.height >= 20, "radio controls need a dedicated horizontal layout height")
     T.assertEqual(toggle.allRadio.point.relativeTo, toggle)
     T.assertEqual(toggle.ownRadio.point.relativeTo, toggle)
@@ -1794,7 +1903,8 @@ T.test("profession page defers catalog construction until database assignment an
     T.assertEqual(frame.selectedProfession, "Alchemy")
     T.assertNil(frame.db)
     GGM.ShowGuildGearBrowserWindow(api, db)
-    T.assertEqual(#calls, 1)
+    local initialBuilds = #calls
+    T.assertTrue(initialBuilds > 0)
     T.assertTrue(calls[1].db == db)
     T.assertEqual(calls[1].professionID, 171)
     T.assertTrue(calls[1].api == api)
@@ -1812,7 +1922,7 @@ T.test("profession page defers catalog construction until database assignment an
         T.assertEqual(button.key, profession.key)
         button.scripts.OnClick(button)
         T.assertEqual(frame.selectedProfession, profession.key)
-        T.assertEqual(#calls, index, "each profession selection should build one local catalog")
+        T.assertEqual(#calls, initialBuilds + index - 1, "each profession selection should build one local catalog")
         T.assertEqual(calls[#calls].professionID, profession.id)
     end
 end)
@@ -1861,14 +1971,14 @@ T.test("profession search filters cached recipes only, changing profession clear
     frame.professionButtons[2].scripts.OnClick(frame.professionButtons[2])
     T.assertEqual(frame.professionSearchBox:GetText(), "")
     T.assertEqual(#frame.filteredProfessionRecipes, 2)
-    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertEqual(#calls, builderCalls + 2)
     T.assertEqual(frame.professionSearchBox:GetText(), "")
 
     frame.professionSearchBox:SetText("ring")
     builderCalls = #calls
-    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertEqual(#calls, builderCalls + 1)
     T.assertEqual(frame.professionSearchBox:GetText(), "ring")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
@@ -2321,10 +2431,10 @@ T.test("browser missing portrait data preserves incomplete and refresh-needed ge
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
     GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM, { legacy }))
     T.assertNil(frame.completenessBadge)
-    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
+    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
     T.assertFalse(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
-    frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     T.assertTrue(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
     T.assertNil(frame.completenessBadge)
@@ -2403,8 +2513,8 @@ T.test("opening and selecting browser entries never inspects, requests, captures
 
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
 
-    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
+    frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
 
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
     T.assertTrue(tablesEqual(db, before), "browser interaction must not mutate any SavedVariables data")

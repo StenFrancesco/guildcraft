@@ -28,6 +28,14 @@ Interface/AddOns/
 
 Enable the three addons in the game's AddOns list, then open the browser with `/ggm`. The addon databases are stored separately under `WTF/Account/<account>/SavedVariables` when you log out or reload; the addon folders do not go there.
 
+The browser initially opens Professions after login or reload. The left navigation
+is ordered Professions, Characters, then Bank. Closing and reopening the browser
+within the same session preserves the last selected tab.
+The profession filters are ordered Own, then All. Own is selected by default,
+including when reopening the browser, and lists the current character's captured
+professions. All shows the full profession list. When Own has captured entries,
+the browser selects a listed profession instead of an unowned default.
+
 If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers and the gear message protocol keep their existing names and formats.
 
 ## Data and synchronization
