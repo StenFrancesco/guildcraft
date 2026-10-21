@@ -33,7 +33,7 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 ## Data and synchronization
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
-- Profession sharing uses protocol P4 (`GC_PROF4`). Participating clients need compatible versions.
+- Profession browsing and sharing support Alchemy, Blacksmithing, Cooking, Enchanting, Engineering, First Aid, Fishing, Leatherworking, and Tailoring. First Aid is mainly relevant to the legacy client. Profession sharing uses protocol P4 (`GC_PROF4`); participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
 - Leaving a guild or switching guilds cancels work for the previous guild. Once current membership and roster state are confirmed, a fresh bounded synchronization run is scheduled for the new guild.
