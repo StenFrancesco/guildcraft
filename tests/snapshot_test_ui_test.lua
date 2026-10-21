@@ -1446,7 +1446,7 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     T.assertEqual(frame.width, 1400)
     T.assertEqual(frame.height, 630)
     T.assertNil(frame.template)
-    T.assertEqual(frame.background.texture, mediaPath .. "journal-window.tga")
+    T.assertEqual(frame.background.texture, mediaPath .. "journal-window.blp")
     T.assertTrue(frame.background.allPointsTo == frame)
     T.assertTrue(frame.movable)
     T.assertTrue(frame.clampedToScreen)
@@ -1748,12 +1748,12 @@ T.test("profession selection changes the full page artwork for each supported pr
         "Interface", "AddOns", "The Guild Book", "Media", "ArtisanJournal", "",
     }, separator)
     local expected = {
-        { key = "Alchemy", texture = mediaPath .. "alchemy-page.tga" },
-        { key = "Blacksmithing", texture = mediaPath .. "blacksmithing-page.tga" },
-        { key = "Enchanting", texture = mediaPath .. "enchanting-page.tga" },
-        { key = "Engineering", texture = mediaPath .. "engineering-page.tga" },
-        { key = "Leatherworking", texture = mediaPath .. "leatherworking-page.tga" },
-        { key = "Tailoring", texture = mediaPath .. "tailoring-page.tga" },
+        { key = "Alchemy", texture = mediaPath .. "alchemy-page.blp" },
+        { key = "Blacksmithing", texture = mediaPath .. "blacksmithing-page.blp" },
+        { key = "Enchanting", texture = mediaPath .. "enchanting-page.blp" },
+        { key = "Engineering", texture = mediaPath .. "engineering-page.blp" },
+        { key = "Leatherworking", texture = mediaPath .. "leatherworking-page.blp" },
+        { key = "Tailoring", texture = mediaPath .. "tailoring-page.blp" },
     }
 
     for _, profession in ipairs(expected) do

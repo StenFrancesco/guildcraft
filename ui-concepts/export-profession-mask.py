@@ -6,7 +6,7 @@ import sys
 import zipfile
 
 MEDIA = Path(__file__).resolve().parents[1] / "The Guild Book" / "Media" / "ArtisanJournal"
-SIZE = 1024
+SIZE = 256
 BASE_FADE = 0.05
 UPPER_FADE = BASE_FADE * 1.5
 TOP_RADIUS = 0.10
@@ -37,7 +37,10 @@ if __name__ == "__main__":
     target = MEDIA / "profession-page-mask.tga"
     mask.save(target, compression=None)
     with Image.open(target) as exported:
+        assert exported.size == (SIZE, SIZE)
         assert exported.mode == "RGBA" and exported.tobytes() == mask.tobytes()
+    header = target.read_bytes()[:18]
+    assert header[2] == 2 and header[16] == 32 and header[17] & 15 == 8
     assert mask.getpixel((0, 0))[3] == 0
     assert mask.getpixel((SIZE // 2, SIZE // 2))[3] == 255
     assert opacity(0.04, 0.25) < opacity(0.04, 0.75)
@@ -49,7 +52,7 @@ if __name__ == "__main__":
         archive = root / "ui-concepts" / "The-Guild-Book-rounded-professions.zip"
         files = sorted(p for p in addon.rglob("*") if p.is_file()
                        and "Source" not in p.parts
-                       and (p.suffix.lower() in {".lua", ".toc", ".tga", ".ttf", ".json", ".md"}
+                       and (p.suffix.lower() in {".lua", ".toc", ".tga", ".blp", ".ttf", ".json", ".md"}
                             or p.name == "FONT-LICENSE.txt"))
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
             for path in files:

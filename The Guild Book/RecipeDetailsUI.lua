@@ -328,7 +328,7 @@ local function surface(api, parent, kind, backgroundOwner, sublevel)
     end
     GGM.ApplyJournalSurface(panel, kind or "parchment")
     if kind == "recipe" then
-        panel.background:SetTexture("Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\recipe-page.tga")
+        panel.background:SetTexture("Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\recipe-page.blp")
         return panel
     end
     border(panel, 0, "border")
