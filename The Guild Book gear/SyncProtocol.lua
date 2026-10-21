@@ -150,6 +150,24 @@ function GGM.EncodeSyncSnapshotRequest(requester, target, requestID)
     return encodePayload("Q", fields)
 end
 
+function GGM.EncodeSyncGearReady(identity, confirmedSequence, capturedAt, baselineObservedAt)
+    local identityValid, identityErr = GGM.ValidateSyncIdentity(identity)
+    if not identityValid then return nil, identityErr end
+    local sequenceValid, sequenceErr = validateSequence(confirmedSequence)
+    if not sequenceValid then return nil, sequenceErr end
+    local capturedValid, capturedErr = validateTimestamp(capturedAt, "sync-captured-at-invalid")
+    if not capturedValid then return nil, capturedErr end
+    local baselineValid, baselineErr = validateTimestamp(baselineObservedAt, "sync-baseline-observed-at-invalid")
+    if not baselineValid or baselineObservedAt > capturedAt then
+        return nil, "sync-baseline-observed-at-invalid"
+    end
+    local fields = {}
+    appendIdentity(fields, identity)
+    table.insert(fields, tostring(confirmedSequence))
+    table.insert(fields, tostring(capturedAt))
+    table.insert(fields, tostring(baselineObservedAt))
+    return encodePayload("R", fields)
+end
 function GGM.EncodeSyncSnapshotResponseClaim(target, requester, responder, confirmedSequence, requestID, observedAt, baselineObservedAt)
     local targetValid, targetErr = GGM.ValidateSyncIdentity(target)
     if not targetValid then return nil, targetErr end
@@ -303,6 +321,7 @@ function GGM.DecodeSyncMessage(payload)
     local fieldCount
     if typeCode == "U" then fieldCount = 10
     elseif typeCode == "Q" then fieldCount = 9
+    elseif typeCode == "R" then fieldCount = 7
     elseif typeCode == "S" then fieldCount = 18 + (#GGM.TRACKED_SLOTS * 5)
     elseif typeCode == "C" then fieldCount = 7
     else return nil, "sync-message-type-unknown" end
@@ -328,6 +347,18 @@ function GGM.DecodeSyncMessage(payload)
         local requestIDValid, requestIDErr = validateRequestID(fields[9])
         if not requestIDValid then return nil, requestIDErr end
         return { type = "SNAPSHOT_REQUEST", requester = requester, target = target, requestID = fields[9] }, nil
+    end
+    if typeCode == "R" then
+        local identity, identityErr = decodeIdentity(fields, 1)
+        if not identity then return nil, identityErr end
+        local sequence, sequenceErr = parseUnsignedInteger(fields[5], 0, GGM.SYNC_MAX_CONFIRMED_SEQUENCE, "sync-sequence-invalid")
+        if sequence == nil then return nil, sequenceErr end
+        local capturedAt, capturedErr = parseUnsignedInteger(fields[6], 0, GGM.SYNC_MAX_TIMESTAMP, "sync-captured-at-invalid")
+        if capturedAt == nil then return nil, capturedErr end
+        local baselineObservedAt, baselineErr = parseUnsignedInteger(fields[7], 0, capturedAt, "sync-baseline-observed-at-invalid")
+        if baselineObservedAt == nil then return nil, baselineErr end
+        return { type = "GEAR_READY", identity = identity, confirmedSequence = sequence,
+            capturedAt = capturedAt, baselineObservedAt = baselineObservedAt }, nil
     end
     if typeCode == "C" then
         local keyMaximum = GGM.SYNC_MAX_NAME_BYTES + GGM.SYNC_MAX_REALM_BYTES + 1

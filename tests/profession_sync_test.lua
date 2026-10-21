@@ -590,7 +590,7 @@ T.test("login sync exchanges cached data once without opening the addon", functi
     bus:advance(240)
     T.assertNotNil(a.G.GetProfessionSyncRecord(a.db, b.identity.guid, 164))
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
-    T.assertEqual(bus:count("Q", a.identity.key), 6, "one discovery per supported profession")
+    T.assertEqual(bus:count("Q", a.identity.key), 9, "one discovery per supported profession")
     local frames = #bus.frames
     bus:advance(3600)
     T.assertEqual(#bus.frames, frames, "idle time must not restart login sync")
@@ -1884,6 +1884,192 @@ T.test("a new installation stays idle until manual repair and then syncs one bou
     T.assertEqual(bus:count("D"), 32)
     T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Catch-up needed")
     local transfers = bus:count("D"); bus:advance(3600); T.assertEqual(bus:count("D"), transfers)
+end)
+
+T.test("profession button starts immediately before the delayed automatic login", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }); a:ready(); b:ready(); automatic(b)
+    b.api.random = function() return 300 end
+    assert(b.G.LoginProfessionSync(b.sync))
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    T.assertEqual(bus:count("Q", b.identity.key), 1)
+    bus:advance(5)
+    T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
+end)
+
+T.test("profession button retains a click after selection and coalesces repeated clicks", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }); a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection"))
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    local pending = b.sync.buttonRequest
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    T.assertEqual(b.sync.buttonRequest, pending)
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Sync queued: waiting for current comparison")
+    bus:advance(5)
+    T.assertTrue(b.G.GetProfessionSyncStatus(b.sync, 164):find("cooldown", 1, true) ~= nil)
+    T.assertEqual(bus:count("Q", b.identity.key), 1)
+    bus:advance(60)
+    T.assertEqual(bus:count("Q", b.identity.key), 2)
+    T.assertNil(b.sync.buttonRequest)
+    local count = #bus.frames; bus:advance(1800); T.assertEqual(#bus.frames, count)
+end)
+
+T.test("profession button cancels queued work with the sync generation", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection"))
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.G.CancelProfessionSync(b.sync)
+    T.assertNil(b.sync.buttonRequest)
+    local count = bus:count("Q", b.identity.key)
+    bus:advance(1800); T.assertEqual(bus:count("Q", b.identity.key), count)
+end)
+
+T.test("profession button yields automatic work after the current transfer", function()
+    local bus = guild()
+    local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    local firstAutomaticProfessionID = 129 -- First Aid is first in supported-ID order.
+    a:save(a.identity, { 3 }); a:ready(); b:ready(); c:ready(); automatic(b)
+    assert(b.G.LoginProfessionSync(b.sync)); bus:advance(0)
+    T.assertNotNil(b.sync.automaticAttempt.operation)
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 202))
+    bus:advance(5)
+    T.assertNil(b.sync.buttonRequest)
+    local queries = {}
+    for _, frame in ipairs(bus.frames) do
+        if frame.sender == b.identity.key then
+            local pid = frame.text:match("P5|Q|%*|[^|]+|(%d+)|")
+            if pid then queries[#queries + 1] = tonumber(pid) end
+        end
+    end
+    T.assertEqual(queries[1], firstAutomaticProfessionID)
+    T.assertEqual(queries[2], 202, "the clicked profession must precede the next automatic peer")
+    T.assertNotNil(b.sync.resumePeers[firstAutomaticProfessionID], "unfinished automatic peers remain recoverable")
+end)
+
+T.test("a new button profession replaces a queued cooldown request even when it starts immediately", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection")); bus:advance(5)
+    local accepted, err = b.G.RequestProfessionSyncFromButton(b.sync, 164)
+    T.assertTrue(accepted); T.assertNil(err)
+    accepted, err = b.G.RequestProfessionSyncFromButton(b.sync, 202)
+    T.assertTrue(accepted); T.assertNil(err)
+    T.assertNil(b.sync.buttonRequest)
+    bus:advance(120)
+    T.assertEqual(bus:count("Q", b.identity.key), 2, "replaced cooldown work must never send")
+end)
+
+T.test("a different button click clears a queued profession when combat blocks the new choice", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection")); bus:advance(5)
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    T.assertEqual(b.sync.buttonRequest.professionID, 164)
+    b.api.InCombatLockdown = function() return true end
+    local accepted = b.G.RequestProfessionSyncFromButton(b.sync, 202)
+    T.assertFalse(accepted)
+    T.assertNil(b.sync.buttonRequest, "the previous queued profession must not survive a different click")
+end)
+
+T.test("queued profession button work expires without creating idle traffic", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready(); b.sync.active = { busy = true }
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    bus:advance(3000)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertEqual(#bus.frames, 0)
+    local timers = #bus.timers; bus:advance(3600); T.assertEqual(#bus.timers, timers)
+end)
+
+T.test("repeated button clicks share an already running button operation", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:save(a.identity, { 3 }); a:ready(); b:ready()
+    assert(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    local operation = b.sync.manualOperation
+    assert(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    T.assertNil(b.sync.buttonRequest)
+    T.assertEqual(b.sync.manualOperation, operation)
+    bus:advance(120)
+    T.assertEqual(bus:count("Q", b.identity.key), 1)
+end)
+
+T.test("queued button requests retain catch-up status when peers go offline", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection")); bus:advance(5)
+    assert(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    a.identity.online = false; b:ready()
+    bus:advance(60)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 164), "Catch-up needed")
+end)
+
+T.test("ready automatic comparisons drain after a queued button request becomes unavailable", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    assert(b.G.RequestProfessionSync(b.sync, 164, "selection")); bus:advance(5)
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    a.identity.online = false; b:ready()
+    bus:advance(61)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready automatic comparison should drain after the button retry fails")
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 202), "Catch-up needed")
+end)
+
+T.test("ready automatic comparisons drain when a queued button retry timer cannot be scheduled", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    b.sync.manualOperation = { busy = true }
+    b.sync.cooldowns[164] = 100
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    b.sync.manualOperation = nil
+    b.api.C_Timer.NewTimer = function() return nil end
+    bus:advance(1)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready automatic comparison should drain after retry scheduling fails")
+end)
+
+T.test("ready automatic comparisons drain when a queued button request expires", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    b.sync.manualOperation = { busy = true }
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    b.sync.buttonRequest.deadline = 0
+    b.sync.manualOperation = nil
+    bus:advance(1)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready automatic comparison should drain after request expiry")
+end)
+
+T.test("ready automatic comparisons are handled when a queued button request becomes unsafe", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    b.sync.active = { busy = true }
+    T.assertTrue(b.G.RequestProfessionSyncFromButton(b.sync, 164))
+    b.sync.pending[202] = { reason = "save", preferredPeer = a.sync.selfKey, ready = true }
+    b.sync.active = nil
+    b.api.InCombatLockdown = function() return true end
+    bus:advance(1)
+    T.assertNil(b.sync.buttonRequest)
+    T.assertNil(b.sync.pending[202], "the ready comparison should be handled after unsafe request removal")
+    T.assertEqual(b.G.GetProfessionSyncStatus(b.sync, 202), "Catch-up needed")
 end)
 
 return { guild = guild }

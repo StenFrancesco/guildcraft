@@ -8,7 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ADDON = ROOT / "The Guild Book"
 MEDIA = ADDON / "Media" / "ArtisanJournal"
 SOURCE = ROOT / "tests" / "Source"
-professions = ("alchemy", "blacksmithing", "enchanting", "engineering", "leatherworking", "tailoring")
+professions = (
+    "alchemy", "blacksmithing", "cooking", "enchanting", "engineering",
+    "first-aid", "fishing", "leatherworking", "tailoring",
+)
 exports = {f"{name}-page": (f"{name}-page.png", (1024, 1024)) for name in professions}
 exports.update({"journal-window": ("journal-window-v2.png", (2048, 1024)),
                 "profession-button-framed": ("profession-button-framed-v2.png", (1024, 256))})

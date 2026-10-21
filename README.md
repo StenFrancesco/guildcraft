@@ -33,7 +33,7 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 ## Data and synchronization
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
-- Profession sharing uses protocol P5 (`GC_PROF5`). Participating clients need compatible versions.
+- Profession browsing and sharing support Alchemy, Blacksmithing, Cooking, Enchanting, Engineering, First Aid, Fishing, Leatherworking, and Tailoring. First Aid is mainly relevant to the legacy client. Profession sharing uses protocol P5 (`GC_PROF5`); participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
 - Leaving a guild or switching guilds cancels work for the previous guild. Once current membership and roster state are confirmed, a fresh bounded synchronization run is scheduled for the new guild.
@@ -76,9 +76,24 @@ continues to accept up to 32 frames for other message types.
 
 A representative 19-slot snapshot regression uses 3 frames and 618 bytes rather
 than 10 frames and 2,434 bytes, including frame headers. ChatThrottleLib BULK
-priority, frame pacing, queues, responder selection, cancellation and cooldowns
-remain unchanged. Compression reduces traffic and per-frame processing, but its
-bounded synchronous Lua work means actual frame-rate effects need in-game testing.
+priority, queues, responder selection, cancellation and cooldowns remain unchanged.
+After each successful send callback, gear yields to the next update without a
+fixed delay; ChatThrottleLib controls bandwidth and throttle pacing. Compression
+reduces traffic and per-frame processing, but its bounded synchronous Lua work
+means actual frame-rate effects need in-game testing.
+
+The gear addon sends a compact readiness hint to discover never-inspected
+characters among compatible protocol-7 peers; the hint itself contains no gear.
+
+At login, the gear addon tries to capture and persist the local character's
+complete gear after delays of 1, 2, 4, 8, 16 and 30 seconds when an item link is
+temporarily unavailable. Once a complete cache and stable tracker are available,
+it sends a small readiness hint after a short delay when guild membership is
+usable. A peer with missing, incomplete or older gear then requests a complete
+snapshot through the existing paced sync path; the hint itself never contains
+gear. If all startup attempts fail, a later valid request for this character can
+retry capture, at most once every five seconds. Cached and shared equipment
+remains last-known data, not proof of the character's current state.
 
 On the Characters page, select a saved character and click **Sync gear** to
 request the freshest complete snapshot available from responding online guild
@@ -105,8 +120,14 @@ members using the same protocol version. A first profession selection can start
 a comparison, and a meaningful local snapshot save can announce that change.
 Gear and recipes synchronize automatically after a random login delay of zero
 to five minutes. Neither requires opening the character browser. The
-**Sync profession** button starts immediately, subject to the existing cooldown,
-and checks up to four
+**Sync profession** button starts immediately when the sync slot is available.
+If a comparison or the existing 60-second cooldown is in progress, the click is
+retained and the status shows that it is queued. Repeated clicks for the same
+profession share one request; clicking a different profession replaces the queued
+choice. Automatic work yields after its current transfer so the button request
+can run next, and unfinished automatic work remains eligible for city recovery.
+Queued requests are bounded and are cancelled when guild synchronization resets.
+Each manual operation checks up to four
 eligible guild peers one at a time, with the existing 60-second cooldown. A
 status reports how many peer caches matched or were compared; it does not claim
 agreement across the guild. If more than four peers are eligible, unfinished
@@ -219,8 +240,10 @@ frame-rate improvement must be verified in game.
 ChatThrottleLib version 29 is embedded, unchanged, under `Libs/ChatThrottleLib`
 in both The Guild Book and The Guild Book gear. The first loaded copy
 initializes the shared library; the second reuses it. No fourth addon folder is needed. Gear and
-profession frames use BULK priority and retain their existing pacing and queue
-limits. A frame counts as submitted only when the library calls back successfully;
+profession frames use BULK priority and retain their existing queue limits.
+After each successful send callback, gear yields to the next update without an
+additional fixed delay; ChatThrottleLib controls bandwidth and throttle pacing.
+A frame counts as submitted only when the library calls back successfully;
 this does not guarantee delivery to the recipient. Missing library support disables
 synchronization rather than falling back to unthrottled sends.
 
