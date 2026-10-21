@@ -23,6 +23,17 @@
     ],
     "file": "blacksmithing-page.blp"
   },
+  "cooking-page": {
+    "source": "cooking-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
   "enchanting-page": {
     "source": "enchanting-page.png",
     "source_size": [
@@ -46,6 +57,28 @@
       1024
     ],
     "file": "engineering-page.blp"
+  },
+  "first-aid-page": {
+    "source": "first-aid-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "fishing-page": {
+    "source": "fishing-page.png",
+    "source_size": [
+      1536,
+      1024
+    ],
+    "size": [
+      1024,
+      1024
+    ]
   },
   "leatherworking-page": {
     "source": "leatherworking-page.png",

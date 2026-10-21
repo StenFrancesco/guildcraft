@@ -324,11 +324,15 @@ local JOURNAL_TEXTURES = {
     professions = {
         Alchemy = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\alchemy-page.blp",
         Blacksmithing = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\blacksmithing-page.blp",
+        Cooking = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\cooking-page.tga",
         Enchanting = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\enchanting-page.blp",
         Engineering = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\engineering-page.blp",
+        ["First Aid"] = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\first-aid-page.tga",
+        Fishing = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\fishing-page.tga",
         Leatherworking = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\leatherworking-page.blp",
         Tailoring = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\tailoring-page.blp",
     },
+    professionFallback = "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\parchment.tga",
 }
 GGM.UITheme = THEME
 GGM.UIJournalTextures = JOURNAL_TEXTURES
@@ -405,9 +409,13 @@ local UI = {
     professionLibraryTop = 145,
     professionDetailX = 629,
     professionSidebarWidth = 297,
-    professionRowWidth = 244,
+    professionScrollLeft = 30,
+    professionScrollWidth = 239,
+    professionScrollHeight = 350,
+    professionRowWidth = 231,
     professionRowHeight = 48,
     professionRowPitch = 57,
+    professionRowInset = 4,
     professionHeroArtWidth = 0,
     professionHeroArtHeight = 0,
 }
@@ -632,9 +640,12 @@ local function refreshGearSyncControls(frame)
     if not frame.gearSyncButton then return end
     local entry = frame.selectedEntry
     local visible = frame.activeTab == "Character" and entry ~= nil
-    if not visible then frame.gearSyncButton:Hide(); frame.gearSyncStatus:Hide(); return end
+    if not visible then
+        frame.gearSyncButton:Hide()
+        if frame.activeTab == "Character" then GGM.SetSharedStatus(frame, "") end
+        return
+    end
     frame.gearSyncButton:Show()
-    frame.gearSyncStatus:Show()
     local status, busy, err = "", false, nil
     if type(GGM.GetGearSyncStatus) == "function" then
         status, busy, err = GGM.GetGearSyncStatus(GGM.guildSync, entry.key)
@@ -645,7 +656,7 @@ local function refreshGearSyncControls(frame)
         if busy then frame.gearSyncError = nil; err = nil end
     end
     if err then status = REQUEST_ERRORS[err] or "Gear sync failed. Try again." end
-    frame.gearSyncStatus:SetText(status)
+    GGM.SetSharedStatus(frame, status)
     if frame.gearSyncButton.SetEnabled then frame.gearSyncButton:SetEnabled(not busy) end
 end
 
@@ -781,9 +792,12 @@ end
 local PROFESSIONS = {
     { key = "Alchemy", professionID = 171, icon = "Interface\\Icons\\Trade_Alchemy" },
     { key = "Blacksmithing", professionID = 164, icon = "Interface\\Icons\\Trade_BlackSmithing" },
+    { key = "Cooking", professionID = 185, icon = "Interface\\Icons\\INV_Misc_Food_15" },
     { key = "Enchanting", professionID = 333, icon = "Interface\\Icons\\Trade_Engraving" },
     { key = "Engineering", professionID = 202, icon = "Interface\\Icons\\Trade_Engineering" },
-    { key = "Leatherworking", professionID = 165, icon = "Interface\\Icons\\Trade_LeatherWorking" },
+    { key = "First Aid", professionID = 129, icon = "Interface\\Icons\\Spell_Holy_SealOfSacrifice" },
+    { key = "Fishing", professionID = 356, icon = "Interface\\Icons\\Trade_Fishing" },
+    { key = "Leatherworking", professionID = 165, icon = "Interface\\Icons\\INV_Misc_ArmorKit_17" },
     { key = "Tailoring", professionID = 197, icon = "Interface\\Icons\\Trade_Tailoring" },
 }
 
@@ -792,6 +806,7 @@ local PROFESSION_SUBTITLES = {
     Blacksmithing = "Hit it until it becomes useful.",
     Enchanting = "Now with magically inflated confidence.",
     Engineering = "Safety third.",
+    ["First Aid"] = "Patch up and get back to it.",
     Leatherworking = "Armor that remembers being angry.",
     Tailoring = "Sew much responsibility.",
     Cooking = "Raid fuel with extra seasoning.",
@@ -807,11 +822,11 @@ local function updateProfessionSubtitle(frame, selectedKey)
 
     local subtitleText = PROFESSION_SUBTITLES[selectedKey]
     subtitle:SetText(subtitleText and ('"' .. subtitleText .. '"') or "")
-    subtitle:SetWidth(360)
+    subtitle:SetWidth(280)
     if type(subtitle.SetWordWrap) == "function" then subtitle:SetWordWrap(true) end
     subtitle:ClearAllPoints()
     subtitle:SetJustifyH("LEFT")
-    subtitle:SetPoint("TOPLEFT", frame.professionHeading, "BOTTOMLEFT", 0, -7)
+    subtitle:SetPoint("TOPLEFT", frame.professionHeroIconFrame, "BOTTOMLEFT", 0, -6)
 end
 
 local function professionButtonColor(button, selected)
@@ -918,7 +933,7 @@ function GGM.SelectProfession(frame, selectedKey)
     updateProfessionSubtitle(frame, selectedKey)
     if frame.professionHeroIcon then frame.professionHeroIcon:SetTexture(selectedProfession.icon) end
     if frame.professionHeroArtwork then
-        frame.professionHeroArtwork:SetTexture(JOURNAL_TEXTURES.professions[selectedKey])
+        frame.professionHeroArtwork:SetTexture(JOURNAL_TEXTURES.professions[selectedKey] or JOURNAL_TEXTURES.professionFallback)
         frame.professionHeroArtwork:SetVertexColor(1, 1, 1, 1)
     end
     for _, button in ipairs(frame.professionButtons) do professionButtonColor(button, button.key == selectedKey) end
@@ -956,11 +971,14 @@ function GGM.RefreshVisibleProfessionLibrary(frame)
     end
 
     local visibleByKey = {}
+    local contentHeight = #visibleEntries == 0 and 1
+        or (UI.professionRowInset + (#visibleEntries - 1) * UI.professionRowPitch + UI.professionRowHeight)
+    frame.professionLibraryContent:SetSize(UI.professionScrollWidth, contentHeight)
     for index, button in ipairs(visibleEntries) do
         visibleByKey[button.key] = true
         button:ClearAllPoints()
-        button:SetPoint("TOPLEFT", frame.professionSidebar, "TOPLEFT", 34,
-            -(62 + (index - 1) * UI.professionRowPitch))
+        button:SetPoint("TOPLEFT", frame.professionLibraryContent, "TOPLEFT", UI.professionRowInset,
+            -(UI.professionRowInset + (index - 1) * UI.professionRowPitch))
         button:Show()
     end
     for _, button in ipairs(frame.professionButtons) do
@@ -968,6 +986,23 @@ function GGM.RefreshVisibleProfessionLibrary(frame)
     end
 
     frame.visibleProfessionEntries = visibleEntries
+    local maxScroll = math.max(0, contentHeight - frame.professionLibraryScroll:GetHeight())
+    local scrollBar = frame.professionLibraryScroll.ScrollBar
+    local scrollOffset = frame.professionLibraryScroll:GetVerticalScroll() or 0
+    if frame.professionLibraryResetScroll then
+        scrollOffset = 0
+        frame.professionLibraryResetScroll = nil
+    end
+    scrollOffset = math.min(scrollOffset, maxScroll)
+    if scrollBar then
+        scrollBar:SetMinMaxValues(0, maxScroll)
+        if scrollBar.SetValueStep then scrollBar:SetValueStep(UI.professionRowPitch) end
+        if scrollBar.SetObeyStepOnDrag then scrollBar:SetObeyStepOnDrag(true) end
+        scrollBar:SetValue(scrollOffset)
+        if maxScroll > 0 then scrollBar:Show() else scrollBar:Hide() end
+    else
+        frame.professionLibraryScroll:SetVerticalScroll(scrollOffset)
+    end
     if frame.professionLibraryEmpty then
         if frame.professionLibraryMode == "Own" and #visibleEntries == 0 then
             frame.professionLibraryEmpty:Show()
@@ -996,14 +1031,18 @@ function GGM.SyncSelectedProfession(frame, manual)
     if not manual and frame.professionSyncSelections[professionID] then return false end
     local ok, err = false, "profession-sync-unavailable"
     if GGM.professionSync and type(GGM.RequestProfessionSync) == "function" then
-        ok, err = GGM.RequestProfessionSync(GGM.professionSync, professionID, manual and "manual" or "selection")
+        if manual and type(GGM.RequestProfessionSyncFromButton) == "function" then
+            ok, err = GGM.RequestProfessionSyncFromButton(GGM.professionSync, professionID)
+        else
+            ok, err = GGM.RequestProfessionSync(GGM.professionSync, professionID, manual and "manual" or "selection")
+        end
     end
     if ok and not manual then frame.professionSyncSelections[professionID] = true end
-    if frame.professionSyncStatus then
-        local status = GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, professionID) or "Sync unavailable"
-        if manual and not ok and (err == "profession-sync-cooldown" or err == "profession-sync-busy") then status = "Comparison pending or on cooldown" end
-        frame.professionSyncStatus:SetText(status)
+    local status = GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, professionID) or "Sync unavailable"
+    if manual and not ok and (err == "profession-sync-cooldown" or err == "profession-sync-busy") then
+        status = "Comparison pending or on cooldown"
     end
+    GGM.SetSharedStatus(frame, status)
     return ok, err
 end
 
@@ -1012,16 +1051,18 @@ function GGM.RefreshVisibleProfessionSyncStatus()
     if not frame or frame.activeTab ~= "Professions" or not frame.professionSyncStatus then return end
     for _, profession in ipairs(PROFESSIONS) do
         if profession.key == frame.selectedProfession then
-            frame.professionSyncStatus:SetText(GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, profession.professionID) or "Sync unavailable")
+            GGM.SetSharedStatus(frame,
+                GGM.GetProfessionSyncStatus and GGM.GetProfessionSyncStatus(GGM.professionSync, profession.professionID)
+                    or "Sync unavailable")
             return
         end
     end
 end
 
-local function createProfessionButton(api, sidebar, profession, offset)
-    local button = api.CreateFrame("Button", nil, sidebar)
+local function createProfessionButton(api, content, profession)
+    local button = api.CreateFrame("Button", nil, content)
     button:SetSize(UI.professionRowWidth, UI.professionRowHeight)
-    button:SetPoint("TOPLEFT", sidebar, "TOPLEFT", 34, -offset)
+    button:SetPoint("TOPLEFT", content, "TOPLEFT", UI.professionRowInset, -UI.professionRowInset)
     button.variant = "profession"
     button.background = button:CreateTexture(nil, "BACKGROUND")
     button.background:SetAllPoints(button)
@@ -1057,7 +1098,7 @@ local function createProfessionButton(api, sidebar, profession, offset)
     button.label:SetPoint("RIGHT", button, "RIGHT", -10, 0)
     button.label:SetJustifyH("LEFT")
     button.key = profession.key
-    button:SetScript("OnClick", function() GGM.SelectProfession(sidebar.owner, profession.key) end)
+    button:SetScript("OnClick", function() GGM.SelectProfession(content.owner, profession.key) end)
     button:RegisterForClicks("LeftButtonUp")
     professionButtonColor(button, false)
     button.professionID = profession.professionID
@@ -1077,6 +1118,38 @@ local function createProfessionsPage(api, frame)
     sidebar:SetWidth(UI.professionSidebarWidth)
     sidebar.owner = frame
     frame.professionSidebar = sidebar
+
+    frame.professionLibraryScroll = api.CreateFrame("ScrollFrame", nil, sidebar, "UIPanelScrollFrameTemplate")
+    frame.professionLibraryScroll:SetPoint("TOPLEFT", sidebar, "TOPLEFT", UI.professionScrollLeft, -58)
+    frame.professionLibraryScroll:SetSize(UI.professionScrollWidth, UI.professionScrollHeight)
+    frame.professionLibraryScroll:EnableMouseWheel(true)
+    frame.professionLibraryContent = api.CreateFrame("Frame", nil, frame.professionLibraryScroll)
+    frame.professionLibraryContent:SetSize(UI.professionScrollWidth, 1)
+    frame.professionLibraryContent.owner = frame
+    frame.professionLibraryScroll:SetScrollChild(frame.professionLibraryContent)
+
+    local scrollBar = frame.professionLibraryScroll.ScrollBar
+    if scrollBar then
+        scrollBar:SetMinMaxValues(0, 0)
+        if scrollBar.SetValueStep then scrollBar:SetValueStep(UI.professionRowPitch) end
+        if scrollBar.SetObeyStepOnDrag then scrollBar:SetObeyStepOnDrag(true) end
+        scrollBar:SetScript("OnValueChanged", function(_, offset)
+            frame.professionLibraryScroll:SetVerticalScroll(offset)
+        end)
+    end
+    frame.professionLibraryScroll:SetScript("OnVerticalScroll", function(_, offset)
+        if scrollBar and math.abs((scrollBar:GetValue() or 0) - offset) > 0.5 then
+            scrollBar:SetValue(offset)
+        end
+    end)
+    frame.professionLibraryScroll:SetScript("OnMouseWheel", function(scroll, delta)
+        local current = scroll:GetVerticalScroll() or 0
+        local maximum = math.max(0, frame.professionLibraryContent:GetHeight() - scroll:GetHeight())
+        scroll:SetVerticalScroll(math.max(0, math.min(maximum, current - delta * UI.professionRowPitch)))
+    end)
+    frame.professionLibraryScroll:SetScript("OnSizeChanged", function()
+        GGM.RefreshVisibleProfessionLibrary(frame)
+    end)
 
     frame.professionLibraryMode = "Own"
     local toggle = api.CreateFrame("Button", nil, page)
@@ -1110,6 +1183,7 @@ local function createProfessionsPage(api, frame)
     local function selectProfessionLibraryMode(mode)
         local changed = frame.professionLibraryMode ~= mode
         if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
+        if changed then frame.professionLibraryResetScroll = true end
         frame.professionLibraryMode = mode
         GGM.RefreshVisibleProfessionLibrary(frame)
         if changed and mode == "Own" then
@@ -1142,8 +1216,7 @@ local function createProfessionsPage(api, frame)
 
     frame.professionButtons = {}
     for index, profession in ipairs(PROFESSIONS) do
-        frame.professionButtons[index] = createProfessionButton(api, sidebar, profession,
-            62 + (index - 1) * UI.professionRowPitch)
+        frame.professionButtons[index] = createProfessionButton(api, frame.professionLibraryContent, profession)
     end
 
     local panel = api.CreateFrame("Frame", nil, page)
@@ -1171,6 +1244,7 @@ local function createProfessionsPage(api, frame)
     local iconFrame = createSurface(api, hero, THEME.slot, THEME.gold)
     iconFrame:SetSize(60, 60)
     iconFrame:SetPoint("TOPLEFT", hero, "TOPLEFT", 0, 0)
+    frame.professionHeroIconFrame = iconFrame
     frame.professionHeroIcon = iconFrame:CreateTexture(nil, "ARTWORK")
     frame.professionHeroIcon:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", 4, -4)
     frame.professionHeroIcon:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -4, 4)
@@ -1183,7 +1257,7 @@ local function createProfessionsPage(api, frame)
     setTextColor(frame.professionHeading, THEME.text)
 
     frame.professionSubtitle = createText(hero, "OVERLAY", "GameFontHighlight")
-    GGM.ApplyJournalFont(frame.professionSubtitle, 18, "italic")
+    GGM.ApplyJournalFont(frame.professionSubtitle, 15, "italic")
     setTextColor(frame.professionSubtitle, THEME.text)
     frame.professionSubtitle:SetShadowColor(
         THEME.panel[1], THEME.panel[2], THEME.panel[3], 0.78)
@@ -1223,20 +1297,12 @@ local function createProfessionsPage(api, frame)
     frame.professionStatus:SetJustifyH("LEFT")
     setTextColor(frame.professionStatus, THEME.textSoft)
 
-    frame.professionSyncButton = GGM.CreateFlatButton(api, panel, "Sync profession", 140, 27, "secondary")
+    frame.professionSyncButton = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    frame.professionSyncButton:SetSize(140, 27)
+    frame.professionSyncButton:SetText("Sync profession")
     frame.professionSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
     frame.professionSyncButton:SetScript("OnClick", function() GGM.SyncSelectedProfession(frame, true) end)
-    frame.professionSyncStatus = createText(panel, "OVERLAY", "GameFontHighlightSmall")
-    GGM.ApplyJournalFont(frame.professionSyncStatus, 13)
-    frame.professionSyncStatus:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -151)
-    frame.professionSyncStatus:SetWidth(360)
-    frame.professionSyncStatus:SetJustifyH("RIGHT")
-    setTextColor(frame.professionSyncStatus, THEME.text)
-    -- Keep feedback readable over both light parchment and dark hero details.
-    frame.professionSyncStatusBackground = panel:CreateTexture(nil, "ARTWORK")
-    frame.professionSyncStatusBackground:SetPoint("TOPLEFT", frame.professionSyncStatus, "TOPLEFT", -8, 4)
-    frame.professionSyncStatusBackground:SetPoint("BOTTOMRIGHT", frame.professionSyncStatus, "BOTTOMRIGHT", 8, -4)
-    frame.professionSyncStatusBackground:SetColorTexture(THEME.panel[1], THEME.panel[2], THEME.panel[3], 1)
+    frame.professionSyncStatus = frame.sharedStatus
 
     frame.professionRecipeHeading = createText(panel, "OVERLAY", "GameFontNormal")
     GGM.ApplyJournalFont(frame.professionRecipeHeading, 17, "bold")
@@ -1377,6 +1443,19 @@ local function setPageHeader(frame, title, subtitle)
     frame.pageTitle:SetText(title)
     frame.pageSubtitle:SetText(subtitle or "")
     if subtitle and subtitle ~= "" then frame.pageSubtitle:Show() else frame.pageSubtitle:Hide() end
+end
+
+function GGM.SetSharedStatus(frame, message)
+    if not frame or not frame.sharedStatus then return false end
+    local text = type(message) == "string" and message or ""
+    frame.sharedStatus:SetText(text)
+    local visible = text ~= ""
+    if visible then
+        frame.sharedStatus:Show()
+    else
+        frame.sharedStatus:Hide()
+    end
+    return visible
 end
 
 function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
@@ -1558,13 +1637,32 @@ end
 
 local function updateBrowserViewButtonStyles(frame)
     for _, button in ipairs({ frame.mineButton, frame.guildButton }) do
-        GGM.SetFlatButtonState(button, button.key == frame.browserView and "selected" or "idle")
+        local selected = button.key == frame.browserView
+        button.selected = selected
+        if selected then
+            if button.LockHighlight then button:LockHighlight() end
+        elseif button.UnlockHighlight then
+            button:UnlockHighlight()
+        end
     end
 end
 
 local function createBrowserViewButton(api, frame, key, label, x)
-    local button = GGM.CreateFlatButton(api, frame.searchPanel, label, UI.ownershipButtonWidth, UI.controlHeightCompact, "ghost")
+    local button = api.CreateFrame("Button", nil, frame.searchPanel, "UIPanelButtonTemplate")
+    button:SetSize(UI.ownershipButtonWidth, UI.controlHeightCompact)
     button:SetPoint("TOPLEFT", frame.searchPanel, "TOPLEFT", x, -62)
+    button.variant = "ghost"
+    button.label = button.Text
+    if not button.label then
+        button.label = createText(button, "OVERLAY", "GameFontNormalSmall")
+        button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+        local nativeSetText = button.SetText
+        button.SetText = function(self, value)
+            if nativeSetText then nativeSetText(self, value) end
+            self.label:SetText(value or "")
+        end
+    end
+    button:SetText(label)
     button.key = key
     button:SetScript("OnClick", function()
         frame.browserView = key
@@ -1811,6 +1909,15 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.pageSubtitle:SetPoint("TOPLEFT", frame.pageTitle, "BOTTOMLEFT", 0, -4)
     frame.pageSubtitle:SetWidth(278)
     setTextColor(frame.pageSubtitle, THEME.muted)
+    -- Keep one readable status slot above the page art, shared by every tab.
+    frame.sharedStatus = createText(frame, "OVERLAY", "GameFontHighlightSmall")
+    GGM.ApplyJournalFont(frame.sharedStatus, 13)
+    frame.sharedStatus:SetPoint("TOPLEFT", frame, "TOPLEFT", UI.professionDetailX, -36)
+    frame.sharedStatus:SetSize(480, 20)
+    frame.sharedStatus:SetJustifyH("LEFT")
+    if type(frame.sharedStatus.SetWordWrap) == "function" then frame.sharedStatus:SetWordWrap(false) end
+    setTextColor(frame.sharedStatus, THEME.text)
+    frame.sharedStatus:Hide()
     createCloseButton(api, frame)
 
     frame.searchPanel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
@@ -1889,17 +1996,14 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.listEmpty:Hide()
 
     frame.gearPanel = createGearPanel(api, frame)
-    frame.gearSyncButton = GGM.CreateFlatButton(api, frame.gearPanel, "Sync gear", 112, 27, "secondary")
+    frame.gearSyncButton = api.CreateFrame("Button", nil, frame.gearPanel, "UIPanelButtonTemplate")
+    frame.gearSyncButton:SetSize(112, 27)
+    frame.gearSyncButton:SetText("Sync gear")
     frame.gearSyncButton:SetPoint("TOPLEFT", frame.gearPanel, "TOPLEFT", 307, -115)
     frame.gearSyncButton:SetScript("OnClick", function() GGM.SyncSelectedGear(frame) end)
-    frame.gearSyncStatus = createText(frame.gearPanel, "OVERLAY", "GameFontHighlightSmall")
-    GGM.ApplyJournalFont(frame.gearSyncStatus, 12)
-    frame.gearSyncStatus:SetPoint("LEFT", frame.gearSyncButton, "RIGHT", 12, 0)
-    frame.gearSyncStatus:SetSize(230, 30)
-    frame.gearSyncStatus:SetJustifyH("LEFT")
-    setTextColor(frame.gearSyncStatus, THEME.textSoft)
+    frame.gearSyncStatus = frame.sharedStatus
     frame.gearSyncButton:Hide()
-    frame.gearSyncStatus:Hide()
+    GGM.SetSharedStatus(frame, "")
     frame.gearSyncButton:SetScript("OnUpdate", function(_, elapsed)
         frame.gearSyncElapsed = (frame.gearSyncElapsed or 0) + elapsed
         if frame.gearSyncElapsed < 1 then return end

@@ -462,9 +462,23 @@ local function newControl()
     function control:StartMoving() self.moving = true end
     function control:StopMovingOrSizing() self.moving = false end
     function control:IsShown() return self.visible end
-    function control:SetVerticalScroll(value) self.verticalScroll = value end
+    function control:SetVerticalScroll(value)
+        self.verticalScroll = value
+        if self.scripts.OnVerticalScroll then self.scripts.OnVerticalScroll(self, value) end
+    end
+    function control:GetVerticalScroll() return self.verticalScroll or 0 end
     function control:EnableMouseWheel(value) self.mouseWheelEnabled = value end
     function control:SetScript(name, callback) self.scripts[name] = callback end
+    function control:SetMinMaxValues(minimum, maximum)
+        self.minValue, self.maxValue = minimum, maximum
+    end
+    function control:SetValueStep(step) self.valueStep = step end
+    function control:SetObeyStepOnDrag(value) self.obeyStepOnDrag = value end
+    function control:SetValue(value)
+        self.value = math.max(self.minValue or 0, math.min(self.maxValue or value, value))
+        if self.scripts.OnValueChanged then self.scripts.OnValueChanged(self, self.value) end
+    end
+    function control:GetValue() return self.value or 0 end
     function control:RegisterForClicks() end
     function control:RegisterEvent(name) self.registeredEvents = self.registeredEvents or {}; self.registeredEvents[name] = true end
     function control:SetDesaturated(value) self.desaturated = value end
@@ -494,6 +508,10 @@ local function makeBrowserAPI(enforceNumericColorTexture)
             frame.name, frame.parent, frame.frameType, frame.template = name, parent, frameType, template
             frame.TitleText = newControl()
             function frame:SetScrollChild(child) self.scrollChild = child end
+            if frameType == "ScrollFrame" and template == "UIPanelScrollFrameTemplate" then
+                frame.ScrollBar = newControl()
+                frame.ScrollBar.parent = frame
+            end
             return frame
         end,
         date = function(_, timestamp) return "saved-" .. tostring(timestamp) end,
@@ -716,22 +734,92 @@ T.test("profession sync UI is silent while hidden and offers selected automatic 
     T.assertEqual(calls[3].reason, "manual")
 end)
 
-T.test("profession sync status has an opaque backing and readable text contrast", function()
+T.test("profession library uses the skill icons for Cooking, First Aid, and Leatherworking", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local icons = {}
+    for _, button in ipairs(frame.professionButtons) do icons[button.key] = button.icon.texture end
+    T.assertEqual(icons.Cooking, "Interface\\Icons\\INV_Misc_Food_15")
+    T.assertEqual(icons["First Aid"], "Interface\\Icons\\Spell_Holy_SealOfSacrifice")
+    T.assertEqual(icons.Leatherworking, "Interface\\Icons\\INV_Misc_ArmorKit_17")
+end)
+
+T.test("profession library scrolls all nine rows within its sidebar", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local scroll = frame.professionLibraryScroll
+    local content = frame.professionLibraryContent
+
+    T.assertNotNil(scroll, "profession rows need a scroll viewport")
+    T.assertEqual(scroll.template, "UIPanelScrollFrameTemplate")
+    T.assertTrue(scroll.mouseWheelEnabled, "profession list needs mouse-wheel scrolling")
+    T.assertTrue(scroll.scrollChild == content, "profession rows must be clipped by the viewport")
+    T.assertEqual(#frame.visibleProfessionEntries, 9, "All mode should retain all profession entries")
+    T.assertTrue(content.height > scroll.height, "the full profession list should extend beyond the viewport")
+    T.assertTrue(scroll.ScrollBar.visible, "overflow should show the vertical scrollbar")
+    T.assertTrue(scroll.point.x + scroll.width + 24 <= frame.professionSidebar.width,
+        "the native scrollbar must stay within the profession sidebar")
+    T.assertEqual(scroll.ScrollBar.maxValue, content.height - scroll.height,
+        "the scrollbar range must expose the bottom of the final row")
+
+    local lastButton = frame.visibleProfessionEntries[9]
+    T.assertTrue(lastButton.parent == content, "the final profession row must live inside the scroll child")
+    scroll.scripts.OnMouseWheel(scroll, -1)
+    T.assertEqual(scroll.verticalScroll, 57, "one wheel notch should move one profession row")
+    scroll.ScrollBar:SetValue(scroll.ScrollBar.maxValue)
+    T.assertEqual(scroll.verticalScroll, scroll.ScrollBar.maxValue,
+        "dragging the scrollbar to its end must reach the final profession row")
+    T.assertEqual(-lastButton.point.y - scroll.verticalScroll + lastButton.height, scroll.height,
+        "the final profession row should fit exactly at the end of the scroll range")
+end)
+
+T.test("profession sync button uses the retained manual request path", function()
+    local G = loadUI()
+    local calls = {}
+    G.professionSync = {}
+    G.RequestProfessionSync = function() return false, "profession-sync-busy" end
+    G.RequestProfessionSyncFromButton = function(sync, pid)
+        T.assertEqual(sync, G.professionSync)
+        calls[#calls + 1] = pid
+        return true
+    end
+    G.GetProfessionSyncStatus = function() return "Sync queued: waiting for current comparison" end
+    local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    G.SelectProfession(frame, "Blacksmithing")
+    frame.professionSyncButton.scripts.OnClick(frame.professionSyncButton)
+    T.assertEqual(#calls, 1)
+    T.assertEqual(calls[1], 164)
+    T.assertEqual(frame.professionSyncStatus:GetText(), "Sync queued: waiting for current comparison")
+end)
+
+T.test("shared status is left aligned without a backing bar", function()
     local G = loadUI()
     local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
-    T.assertNotNil(frame.professionSyncStatusBackground, "sync status needs a backing over the busy hero artwork")
-    local background = frame.professionSyncStatusBackground.color
-    T.assertNotNil(background)
-    T.assertEqual(background[4], 1, "artwork must not show through the status backing")
-    local function luminance(color)
-        local function linear(value)
-            return value <= 0.04045 and value / 12.92 or ((value + 0.055) / 1.055) ^ 2.4
-        end
-        return 0.2126 * linear(color[1]) + 0.7152 * linear(color[2]) + 0.0722 * linear(color[3])
-    end
-    local a, b = luminance(background), luminance(frame.professionSyncStatus.textColor)
-    T.assertTrue((math.max(a, b) + 0.05) / (math.min(a, b) + 0.05) >= 4.5,
-        "small sync status text must retain at least 4.5:1 contrast")
+    T.assertNil(frame.sharedStatusBackground, "shared status should not create a backing bar")
+    T.assertNil(frame.professionSyncStatusBackground,
+        "profession feedback should not create a backing bar")
+    T.assertEqual(frame.sharedStatus.justifyH, "LEFT", "shared status text should align left")
+end)
+
+T.test("shared status stays in the header and carries the latest message across tabs", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    T.assertTrue(frame.sharedStatus == frame.gearSyncStatus,
+        "gear sync should use the shared status slot")
+    T.assertTrue(frame.sharedStatus == frame.professionSyncStatus,
+        "profession sync should use the shared status slot")
+
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    local message = frame.sharedStatus.text
+    T.assertTrue(frame.sharedStatus.visible, "profession sync should display in the shared slot")
+    T.assertEqual(message, "Sync unavailable")
+    GGM.SelectGuildGearBrowserTab(frame, "Bank")
+    T.assertEqual(frame.sharedStatus.text, message,
+        "navigating should leave the latest shared status visible")
+    T.assertTrue(frame.sharedStatus.visible)
+    T.assertEqual(frame.sharedStatus.point.relativeTo, frame,
+        "status position should remain anchored to the window")
 end)
 
 T.test("character content stays within the journal's painted page borders", function()
@@ -1683,14 +1771,17 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(toggle.allRadio.uncheckedTexture.texture,
         "Interface\\AddOns\\The Guild Book\\Media\\ArtisanJournal\\profession-radio-unchecked")
     T.assertEqual(toggle.allRadio.normalTexture, toggle.allRadio.uncheckedTexture)
-    T.assertEqual(frame.professionButtons[1].point.relativeTo, frame.professionSidebar)
+    T.assertEqual(frame.professionLibraryScroll.point.relativeTo, frame.professionSidebar)
+    T.assertEqual(frame.professionLibraryScroll.point.x, 30)
+    T.assertEqual(frame.professionLibraryScroll.point.y, -58)
+    T.assertEqual(frame.professionButtons[1].point.relativeTo, frame.professionLibraryContent)
     T.assertEqual(frame.professionButtons[1].point.relativePoint, "TOPLEFT")
-    T.assertEqual(frame.professionButtons[1].point.x, 34)
-    T.assertEqual(frame.professionButtons[1].point.y, -62)
-    T.assertEqual(frame.professionButtons[1].width, 244)
+    T.assertEqual(frame.professionButtons[1].point.x, 4)
+    T.assertEqual(frame.professionButtons[1].point.y, -4)
+    T.assertEqual(frame.professionButtons[1].width, 231)
     T.assertEqual(frame.professionButtons[1].height, 48)
-    T.assertEqual(frame.professionButtons[1].point.x, 34)
-    T.assertEqual(frame.professionButtons[1].point.y, -62)
+    T.assertEqual(frame.professionLibraryScroll.point.x + frame.professionButtons[1].point.x, 34)
+    T.assertEqual(frame.professionLibraryScroll.point.y + frame.professionButtons[1].point.y, -62)
     T.assertEqual(frame.professionButtons[1].background.texture, GGM.UIJournalTextures.professionButton)
     T.assertEqual(frame.professionButtons[1].background.texCoord[1], 0.03085)
     T.assertEqual(frame.professionButtons[1].background.texCoord[2], 0.96961)
@@ -1699,6 +1790,25 @@ T.test("journal profession page follows the parchment reference proportions and 
     T.assertEqual(frame.professionButtons[1].label.font.path, GGM.UIJournalTextures.boldFont)
     T.assertEqual(frame.professionSearchBox.width, 310)
     T.assertEqual(frame.professionSearchBox.height, 27)
+    T.assertEqual(frame.professionSubtitle.width, 280,
+        "profession subtitle should stay within the clear column under the icon")
+    T.assertEqual(frame.professionSubtitle.point.relativeTo, frame.professionHeroIconFrame,
+        "profession subtitle should be anchored below the profession icon")
+    T.assertEqual(frame.professionSubtitle.point.point, "TOPLEFT")
+    T.assertEqual(frame.professionSubtitle.point.relativePoint, "BOTTOMLEFT")
+    T.assertEqual(frame.professionSubtitle.point.x, 0)
+    T.assertEqual(frame.professionSubtitle.point.y, -6)
+    T.assertEqual(frame.professionSubtitle.journalFontSize, 15)
+    T.assertTrue(frame.sharedStatus == frame.professionSyncStatus,
+        "profession sync feedback should use the shared status slot")
+    T.assertEqual(frame.sharedStatus.point.relativeTo, frame)
+    T.assertEqual(frame.sharedStatus.point.point, "TOPLEFT")
+    T.assertEqual(frame.sharedStatus.point.x, ui.professionDetailX)
+    T.assertEqual(frame.sharedStatus.point.y, -36)
+    T.assertEqual(frame.sharedStatus.width, 480)
+    T.assertEqual(frame.sharedStatus.height, 20)
+    T.assertEqual(frame.sharedStatus.justifyH, "LEFT")
+    T.assertNil(frame.sharedStatusBackground, "shared status should have no backing bar")
     T.assertEqual(frame.professionHeroArtwork, frame.professionDetailPanel.background)
     T.assertEqual(frame.professionHeroArtwork.texCoord[1], 0)
     T.assertEqual(frame.professionHeroArtwork.texCoord[2], 1)
@@ -1870,8 +1980,11 @@ T.test("profession selection changes the full page artwork for each supported pr
     local expected = {
         { key = "Alchemy", texture = mediaPath .. "alchemy-page.blp" },
         { key = "Blacksmithing", texture = mediaPath .. "blacksmithing-page.blp" },
+        { key = "Cooking", texture = mediaPath .. "cooking-page.tga" },
         { key = "Enchanting", texture = mediaPath .. "enchanting-page.blp" },
         { key = "Engineering", texture = mediaPath .. "engineering-page.blp" },
+        { key = "First Aid", texture = mediaPath .. "first-aid-page.tga" },
+        { key = "Fishing", texture = mediaPath .. "fishing-page.tga" },
         { key = "Leatherworking", texture = mediaPath .. "leatherworking-page.blp" },
         { key = "Tailoring", texture = mediaPath .. "tailoring-page.blp" },
     }
@@ -1922,8 +2035,10 @@ T.test("profession page defers catalog construction until database assignment an
 
     local expected = {
         { key = "Alchemy", id = 171 }, { key = "Blacksmithing", id = 164 },
-        { key = "Enchanting", id = 333 }, { key = "Engineering", id = 202 },
-        { key = "Leatherworking", id = 165 }, { key = "Tailoring", id = 197 },
+        { key = "Cooking", id = 185 }, { key = "Enchanting", id = 333 },
+        { key = "Engineering", id = 202 }, { key = "First Aid", id = 129 },
+        { key = "Fishing", id = 356 }, { key = "Leatherworking", id = 165 },
+        { key = "Tailoring", id = 197 },
     }
     T.assertEqual(calls[1].professionID, expected[1].id)
     for index = 2, #expected do

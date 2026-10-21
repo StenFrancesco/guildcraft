@@ -1,6 +1,6 @@
 local _, GGM = ...
 
-local PROFESSIONS = { 164, 165, 171, 197, 202, 333 }
+local PROFESSIONS = { 129, 164, 165, 171, 185, 197, 202, 333, 356 }
 
 local function resetAutomaticGuild(sync)
     sync.automaticGuild, sync.automaticRemaining = nil, nil
@@ -42,7 +42,7 @@ local function run(sync, done, controller)
         if sync.automaticAttempt ~= attempt or attempt.cancelled then return end
         if not sync.rosterReady or sync.automaticGuild ~= sync.guild then interrupt(sync); return end
         -- Manual requests and selected incoming transfers keep their priority.
-        if sync.active or sync.manualOperation or #sync.transport.outboundFrames > 0 then later(0.5); return end
+        if sync.active or sync.manualOperation or sync.buttonRequest or #sync.transport.outboundFrames > 0 then later(0.5); return end
         local professionID
         while attempt.index <= #PROFESSIONS do
             local candidate = PROFESSIONS[attempt.index]
