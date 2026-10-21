@@ -1,6 +1,6 @@
 local _, GGM = ...
 
-local PROFESSIONS = { 164, 165, 171, 197, 202, 333 }
+local PROFESSIONS = { 129, 164, 165, 171, 185, 197, 202, 333, 356 }
 
 local function resetAutomaticGuild(sync)
     sync.automaticGuild, sync.automaticRemaining = nil, nil

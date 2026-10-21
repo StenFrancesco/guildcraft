@@ -590,7 +590,7 @@ T.test("login sync exchanges cached data once without opening the addon", functi
     bus:advance(240)
     T.assertNotNil(a.G.GetProfessionSyncRecord(a.db, b.identity.guid, 164))
     T.assertNotNil(b.G.GetProfessionSyncRecord(b.db, a.identity.guid, 164))
-    T.assertEqual(bus:count("Q", a.identity.key), 6, "one discovery per supported profession")
+    T.assertEqual(bus:count("Q", a.identity.key), 9, "one discovery per supported profession")
     local frames = #bus.frames
     bus:advance(3600)
     T.assertEqual(#bus.frames, frames, "idle time must not restart login sync")
