@@ -16,7 +16,7 @@ GGM.TRACKED_SLOTS = {
     { key = "MAIN_HAND", inventoryName = "MainHandSlot", inventorySlotID = 16 }, { key = "OFF_HAND", inventoryName = "SecondaryHandSlot", inventorySlotID = 17 },
     { key = "RANGED", inventoryName = "RangedSlot", inventorySlotID = 18 },
 }
-GGM.SYNC_PREFIX = "GC_GEAR"
+GGM.SYNC_PREFIX = "GC_GEAR7"
 GGM.GetCharacterRecord = function() return nil, "database-invalid" end
 GGM.IsLocalCharacter = function() return false end
 

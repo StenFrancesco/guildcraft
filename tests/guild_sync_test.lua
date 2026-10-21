@@ -307,7 +307,7 @@ T.test("a better claim cancels a snapshot still queued behind outbound frames", 
     assert(GGM.SendSyncPayload(sync.transport, string.rep("x", 700)))
     timers[2]:Fire() -- queues the complete snapshot behind the newer traffic
     local fullPayload = assert(GGM.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(GGM, 7500), 3, "000001"))
-    local fullFrameCount = math.ceil(#fullPayload / GGM.SYNC_FRAME_CHUNK_BYTES)
+    local fullFrameCount = math.ceil(#assert(GGM.EncodeGearPayload(fullPayload)) / GGM.SYNC_FRAME_CHUNK_BYTES)
     T.assertEqual(sync.pendingSnapshotResponseCount, 1)
     T.assertEqual(#sync.transport.outboundFrames, 4 + fullFrameCount)
 
@@ -583,7 +583,7 @@ T.test("confirmed publication uses the persisted sequence and slot", function()
     T.assertTrue(ok); T.assertNil(err); drain(); T.assertTrue(#sends > 0)
 end)
 
-T.test("confirmed publication reconstructs protocol six slot data from compact storage", function()
+T.test("confirmed publication reconstructs protocol seven slot data from compact storage", function()
     local GGM = loadModules()
     local alice = identity("Alice", "Silvermoon", "A")
     local db = assert(T.initializeDatabase(GGM, nil))

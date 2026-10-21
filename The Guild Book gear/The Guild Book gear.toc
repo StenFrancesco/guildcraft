@@ -6,6 +6,8 @@
 ## SavedVariables: TheGuildBookGearDB
 
 Libs/ChatThrottleLib/ChatThrottleLib.lua
+Libs/LibStub/LibStub.lua
+Libs/LibDeflate/LibDeflate.lua
 
 Constants.lua
 CharacterIdentity.lua
@@ -16,6 +18,7 @@ InspectGear.lua
 StableGearTracker.lua
 LocalGearMemory.lua
 SyncProtocol.lua
+GearCompression.lua
 SyncTransport.lua
 GuildSync.lua
 AutomaticSync.lua

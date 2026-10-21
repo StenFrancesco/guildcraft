@@ -28,7 +28,7 @@ Interface/AddOns/
 
 Enable the three addons in the game's AddOns list, then open the browser with `/ggm`. The addon databases are stored separately under `WTF/Account/<account>/SavedVariables` when you log out or reload; the addon folders do not go there.
 
-If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers and the gear message protocol keep their existing names and formats.
+If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers retain their existing names; gear synchronization uses the versioned protocol described below.
 
 ## Data and synchronization
 
@@ -52,8 +52,27 @@ cannot overwrite newer observations. Receiving or forwarding a snapshot keeps
 its original times. Conflicting network observations within the same server
 second retain the saved slot; a direct inspection can replace it.
 
-Gear sharing uses protocol 6 and requires matching addon versions among peers.
-Existing gear caches remain readable. Update all three addon folders together.
+Gear sharing uses protocol 7 and prefix `GC_GEAR7`, and requires matching updated
+clients. Version 6 clients cannot join these exchanges. Existing gear caches
+remain readable; no saved-variable migration is needed. Update all three addon
+folders together.
+
+The gear addon embeds LibStub 2 and LibDeflate 1.0.2-release and works independently
+of the main addon. Complete snapshot payloads of at least 1 KiB are compressed at
+level 1 before transport framing, using a `Z1` envelope only when its encoded form
+is smaller. Small snapshots, slot updates, requests and responder claims remain
+plain. Reassembly and bounded decompression precede the existing protocol,
+identity, freshness and storage validation. Both wire and original payloads retain
+the 7,360-byte limit; inflation stops at the declared length and at 128 DEFLATE
+blocks. Bad lengths, checksums, encoding, truncated/trailing input and compressed
+non-snapshots are rejected without changing cached gear or completing a request.
+Missing compression dependencies disable gear synchronization.
+
+A representative 19-slot snapshot regression uses 3 frames and 618 bytes rather
+than 10 frames and 2,434 bytes, including frame headers. ChatThrottleLib BULK
+priority, frame pacing, queues, responder selection, cancellation and cooldowns
+remain unchanged. Compression reduces traffic and per-frame processing, but its
+bounded synchronous Lua work means actual frame-rate effects need in-game testing.
 
 On the Characters page, select a saved character and click **Sync gear** to
 request the freshest complete snapshot available from responding online guild
@@ -160,12 +179,14 @@ last-known/cached, including offline crafters; a peer match does not prove their
 current recipes. Profession sync is independent of the gear companion.
 
 This version uses recipe protocol P5 and prefix GC_PROF5. All participating copies
-must update: P4 and earlier clients cannot join P5 exchanges. Gear keeps its existing protocol. This sync update adds no storage migration; the renamed addons on main retain their new SavedVariables globals. Profession
+must update: P4 and earlier clients cannot join P5 exchanges. Gear uses protocol 7 / `GC_GEAR7`. This sync update adds no storage migration; the renamed addons on main retain their new SavedVariables globals. Profession
 traffic remains within supported in-game addon communication and respects
 unavailable APIs, combat restrictions and throttling.
 
-LibStub 2 and LibDeflate 1.0.2-release are embedded in The Guild Book and load
-before profession sync. Only complete recipe-record payloads of at least 1 KiB
+LibStub 2 and LibDeflate 1.0.2-release are embedded in both The Guild Book and
+The Guild Book gear and load before their sync modules. The first copy registers
+the shared library; each addon retains its own bounded inflater in either load
+order. For professions, only complete recipe-record payloads of at least 1 KiB
 are candidates for level-1 compression; a `Z1` envelope is used only when its
 addon-channel encoded form is smaller. Coordination messages and manifests stay
 plain. Records are reassembled and decoded before the existing validation,
@@ -181,7 +202,9 @@ are rejected before storage or acknowledgement. Missing compression dependencies
 disable profession synchronization. The embedded LibDeflate source has a clearly
 marked private bounded-inflate addition; its shared API remains unchanged, and
 an existing shared library is reused for compression. Library provenance and
-license details are under `The Guild Book/Libs`.
+license details are under each addon's `Libs` folder. Both embedded library
+sources are identical; the private `DecompressBoundedDeflate` alias serves gear
+while the profession entry point remains available.
 
 Compression reduces traffic and transport-frame processing. Compression and
 inflation still perform bounded synchronous Lua work once per record; an actual

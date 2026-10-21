@@ -84,7 +84,7 @@ local function guild()
             local chunks = self.assemblies[key]
             chunks[tonumber(index)] = chunk
             if tonumber(index) == tonumber(total) then
-                self.messages[#self.messages + 1] = { sender = sent.sender, at = self.now, message = assert(G.DecodeSyncMessage(table.concat(chunks))) }
+                self.messages[#self.messages + 1] = { sender = sent.sender, at = self.now, message = assert(G.DecodeSyncMessage(assert(G.DecodeGearPayload(table.concat(chunks))))) }
             end
             self:schedule(0, function()
                 for _, receiver in ipairs(self.clients) do
@@ -236,7 +236,7 @@ T.test("busy gear response expires without sending a late snapshot", function()
     T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 0)
 end)
 
-T.test("GC_GEAR clients exchange one explicit cached baseline with multiple responders", function()
+T.test("GC_GEAR7 clients exchange one explicit cached baseline with multiple responders", function()
     local bus = guild()
     local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     alice:startTracking()
@@ -244,7 +244,7 @@ T.test("GC_GEAR clients exchange one explicit cached baseline with multiple resp
     assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 0))
     bus:advance(600)
     T.assertEqual(#bus.frames, 0)
-    T.assertEqual(bob.prefix, "GC_GEAR")
+    T.assertEqual(bob.prefix, "GC_GEAR7")
     assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
     bus:advance(90)
     local received = assert(bob.G.GetCompleteCharacterRecord(bob.db, alice.identity.key))
@@ -255,7 +255,7 @@ T.test("GC_GEAR clients exchange one explicit cached baseline with multiple resp
     T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
     T.assertEqual(bob.sync.pendingSnapshotRequestCount, 0)
     for _, frame in ipairs(bus.frames) do
-        T.assertEqual(frame.prefix, "GC_GEAR")
+        T.assertEqual(frame.prefix, "GC_GEAR7")
         T.assertEqual(frame.channel, "GUILD")
         T.assertTrue(#frame.text <= 255)
     end
@@ -264,7 +264,7 @@ T.test("GC_GEAR clients exchange one explicit cached baseline with multiple resp
     T.assertEqual(#bus.frames, count)
 end)
 
-T.test("GC_GEAR stability deltas detect missed updates and automatically repair the complete baseline", function()
+T.test("GC_GEAR7 stability deltas detect missed updates and automatically repair the complete baseline", function()
     local bus = guild()
     local alice, bob = bus:client("Alice"), bus:client("Bob")
     alice:startTracking()
@@ -297,7 +297,7 @@ T.test("GC_GEAR stability deltas detect missed updates and automatically repair 
     T.assertFalse(repaired.refreshNeeded == true)
 end)
 
-T.test("GC_GEAR paces separate one-frame logical messages", function()
+T.test("GC_GEAR7 paces separate one-frame logical messages", function()
     local bus = guild()
     local bob = bus:client("Bob")
     for _, name in ipairs({ "Alice", "Carol" }) do
@@ -309,13 +309,15 @@ T.test("GC_GEAR paces separate one-frame logical messages", function()
     T.assertTrue(bus.frames[2].at - bus.frames[1].at + 0.000001 >= bob.G.SYNC_SEND_INTERVAL_SECONDS)
 end)
 
-T.test("GC_GEAR busy cache responders do not send a second late snapshot", function()
+T.test("GC_GEAR7 busy cache responders do not send a second late snapshot", function()
     local bus = guild()
     local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     alice:startTracking()
     local baseline = assert(alice.G.BuildRuntimeGearSnapshot(alice.api, alice.db.characters[alice.identity.key].gear))
     assert(carol.G.SaveCompleteCharacterRecord(carol.db, alice.identity, baseline, 1))
-    for index = 1, 8 do
+    -- Keep the newer responder busy, but let its claim arrive before the
+    -- shorter compressed baseline finishes, so cancellation is still exercised.
+    for index = 1, 3 do
         local target = { key = "Missing" .. index .. "-Silvermoon", name = "Missing" .. index, realm = "Silvermoon" }
         assert(carol.G.SendSyncPayload(carol.sync.transport, assert(carol.G.EncodeSyncSnapshotRequest(carol.identity, target, string.format("%06d", index)))))
     end
@@ -326,7 +328,7 @@ T.test("GC_GEAR busy cache responders do not send a second late snapshot", funct
     T.assertEqual(carol.sync.pendingSnapshotResponseCount, 0)
 end)
 
-T.test("GC_GEAR ignores old prefixes and fails closed on unavailable guild sends", function()
+T.test("GC_GEAR7 ignores old prefixes and fails closed on unavailable guild sends", function()
     local bus = guild()
     local bob = bus:client("Bob")
     local state, err = bob.G.HandleGuildSyncAddonMessage(bob.sync, "DysGuildGear", "bad", "GUILD", "Alice-Silvermoon")
@@ -340,7 +342,7 @@ T.test("GC_GEAR ignores old prefixes and fails closed on unavailable guild sends
     T.assertEqual(#bus.frames, 1)
 end)
 
-T.test("GC_GEAR simultaneous stable slots are paced and remain sequential", function()
+T.test("GC_GEAR7 simultaneous stable slots are paced and remain sequential", function()
     local bus = guild()
     local alice, bob = bus:client("Alice"), bus:client("Bob")
     alice:startTracking()
@@ -362,7 +364,7 @@ T.test("GC_GEAR simultaneous stable slots are paced and remain sequential", func
     T.assertTrue(changes[2].at - changes[1].at + 0.000001 >= alice.G.SYNC_SEND_INTERVAL_SECONDS)
 end)
 
-T.test("GC_GEAR snapshot throttling releases the responder without retrying", function()
+T.test("GC_GEAR7 snapshot throttling releases the responder without retrying", function()
     local bus = guild()
     local alice, bob = bus:client("Alice"), bus:client("Bob")
     alice:startTracking()
@@ -381,7 +383,7 @@ T.test("GC_GEAR snapshot throttling releases the responder without retrying", fu
     T.assertEqual(#bus.frames, count)
 end)
 
-T.test("GC_GEAR first owner update acquires a missing baseline without manual requests", function()
+T.test("GC_GEAR7 first owner update acquires a missing baseline without manual requests", function()
     local bus = guild()
     local alice, bob = bus:client("Alice"), bus:client("Bob")
     alice:startTracking()
@@ -394,7 +396,7 @@ T.test("GC_GEAR first owner update acquires a missing baseline without manual re
     T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
 end)
 
-T.test("GC_GEAR manual refresh after cooldown receives the newest peer snapshot", function()
+T.test("GC_GEAR7 manual refresh after cooldown receives the newest peer snapshot", function()
     local bus = guild()
     local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     alice:startTracking()
@@ -417,7 +419,7 @@ T.test("GC_GEAR manual refresh after cooldown receives the newest peer snapshot"
     T.assertEqual(bob.db.characters[alice.identity.key].confirmedSequence, 2)
 end)
 
-T.test("GC_GEAR chooses the newest available offline cache and sends one complete response", function()
+T.test("GC_GEAR7 chooses the newest available offline cache and sends one complete response", function()
     local bus = guild()
     local alice, bob, carol, dave = bus:client("Alice"), bus:client("Bob"), bus:client("Carol"), bus:client("Dave")
     alice:startTracking()
@@ -433,7 +435,7 @@ T.test("GC_GEAR chooses the newest available offline cache and sends one complet
     T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
 end)
 
-T.test("GC_GEAR selects a newer inspection over a higher owner sequence and shares it normally", function()
+T.test("GC_GEAR7 selects a newer inspection over a higher owner sequence and shares it normally", function()
     local bus = guild()
     local alice, bob, carol, dave = bus:client("Alice"), bus:client("Bob"), bus:client("Carol"), bus:client("Dave")
     alice:startTracking()
@@ -454,7 +456,7 @@ T.test("GC_GEAR selects a newer inspection over a higher owner sequence and shar
     T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 1)
 end)
 
-T.test("GC_GEAR fresh inspection permits a response during an older snapshot cooldown", function()
+T.test("GC_GEAR7 fresh inspection permits a response during an older snapshot cooldown", function()
     local bus = guild()
     local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     alice:startTracking(); alice.drop = true
@@ -471,7 +473,7 @@ T.test("GC_GEAR fresh inspection permits a response during an older snapshot coo
     T.assertEqual(bus:count("SNAPSHOT_RESPONSE"), 2)
 end)
 
-T.test("GC_GEAR a later owner observation remains eligible after a complete inspection", function()
+T.test("GC_GEAR7 a later owner observation remains eligible after a complete inspection", function()
     local bus = guild()
     local alice, bob, carol, dave = bus:client("Alice"), bus:client("Bob"), bus:client("Carol"), bus:client("Dave")
     alice:startTracking(); alice.drop = true
@@ -488,7 +490,7 @@ T.test("GC_GEAR a later owner observation remains eligible after a complete insp
     T.assertEqual(bob.db.characters[alice.identity.key].gear.slots[1], "item:9991")
 end)
 
-T.test("GC_GEAR shares and updates an inspected character using a realm spelling alias", function()
+T.test("GC_GEAR7 shares and updates an inspected character using a realm spelling alias", function()
     local bus = guild()
     local alice, bob, carol = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
     alice:startTracking(); alice.drop = true
@@ -509,4 +511,58 @@ T.test("GC_GEAR shares and updates an inspected character using a realm spelling
         { inventorySlotID = 1, itemID = 9913, itemLink = "|Hitem:9913|h[Later]|h" }, bob.api.GetServerTime()))
     T.assertEqual(bob.G.HandleGuildSyncPayload(bob.sync, alice.identity.key, update), "slot-applied")
     T.assertEqual(bob.db.characters[alias.key].gear.slots[1], "item:9913")
+end)
+
+
+T.test("compressed gear snapshots complete requests and preserve sequence and original observations", function()
+    local bus=guild(); local alice,bob=bus:client("Alice"),bus:client("Bob")
+    alice:startTracking()
+    local source=alice.db.characters[alice.identity.key]
+    local snapshot=assert(alice.G.BuildRuntimeGearSnapshot(alice.api,source.gear))
+    local payload=assert(alice.G.EncodeSyncSnapshotResponse(alice.identity,bob.identity,alice.identity,snapshot,source.confirmedSequence,"000001"))
+    local encoded=assert(alice.G.EncodeGearPayload(payload))
+    T.assertEqual(encoded:sub(1,3),"Z1|")
+    local result
+    assert(bob.G.RequestCompleteSnapshot(bob.sync,alice.identity,nil,nil,function(state) result=state end))
+    bus:advance(30)
+    T.assertTrue(result); T.assertEqual(bob.sync.pendingSnapshotRequestCount,0)
+    local saved=assert(bob.G.GetCompleteCharacterRecord(bob.db,alice.identity.key))
+    local received=assert(bob.G.BuildRuntimeGearSnapshot(bob.api,saved.gear))
+    T.assertEqual(saved.confirmedSequence,source.confirmedSequence)
+    T.assertEqual(received.capturedAt,snapshot.capturedAt)
+    for _,slot in ipairs(alice.G.TRACKED_SLOTS) do
+        T.assertEqual(received.slots[slot.key].itemID,snapshot.slots[slot.key].itemID)
+        T.assertEqual(bob.G.GetGearSlotObservedAt(received,slot.inventorySlotID),alice.G.GetGearSlotObservedAt(snapshot,slot.inventorySlotID))
+    end
+    local sent=0
+    for _,frame in ipairs(bus.frames) do if frame.sender==alice.identity.key and frame.text:find("|Z1|",1,true) then sent=sent+1 end end
+    T.assertEqual(sent,1)
+end)
+
+T.test("corrupt compressed gear retains the complete cache and leaves the request unfinished", function()
+    local bus=guild(); local alice,bob=bus:client("Alice"),bus:client("Bob")
+    alice:startTracking()
+    local old=assert(alice.G.BuildRuntimeGearSnapshot(alice.api,alice.db.characters[alice.identity.key].gear))
+    assert(bob.G.SaveCompleteCharacterRecord(bob.db,alice.identity,old,0))
+    bus:advance(10)
+    old.capturedAt=alice.api.GetServerTime(); old.slotObservedAt=nil
+    old.slots.HEAD={inventorySlotID=1,itemID=9001,itemLink="|Hitem:9001|h[New Head]|h"}
+    assert(alice.G.SaveCompleteCharacterRecord(alice.db,alice.identity,old,1))
+    local before=bob.db.characters[alice.identity.key]
+    local decode,rejected=bob.G.DecodeGearPayload,0
+    bob.G.DecodeGearPayload=function(payload)
+        if payload:sub(1,3)=="Z1|" then
+            rejected=rejected+1; payload=payload:gsub("^(Z1|%d+|)%d+|","%10|")
+        end
+        return decode(payload)
+    end
+    local finished=0
+    assert(bob.G.RequestCompleteSnapshot(bob.sync,alice.identity,nil,nil,function() finished=finished+1 end))
+    bus:advance(30)
+    T.assertTrue(rejected > 0); T.assertEqual(finished,0)
+    T.assertEqual(bob.sync.pendingSnapshotRequestCount,1)
+    T.assertTrue(bob.db.characters[alice.identity.key]==before)
+    T.assertEqual(before.gear.slots[1],"item:1001")
+    T.assertEqual(before.confirmedSequence,0)
+    T.assertEqual(bob.sync.transport.lastReceiveError,"sync-compressed-payload-invalid")
 end)

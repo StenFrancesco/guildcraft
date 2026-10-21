@@ -2581,13 +2581,13 @@ T.test("gear sync status reports prefix availability and async errors even witho
     local api = { SlashCmdList = {}, print = function(message) messages[#messages + 1] = message end }
     GGM.RegisterSnapshotTestSlashCommand(api)
     api.SlashCmdList.GUILDGEARMEMORY("status")
-    T.assertTrue(table.concat(messages, "\n"):find("Gear sync: unavailable (GC_GEAR)", 1, true) ~= nil)
+    T.assertTrue(table.concat(messages, "\n"):find("Gear sync: unavailable (GC_GEAR7)", 1, true) ~= nil)
     messages = {}
     GGM.guildSync = { transport = { lastSendError = "send-addon-message-failed:NotInGuild" } }
     GGM.lastSyncReceiveError = "sync-frame-invalid"
     api.SlashCmdList.GUILDGEARMEMORY("status")
     local output = table.concat(messages, "\n")
-    T.assertTrue(output:find("Gear sync: registered (GC_GEAR)", 1, true) ~= nil)
+    T.assertTrue(output:find("Gear sync: registered (GC_GEAR7)", 1, true) ~= nil)
     T.assertTrue(output:find("Gear sync send/request error: send-addon-message-failed:NotInGuild", 1, true) ~= nil)
     T.assertTrue(output:find("Gear sync receive error: sync-frame-invalid", 1, true) ~= nil)
 end)

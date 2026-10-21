@@ -49,7 +49,7 @@ T.test("schema version is seven and protocol version is six", function()
     T.loadAddonFile("The Guild Book/Constants.lua", GGM)
     T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
     T.assertEqual(GGM.SCHEMA_VERSION, 7)
-    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 6)
+    T.assertEqual(GGM.SYNC_PROTOCOL_VERSION, 7)
 end)
 
 T.test("profession recipe index version is three", function()

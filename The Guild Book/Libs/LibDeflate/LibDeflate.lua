@@ -2676,6 +2676,8 @@ if type(GuildBook) == "table" then
             or maxOutput < 1 or maxOutput > 65536 or maxOutput % 1 ~= 0 then return nil, -100 end
         return DecompressDeflateInternal(str, nil, maxOutput)
     end
+    -- Domain-neutral private alias shared by gear and profession codecs.
+    GuildBook.DecompressBoundedDeflate = GuildBook.DecompressProfessionDeflate
 end
 
 -- @see LibDeflate:DecompressZlib(str)

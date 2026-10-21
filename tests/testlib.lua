@@ -40,6 +40,14 @@ function TestLib.assertNotNil(value, message)
 end
 
 function TestLib.loadAddonFile(path, namespace)
+    if path == "The Guild Book gear/SyncTransport.lua" then
+        local env = setmetatable({ strmatch = string.match }, { __index = _G })
+        env._G = env
+        for _, dependency in ipairs({ "Libs/LibStub/LibStub", "Libs/LibDeflate/LibDeflate", "GearCompression" }) do
+            local loadDependency = assert(loadfile("The Guild Book gear/" .. dependency .. ".lua"))
+            setfenv(loadDependency, env)("The Guild Book gear", namespace)
+        end
+    end
     if path == "The Guild Book/ProfessionTransport.lua" then
         local env = setmetatable({ strmatch = string.match }, { __index = _G })
         env._G = env

@@ -99,7 +99,7 @@ T.test("bundled CTL bounds combined prefix traffic by its shared byte budget", f
     c:update(6)
     local text = string.rep("x", 240)
     for index = 1, 30 do
-        local prefix = index % 2 == 0 and "GC_GEAR" or "GC_PROF5"
+        local prefix = index % 2 == 0 and "GC_GEAR7" or "GC_PROF5"
         api.ChatThrottleLib:SendAddonMessage("BULK", prefix, text, "GUILD", nil, prefix)
     end
     local size = #text + c.library.MSG_OVERHEAD
@@ -108,7 +108,7 @@ T.test("bundled CTL bounds combined prefix traffic by its shared byte budget", f
     T.assertEqual(#c.sent, math.floor((c.library.BURST + c.library.MAX_CPS) / size))
     local seen = {}
     for _, call in ipairs(c.sent) do seen[call.prefix] = true end
-    T.assertTrue(seen.GC_GEAR)
+    T.assertTrue(seen.GC_GEAR7)
     T.assertTrue(seen.GC_PROF5)
 end)
 
@@ -133,7 +133,7 @@ T.test("bundled CTL shares one queue for independent gear and profession addons"
     c:update(6)
     T.assertEqual(#c.sent, 2)
     T.assertEqual(completed, 2)
-    T.assertEqual(c.sent[1].prefix, "GC_GEAR")
+    T.assertEqual(c.sent[1].prefix, "GC_GEAR7")
     T.assertEqual(c.sent[2].channel, "WHISPER")
     T.assertEqual(c.sent[2].target, "Alice-Realm")
 end)
@@ -279,7 +279,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
     T.assertEqual(professionDone, 1)
     -- Forty frames used to require at least 19.5 seconds of fixed waits.
     T.assertTrue(finishedAt - 6 < 19.5)
-    local chunks, lastGearAt, bytes = {GC_GEAR = {}, GC_PROF5 = {}}, nil, 0
+    local chunks, lastGearAt, bytes = {GC_GEAR7 = {}, GC_PROF5 = {}}, nil, 0
     for _, call in ipairs(c.sent) do
         local index, chunk = call.text:match("^F1|%d+|(%d+)|%d+|(.*)$")
         local frames = chunks[call.prefix]
@@ -287,7 +287,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
         frames[#frames + 1] = chunk
         bytes = bytes + #call.text + c.library.MSG_OVERHEAD
         T.assertTrue(bytes <= c.library.BURST + c.library.MAX_CPS * (call.at - 6) + 0.000001)
-        if call.prefix == "GC_GEAR" then
+        if call.prefix == "GC_GEAR7" then
             if lastGearAt then T.assertTrue(call.at - lastGearAt >= G.SYNC_SEND_INTERVAL_SECONDS - 0.000001) end
             lastGearAt = call.at
         else
@@ -295,7 +295,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
             T.assertEqual(call.target, "Alice-Realm")
         end
     end
-    T.assertEqual(table.concat(chunks.GC_GEAR), gearPayload)
+    T.assertEqual(table.concat(chunks.GC_GEAR7), gearPayload)
     T.assertEqual(table.concat(chunks.GC_PROF5), professionPayload)
     T.assertEqual(#transport.outboundFrames, 0)
     T.assertEqual(#profession.outboundFrames, 0)
