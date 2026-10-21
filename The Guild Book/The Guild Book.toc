@@ -8,6 +8,8 @@
 ## SavedVariables: TheGuildBookDB
 
 Libs/ChatThrottleLib/ChatThrottleLib.lua
+Libs/LibStub/LibStub.lua
+Libs/LibDeflate/LibDeflate.lua
 
 Constants.lua
 CharacterIdentity.lua
@@ -17,6 +19,7 @@ ProfessionSnapshot.lua
 ProfessionIndex.lua
 Storage.lua
 ProfessionSyncData.lua
+ProfessionCompression.lua
 ProfessionTransport.lua
 ProfessionSync.lua
 AutomaticSync.lua

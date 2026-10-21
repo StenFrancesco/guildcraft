@@ -92,7 +92,7 @@ local function guild()
     function bus:count(kind, sender)
         local n = 0
         for _, frame in ipairs(self.frames) do
-            if (not sender or frame.sender == sender) and frame.text:find("P4|" .. kind .. "|", 1, true) then n = n + 1 end
+            if (not sender or frame.sender == sender) and (frame.text:find("P5|" .. kind .. "|", 1, true) or (kind == "D" and frame.text:match("^F1|%d+|001|%d+|Z1|"))) then n = n + 1 end
         end
         return n
     end

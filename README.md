@@ -33,7 +33,7 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 ## Data and synchronization
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
-- Profession sharing uses protocol P4 (`GC_PROF4`). Participating clients need compatible versions.
+- Profession sharing uses protocol P5 (`GC_PROF5`). Participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
 - Leaving a guild or switching guilds cancels work for the previous guild. Once current membership and roster state are confirmed, a fresh bounded synchronization run is scheduled for the new guild.
@@ -159,11 +159,31 @@ preserve the valid saved catalog and leave catch-up work unfinished. Shared info
 last-known/cached, including offline crafters; a peer match does not prove their
 current recipes. Profession sync is independent of the gear companion.
 
-This version uses recipe protocol P4 and prefix GC_PROF4. All participating copies
-must update: legacy recipe clients use replacement semantics and cannot join the
-union exchange. Gear keeps its existing protocol. This sync update adds no storage migration; the renamed addons on main retain their new SavedVariables globals. Profession
+This version uses recipe protocol P5 and prefix GC_PROF5. All participating copies
+must update: P4 and earlier clients cannot join P5 exchanges. Gear keeps its existing protocol. This sync update adds no storage migration; the renamed addons on main retain their new SavedVariables globals. Profession
 traffic remains within supported in-game addon communication and respects
 unavailable APIs, combat restrictions and throttling.
+
+LibStub 2 and LibDeflate 1.0.2-release are embedded in The Guild Book and load
+before profession sync. Only complete recipe-record payloads of at least 1 KiB
+are candidates for level-1 compression; a `Z1` envelope is used only when its
+addon-channel encoded form is smaller. Coordination messages and manifests stay
+plain. Records are reassembled and decoded before the existing validation,
+union merge, storage and acknowledgement flow. Saved variables do not change.
+
+Compressed envelopes include the original byte length and Adler-32 checksum.
+The private decoder stops during inflation at the declared length (at most
+65,536 bytes), rather than expanding an oversized record first. Invalid lengths,
+encoding, truncated/trailing compressed input, checksums or decoded message kinds
+are rejected before storage or acknowledgement. Missing compression dependencies
+disable profession synchronization. The embedded LibDeflate source has a clearly
+marked private bounded-inflate addition; its shared API remains unchanged, and
+an existing shared library is reused for compression. Library provenance and
+license details are under `The Guild Book/Libs`.
+
+Compression reduces traffic and transport-frame processing. Compression and
+inflation still perform bounded synchronous Lua work once per record; an actual
+frame-rate improvement must be verified in game.
 
 ChatThrottleLib version 29 is embedded, unchanged, under `Libs/ChatThrottleLib`
 in both The Guild Book and The Guild Book gear. The first loaded copy

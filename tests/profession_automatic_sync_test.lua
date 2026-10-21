@@ -78,7 +78,7 @@ T.test("busy recipe requests are deduplicated bounded and expire", function()
     for index, peer in ipairs(peers) do
         peer:ready()
         local digest = assert(peer.G.GetProfessionSyncDigest(peer.db, 164))
-        local payload = "P4|Q|*|123-" .. index .. "|164|" .. digest .. ";manual;;target-realm"
+        local payload = "P5|Q|*|123-" .. index .. "|164|" .. digest .. ";manual;;target-realm"
         target.sync.transport.onPayload(payload, peer.identity.key, "GUILD")
         target.sync.transport.onPayload(payload, peer.identity.key, "GUILD")
     end

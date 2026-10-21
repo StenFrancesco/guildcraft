@@ -78,7 +78,7 @@ T.test("bundled CTL permits same-prefix bursts within its shared byte budget", f
     c:update(6)
     local completed = 0
     for index = 1, 30 do
-        api.ChatThrottleLib:SendAddonMessage("BULK", "GC_PROF4", tostring(index), "GUILD", nil, "GC_PROF4",
+        api.ChatThrottleLib:SendAddonMessage("BULK", "GC_PROF5", tostring(index), "GUILD", nil, "GC_PROF5",
             function(_, sent, result)
                 T.assertTrue(sent)
                 T.assertEqual(result, 0)
@@ -99,7 +99,7 @@ T.test("bundled CTL bounds combined prefix traffic by its shared byte budget", f
     c:update(6)
     local text = string.rep("x", 240)
     for index = 1, 30 do
-        local prefix = index % 2 == 0 and "GC_GEAR" or "GC_PROF4"
+        local prefix = index % 2 == 0 and "GC_GEAR" or "GC_PROF5"
         api.ChatThrottleLib:SendAddonMessage("BULK", prefix, text, "GUILD", nil, prefix)
     end
     local size = #text + c.library.MSG_OVERHEAD
@@ -109,7 +109,7 @@ T.test("bundled CTL bounds combined prefix traffic by its shared byte budget", f
     local seen = {}
     for _, call in ipairs(c.sent) do seen[call.prefix] = true end
     T.assertTrue(seen.GC_GEAR)
-    T.assertTrue(seen.GC_PROF4)
+    T.assertTrue(seen.GC_PROF5)
 end)
 
 local function gear(api)
@@ -279,7 +279,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
     T.assertEqual(professionDone, 1)
     -- Forty frames used to require at least 19.5 seconds of fixed waits.
     T.assertTrue(finishedAt - 6 < 19.5)
-    local chunks, lastGearAt, bytes = {GC_GEAR = {}, GC_PROF4 = {}}, nil, 0
+    local chunks, lastGearAt, bytes = {GC_GEAR = {}, GC_PROF5 = {}}, nil, 0
     for _, call in ipairs(c.sent) do
         local index, chunk = call.text:match("^F1|%d+|(%d+)|%d+|(.*)$")
         local frames = chunks[call.prefix]
@@ -296,7 +296,7 @@ T.test("multi-frame professions finish faster while sharing real CTL with paced 
         end
     end
     T.assertEqual(table.concat(chunks.GC_GEAR), gearPayload)
-    T.assertEqual(table.concat(chunks.GC_PROF4), professionPayload)
+    T.assertEqual(table.concat(chunks.GC_PROF5), professionPayload)
     T.assertEqual(#transport.outboundFrames, 0)
     T.assertEqual(#profession.outboundFrames, 0)
 end)

@@ -1,6 +1,6 @@
 local _, GGM = ...
 
-local PREFIX, PROTOCOL = "GC_PROF4", "P4"
+local PREFIX, PROTOCOL = "GC_PROF5", "P5"
 local PROFESSIONS = { 164, 165, 171, 197, 202, 333 }
 local SUPPORTED = {}
 for _, professionID in ipairs(PROFESSIONS) do SUPPORTED[professionID] = true end

@@ -1,6 +1,6 @@
 local _, GGM = ...
 
-local PREFIX = "GC_PROF4"
+local PREFIX = "GC_PROF5"
 local MAX_MESSAGE_BYTES = 240
 local MAX_LOGICAL_BYTES = 65536
 local MAX_CHUNK_BYTES = 222 -- 240 minus the 18-byte F1 header.
@@ -93,6 +93,10 @@ end
 local function buildFrames(transport, payload)
     if type(payload) ~= "string" or payload == "" then return nil, "profession-payload-invalid" end
     if #payload > MAX_LOGICAL_BYTES then return nil, "profession-payload-too-large" end
+
+    local encoded, encodeErr = GGM.EncodeProfessionPayload(payload)
+    if not encoded then return nil, encodeErr end
+    payload = encoded
 
     local total = math.ceil(#payload / MAX_CHUNK_BYTES)
     if total < 1 or total > MAX_FRAME_COUNT then return nil, "profession-frame-count-invalid" end
@@ -262,6 +266,10 @@ function GGM.CreateProfessionTransport(api, onPayload, onFailure)
     if type(onPayload) ~= "function" then return nil, "profession-payload-handler-invalid" end
     if onFailure ~= nil and type(onFailure) ~= "function" then return nil, "profession-failure-handler-invalid" end
 
+    if type(GGM.IsProfessionCompressionAvailable) ~= "function" or not GGM.IsProfessionCompressionAvailable() then
+        return nil, "profession-compression-unavailable"
+    end
+
     return {
         api = api,
         onPayload = onPayload,
@@ -395,6 +403,10 @@ function GGM.ReceiveProfessionFrame(transport, prefix, frameText, channel, sende
         transport.lastReceiveError = err
         return nil, err
     end
+
+    local decoded, decodeErr = GGM.DecodeProfessionPayload(payload)
+    if not decoded then transport.lastReceiveError = decodeErr; return nil, decodeErr end
+    payload = decoded
 
     local handlerOk, state, handlerErr = pcall(transport.onPayload, payload, sender, channel)
     if not handlerOk then
