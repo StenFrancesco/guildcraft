@@ -43,6 +43,7 @@ local function setRequestResult(sync, targetKey, status, err)
 end
 
 local scheduleGearReadyRetry
+local gearReadyRecordIsCurrent
 
 local function clearGearReadyRetry(sync, targetKey, retryState, resultStatus)
     local current = sync.gearReadyRetryStates[targetKey]
@@ -69,12 +70,21 @@ local function finishSnapshotRequest(sync, requestID, status, err)
         pending.gearReadyTimeoutTimer:Cancel()
     end
     pending.gearReadyTimeoutTimer = nil
-    setRequestResult(sync, pending.targetKey, status, err)
-    notifyChanged(sync, status == "synced")
+    local resultStatus = status
     if pending.gearReadyRetryState then
-        if status == "synced" then clearGearReadyRetry(sync, pending.targetKey, pending.gearReadyRetryState)
-        elseif status == "timeout" then scheduleGearReadyRetry(sync, pending.gearReadyRetryState) end
+        if status == "synced" then
+            -- This clears the retry only after the saved record satisfies
+            -- the advertised readiness floors.
+            if not gearReadyRecordIsCurrent(sync, pending.gearReadyRetryState) then
+                resultStatus = "waiting"
+                scheduleGearReadyRetry(sync, pending.gearReadyRetryState)
+            end
+        elseif status == "timeout" then
+            scheduleGearReadyRetry(sync, pending.gearReadyRetryState)
+        end
     end
+    setRequestResult(sync, pending.targetKey, resultStatus, err)
+    notifyChanged(sync, status == "synced")
     if type(pending.onFinished) == "function" then pcall(pending.onFinished, status == "synced") end
 end
 
@@ -247,7 +257,7 @@ local function requestRepair(sync, identity, minimumSequence, minimumObservedAt,
     return nil, err
 end
 
-local function gearReadyRecordIsCurrent(sync, retryState)
+gearReadyRecordIsCurrent = function(sync, retryState)
     local record = GGM.GetCompleteCharacterRecord(sync.db, retryState.targetKey)
     if not record or not identitiesCompatible(record.identity, retryState.identity) then return false end
     local sequence = GGM.GetConfirmedSequence(record)
