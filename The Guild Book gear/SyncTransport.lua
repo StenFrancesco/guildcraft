@@ -137,6 +137,9 @@ function GGM.CreateSyncTransport(api, onLogicalPayload)
     if type(api.ChatThrottleLib) ~= "table" or type(api.ChatThrottleLib.SendAddonMessage) ~= "function" then
         return nil, "sync-chat-throttle-lib-unavailable"
     end
+    if type(GGM.IsGearCompressionAvailable) ~= "function" or not GGM.IsGearCompressionAvailable() then
+        return nil, "sync-compression-unavailable"
+    end
     if type(api.C_Timer) ~= "table" or type(api.C_Timer.NewTimer) ~= "function" then return nil, "sync-timer-api-unavailable" end
     if type(api.GetTime) ~= "function" then return nil, "sync-time-api-unavailable" end
     if type(onLogicalPayload) ~= "function" then return nil, "sync-logical-handler-invalid" end
@@ -151,7 +154,13 @@ function GGM.RegisterSyncPrefix(transport)
 end
 
 function GGM.SendSyncPayload(transport, payload, onFinished)
-    local frames, frameErr = buildFrames(payload, nextMessageID(transport))
+    local encoded, encodeErr = GGM.EncodeGearPayload(payload)
+    if not encoded then return false, encodeErr end
+    if payload:sub(1, 2) == tostring(GGM.SYNC_PROTOCOL_VERSION) .. "S"
+        and math.ceil(#encoded / GGM.SYNC_FRAME_CHUNK_BYTES) > GGM.SYNC_MAX_SNAPSHOT_FRAME_COUNT then
+        return false, "sync-snapshot-frame-count-exceeded"
+    end
+    local frames, frameErr = buildFrames(encoded, nextMessageID(transport))
     if not frames then return false, frameErr end
     if #transport.outboundFrames + #frames > GGM.SYNC_MAX_OUTBOUND_FRAMES then return false, "sync-outbound-queue-full" end
     local shouldPump = #transport.outboundFrames == 0 and transport.sendTimer == nil
@@ -217,7 +226,9 @@ function GGM.HandleSyncTransportMessage(transport, prefix, text, channel, sender
     byMessageID[frame.messageID] = nil
     if next(byMessageID) == nil then transport.inboundAssemblies[sender] = nil end
     if #payload > GGM.SYNC_MAX_LOGICAL_BYTES then local err = "sync-payload-too-large"; transport.lastReceiveError = err; return nil, err end
-    local handlerOk, state, handlerErr = pcall(transport.onLogicalPayload, sender, payload)
+    local decoded, decodeErr = GGM.DecodeGearPayload(payload)
+    if not decoded then transport.lastReceiveError = decodeErr; return nil, decodeErr end
+    local handlerOk, state, handlerErr = pcall(transport.onLogicalPayload, sender, decoded)
     if not handlerOk then local err = "sync-logical-handler-threw"; transport.lastReceiveError = err; return nil, err end
     transport.lastReceiveError = handlerErr
     return state, handlerErr

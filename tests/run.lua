@@ -20,6 +20,7 @@ local suites = {
     "tests.stable_gear_tracker_test",
     "tests.sync_protocol_test",
     "tests.sync_transport_test",
+    "tests.gear_compression_test",
     "tests.guild_sync_test",
     "tests.gear_sync_integration_test",
     "tests.profession_snapshot_test",

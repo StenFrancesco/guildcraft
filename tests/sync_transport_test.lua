@@ -23,7 +23,7 @@ local function makeApi(sendResults)
     }
 
     api.C_ChatInfo.RegisterAddonMessagePrefix = function(prefix)
-        T.assertEqual(prefix, "GC_GEAR")
+        T.assertEqual(prefix, "GC_GEAR7")
         return registerResult
     end
 

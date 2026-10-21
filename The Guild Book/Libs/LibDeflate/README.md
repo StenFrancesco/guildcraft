@@ -5,8 +5,9 @@ Version: 1.0.2-release, commit 6831edcaa915154e7769d622e0de72ee5d25a882.
 License: zlib (LICENSE.txt and retained source notice).
 
 Altered source: The Guild Book adds an addon-private DecompressProfessionDeflate
-entry point, threads an output budget through raw inflation, and checks that
-budget before literals, matches and stored blocks allocate output. Status -100
+entry point (also exposed privately as DecompressBoundedDeflate for gear),
+threads an output budget through raw inflation, and checks that budget before
+literals, matches and stored blocks allocate output. Status -100
 indicates a rejected limit. The budget survives block boundaries and window
 flushes. The private inflater also rejects more than 128 DEFLATE blocks with
 status -101, checking before each block header or Huffman-table construction.
