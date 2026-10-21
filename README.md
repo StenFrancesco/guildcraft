@@ -68,6 +68,12 @@ blocks. Bad lengths, checksums, encoding, truncated/trailing input and compresse
 non-snapshots are rejected without changing cached gear or completing a request.
 Missing compression dependencies disable gear synchronization.
 
+Snapshot responses are sent only when their final encoded wire payload fits
+within 10 transport frames, including when compression falls back to the
+original payload. Oversized snapshots are rejected before they enter the send
+queue; the cached snapshot remains available locally. The generic transport
+continues to accept up to 32 frames for other message types.
+
 A representative 19-slot snapshot regression uses 3 frames and 618 bytes rather
 than 10 frames and 2,434 bytes, including frame headers. ChatThrottleLib BULK
 priority, frame pacing, queues, responder selection, cancellation and cooldowns

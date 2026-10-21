@@ -159,6 +159,45 @@ T.test("gear transport reduces snapshot frames and bytes and dispatches only aft
     print(string.format("GEAR TRAFFIC: %d bytes/%d frames plain -> %d bytes/%d frames compressed (including frame headers)",#original+17*plainFrames,plainFrames,bytes,#calls))
 end)
 
+T.test("gear snapshot sends enforce the ten-frame wire ceiling after compression", function()
+    local G=load(); local a,calls=api(); local transport=assert(G.CreateSyncTransport(a,function() end))
+    local function incompressible(length)
+        local bytes,seed={},12345
+        for i=1,length do seed=(seed*48271)%2147483647; bytes[i]=string.char(seed%256) end
+        return "7S" .. table.concat(bytes)
+    end
+    local exact=incompressible(2298)
+    T.assertEqual(#exact,2300); T.assertEqual(G.EncodeGearPayload(exact),exact)
+    T.assertTrue(G.SendSyncPayload(transport,exact))
+    T.assertEqual(#calls,1)
+    T.assertEqual(#transport.outboundFrames,9)
+    local before=#transport.outboundFrames
+    local nextID=transport.nextMessageID
+    local tooLarge=incompressible(2299)
+    T.assertEqual(#tooLarge,2301); T.assertEqual(G.EncodeGearPayload(tooLarge),tooLarge)
+    T.assertFalse(G.SendSyncPayload(transport,tooLarge))
+    T.assertEqual(#transport.outboundFrames,before)
+    T.assertEqual(transport.nextMessageID,nextID)
+    local compressible="7S" .. string.rep("compressible snapshot ",160)
+    T.assertTrue(#compressible>2300)
+    T.assertTrue(#assert(G.EncodeGearPayload(compressible))<=2300)
+    T.assertTrue(G.SendSyncPayload(transport,compressible))
+    local randomBytes,seed={},12345
+    for i=1,2190 do seed=(seed*48271)%2147483647; randomBytes[i]=string.char(seed%256) end
+    local random=table.concat(randomBytes)
+    local compressedExact="7S" .. random:sub(1,2186) .. string.rep("snapshot",125)
+    local compressedOver="7S" .. random .. string.rep("snapshot",125)
+    T.assertTrue(#compressedExact>2300); T.assertEqual(#assert(G.EncodeGearPayload(compressedExact)),2300)
+    T.assertTrue(G.SendSyncPayload(transport,compressedExact))
+    local beforeCompressedReject=#transport.outboundFrames
+    local nextCompressedID=transport.nextMessageID
+    T.assertTrue(#compressedOver>2300); T.assertEqual(#assert(G.EncodeGearPayload(compressedOver)),2301)
+    T.assertFalse(G.SendSyncPayload(transport,compressedOver))
+    T.assertEqual(#transport.outboundFrames,beforeCompressedReject)
+    T.assertEqual(transport.nextMessageID,nextCompressedID)
+    local generic="7U" .. string.rep("x",2300)
+    T.assertTrue(G.SendSyncPayload(transport,generic))
+end)
 T.test("gear protocol seven isolates old peers and rejects version six logical messages", function()
     local G=load(); local a=api(); local called=0
     local transport=assert(G.CreateSyncTransport(a,function() called=called+1 end))

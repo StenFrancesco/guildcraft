@@ -155,6 +155,10 @@ end
 function GGM.SendSyncPayload(transport, payload, onFinished)
     local encoded, encodeErr = GGM.EncodeGearPayload(payload)
     if not encoded then return false, encodeErr end
+    if payload:sub(1, 2) == tostring(GGM.SYNC_PROTOCOL_VERSION) .. "S"
+        and math.ceil(#encoded / GGM.SYNC_FRAME_CHUNK_BYTES) > GGM.SYNC_MAX_SNAPSHOT_FRAME_COUNT then
+        return false, "sync-snapshot-frame-count-exceeded"
+    end
     local frames, frameErr = buildFrames(encoded, nextMessageID(transport))
     if not frames then return false, frameErr end
     if #transport.outboundFrames + #frames > GGM.SYNC_MAX_OUTBOUND_FRAMES then return false, "sync-outbound-queue-full" end
