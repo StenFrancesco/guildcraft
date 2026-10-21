@@ -1929,6 +1929,7 @@ end)
 T.test("profession button yields automatic work after the current transfer", function()
     local bus = guild()
     local a, b, c = bus:client("Alice"), bus:client("Bob"), bus:client("Carol")
+    local firstAutomaticProfessionID = 129 -- First Aid is first in supported-ID order.
     a:save(a.identity, { 3 }); a:ready(); b:ready(); c:ready(); automatic(b)
     assert(b.G.LoginProfessionSync(b.sync)); bus:advance(0)
     T.assertNotNil(b.sync.automaticAttempt.operation)
@@ -1942,9 +1943,9 @@ T.test("profession button yields automatic work after the current transfer", fun
             if pid then queries[#queries + 1] = tonumber(pid) end
         end
     end
-    T.assertEqual(queries[1], 164)
+    T.assertEqual(queries[1], firstAutomaticProfessionID)
     T.assertEqual(queries[2], 202, "the clicked profession must precede the next automatic peer")
-    T.assertNotNil(b.sync.resumePeers[164], "unfinished automatic peers remain recoverable")
+    T.assertNotNil(b.sync.resumePeers[firstAutomaticProfessionID], "unfinished automatic peers remain recoverable")
 end)
 
 T.test("a new button profession replaces a queued cooldown request even when it starts immediately", function()
