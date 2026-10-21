@@ -447,9 +447,11 @@ local function newControl()
     function control:SetTextInsets(...) self.textInsets = { ... } end
     function control:SetPoint(point, relativeTo, relativePoint, x, y)
         self.point = { point = point, relativeTo = relativeTo, relativePoint = relativePoint, x = x, y = y }
+        self.points = self.points or {}
+        self.points[point] = self.point
     end
     function control:SetAllPoints(relativeTo) self.allPointsTo = relativeTo end
-    function control:ClearAllPoints() self.point = nil; self.allPointsTo = nil end
+    function control:ClearAllPoints() self.point = nil; self.points = nil; self.allPointsTo = nil end
     function control:SetClampedToScreen(value) self.clampedToScreen = value end
     function control:SetJustifyH(value) self.justifyH = value end
     function control:SetAutoFocus() end
@@ -2590,13 +2592,13 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     T.assertTrue(emptySlot.status.width <= 92)
 end)
 
-T.test("opening and selecting browser entries never inspects, requests, captures, writes, or sends", function()
+T.test("opening and selecting browser entries only backfills class metadata without gear capture or network activity", function()
     local GGM = loadUI()
     local first, second = makeRecord(GGM), makeRecord(GGM)
     second.identity = { key = "Beatrice-ArgentDawn", name = "Beatrice", realm = "ArgentDawn" }
     setSavedModelIdentity(first)
     setSavedModelIdentity(second)
-    local forbidden = function() error("browser interaction must remain local and read-only") end
+    local forbidden = function() error("browser interaction must not capture gear or send messages") end
     for _, name in ipairs({
         "InspectUnit", "NotifyInspect", "CanInspect", "RequestCompleteSnapshot", "CaptureAndStoreLocalPlayer",
         "CapturePlayerGearSnapshot", "SaveCompleteCharacterRecord", "UpdateConfirmedCharacterSlot",
@@ -2630,7 +2632,10 @@ T.test("opening and selecting browser entries never inspects, requests, captures
         end
         return true
     end
-    local before = copyTable(db)
+    local expected = copyTable(db)
+    -- Cached class lookup may enrich legacy identities; every other saved field must stay unchanged.
+    expected.characters["Alice-Silvermoon"].identity.classToken = "WARRIOR"
+    expected.characters["Beatrice-ArgentDawn"].identity.classToken = "MAGE"
     local frame = showBrowser(GGM, api, db)
 
     frame.searchBox:SetText("beatrice")
@@ -2643,7 +2648,7 @@ T.test("opening and selecting browser entries never inspects, requests, captures
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
 
     T.assertEqual(frame.selectedEntry.key, "Beatrice-ArgentDawn")
-    T.assertTrue(tablesEqual(db, before), "browser interaction must not mutate any SavedVariables data")
+    T.assertTrue(tablesEqual(db, expected), "browser interaction may only backfill the selected characters' class tokens")
 end)
 
 T.test("ggm slash command opens the local guild gear browser", function()
@@ -2894,13 +2899,24 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     T.assertTrue(page.visible)
     T.assertEqual(page.entries[1].label, "Guild Bank")
     T.assertTrue(page.entries[1].record == guildBank, "guild tab should use the realm returned with guild identity")
-    local titleTop = -frame.pageTitle.point.y
-    local headerBottom = titleTop + frame.pageTitle.font.size + math.abs(frame.pageSubtitle.point.y)
-        + frame.pageSubtitle.font.size
-    local listTop = 64 - page.listScroll.point.y
     T.assertEqual(page.libraryTitle.text, "BANK LIBRARY")
-    T.assertNil(page.libraryHelper, "bank page should use the shared subtitle instead of a duplicate helper")
-    T.assertTrue(listTop >= headerBottom + 8, "bank list must begin below the shared page heading")
+    T.assertFalse(frame.pageSubtitle.visible, "Bank uses its library helper instead of a duplicate shared subtitle")
+    T.assertNotNil(page.libraryHelper)
+    T.assertTrue(page.libraryHelper.point.relativeTo == page.libraryTitle)
+    T.assertEqual(page.libraryHelper.point.relativePoint, "BOTTOMLEFT")
+    T.assertTrue(page.libraryHelper.point.y < 0, "helper must sit below the library heading")
+    local helperBottom = -page.libraryTitle.point.y + page.libraryTitle.font.size
+        - page.libraryHelper.point.y + page.libraryHelper.font.size
+    T.assertTrue(-page.searchBox.point.y > helperBottom, "search must sit below the helper")
+    T.assertTrue(-page.listCount.point.y > -page.searchBox.point.y + page.searchBox.height,
+        "entry count must sit below search")
+    T.assertTrue(-page.listDivider.point.y > -page.listCount.point.y + page.listCount.font.size,
+        "divider must sit below the entry count")
+    T.assertTrue(-page.listScroll.points.TOPLEFT.y > -page.listDivider.point.y + page.listDivider.height,
+        "bank list must begin below the divider")
+    T.assertTrue(page.listScroll.points.BOTTOMLEFT.relativeTo == page,
+        "bank list must stretch to the page bottom")
+    T.assertEqual(page.listEmpty.justifyH, "LEFT")
     T.assertEqual(page.selectedEntry.kind, "guild")
     T.assertTrue(page.listScroll.scrollChild == page.listContent)
     T.assertTrue(page.tabScroll.scrollChild == page.tabContent)
