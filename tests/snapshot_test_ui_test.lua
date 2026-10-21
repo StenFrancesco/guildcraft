@@ -532,8 +532,12 @@ local function makeModelBrowserAPI(failModelCreation)
         if raceID == 2 then return { raceName = "Orc", clientFileString = "Orc" } end
     end }
     api.C_Texture = { GetAtlasInfo = function(atlas)
-        if atlas == "raceicon128-human-male" or atlas == "raceicon128-orc-female" then return {} end
+        if atlas == "classicon-warrior" or atlas == "classicon-mage" then return {} end
     end }
+    api.GetPlayerInfoByGUID = function(guid)
+        if guid == "Player-portrait-Alice" then return "Warrior", "WARRIOR" end
+        if guid == "Player-portrait-Beatrice" then return "Mage", "MAGE" end
+    end
     local createFrame = api.CreateFrame
     api.CreateFrame = function(frameType, name, parent)
         if failModelCreation and frameType == "Frame" and parent
@@ -544,6 +548,7 @@ local function makeModelBrowserAPI(failModelCreation)
 end
 
 local function setSavedModelIdentity(record)
+    record.identity.guid = "Player-portrait-" .. record.identity.name
     record.identity.raceID, record.identity.sex, record.identity.displayID = 1, 2, 101
     local visualSlotIDs = { HEAD = 1, SHOULDER = 3, CHEST = 5, WAIST = 6, LEGS = 7, FEET = 8,
         WRIST = 9, HANDS = 10, BACK = 15, MAIN_HAND = 16, OFF_HAND = 17, TABARD = 19 }
@@ -2334,12 +2339,12 @@ T.test("browser portrait selection updates from A to B and clears on no selectio
     local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
 
     T.assertTrue(frame.characterModelView.model.visible)
-    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
+    T.assertEqual(frame.characterModelView.caption.text, "Class icon unavailable")
     T.assertTrue(frame.characterModelView.questionMark.visible)
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertTrue(frame.characterModelView.model.visible)
     T.assertFalse(frame.modelUnavailableLabel.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-mage")
     T.assertEqual(frame.characterLine.text, "Beatrice")
     T.assertEqual(frame.capturedLine.text, "saved-1700000200")
     T.assertNil(frame.completenessBadge)
@@ -2351,7 +2356,7 @@ T.test("browser portrait selection updates from A to B and clears on no selectio
     T.assertFalse(frame.characterLine.visible)
 end)
 
-T.test("browser replaces one saved race portrait with another and clears it on empty selection", function()
+T.test("browser replaces one class icon with another and clears it on empty selection", function()
     local GGM = loadUI()
     local alpha, beta = makeRecord(GGM), makeRecord(GGM)
     setSavedModelIdentity(alpha)
@@ -2368,11 +2373,11 @@ T.test("browser replaces one saved race portrait with another and clears it on e
     local frame = showBrowser(GGM, api, makeDB(GGM, { alpha, beta }))
     local view = frame.characterModelView.model
     T.assertTrue(view.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-warrior")
 
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertTrue(view.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-orc-female")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-mage")
     T.assertEqual(frame.characterModelView.raceLabel.text, "Orc")
 
     frame.searchBox:SetText("no match")
@@ -2399,7 +2404,7 @@ T.test("failed 2D portrait frame creation leaves saved detail visible with unava
     for _, slot in ipairs(frame.slotButtons) do T.assertTrue(slot.visible) end
 end)
 
-T.test("missing saved display ID still renders the race portrait", function()
+T.test("missing saved display ID still renders the class icon", function()
     local GGM = loadUI()
     local record = makeRecord(GGM)
     setSavedModelIdentity(record)
@@ -2407,7 +2412,7 @@ T.test("missing saved display ID still renders the race portrait", function()
     local frame = showBrowser(GGM, makeModelBrowserAPI(), makeDB(GGM, { record }))
 
     T.assertTrue(frame.characterModelView.model.visible)
-    T.assertEqual(frame.characterModelView.portrait.atlas, "raceicon128-human-male")
+    T.assertEqual(frame.characterModelView.portrait.atlas, "classicon-warrior")
     T.assertFalse(frame.modelUnavailableLabel.visible)
     T.assertTrue(frame.capturedLine.visible)
     T.assertEqual(#frame.detailModel.slots, #GGM.TRACKED_SLOTS)
@@ -2424,7 +2429,7 @@ T.test("browser missing portrait data preserves incomplete and refresh-needed ge
     local api = makeModelBrowserAPI()
     local frame = showBrowser(GGM, api, makeDB(GGM, { legacy }))
 
-    T.assertEqual(frame.characterModelView.caption.text, "Saved gear - portrait not available")
+    T.assertEqual(frame.characterModelView.caption.text, "Class icon unavailable")
     T.assertNil(frame.completenessBadge)
     T.assertEqual(frame.capturedLine.text, "saved-1700000100")
     T.assertTrue(frame.slotButtons[1].visible)

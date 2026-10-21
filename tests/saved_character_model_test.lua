@@ -45,6 +45,14 @@ local function makeView(GGM, options)
             calls[#calls + 1] = "atlas:" .. atlas
             if options.atlases and options.atlases[atlas] then return {} end
         end },
+        GetPlayerInfoByGUID = function(guid)
+            calls[#calls + 1] = "class:" .. guid
+            if options.classFails then error("class unavailable") end
+            return "Localized class", options.classToken
+        end,
+        GetNumGuildMembers = function() return #(options.roster or {}) end,
+        GetGuildRosterInfo = function(index) return unpack(options.roster[index], 1, 17) end,
+        GetRealmName = function() return "Silvermoon" end,
         SetPortraitTextureFromCreatureDisplayID = function(texture, displayID)
             calls[#calls + 1] = "display:" .. displayID
             if options.displayFails then error("display unavailable") end
@@ -55,48 +63,89 @@ local function makeView(GGM, options)
 end
 
 local function record(raceID, sex, displayID)
-    return { identity = { raceID = raceID, sex = sex, displayID = displayID }, gear = { slots = {} } }
+    return { identity = { key = "Alice-Silvermoon", guid = "Player-1",
+        raceID = raceID, sex = sex, displayID = displayID }, gear = { slots = {} } }
 end
 
-T.test("saved portrait uses a verified race atlas without requiring gear or display ID", function()
+T.test("saved portrait supports every Classic class without race or display ID", function()
     local GGM = loadModel()
-    local view = makeView(GGM, {
-        raceInfo = { clientFileString = "Human", raceName = "Human" },
-        atlases = { ["raceicon128-human-male"] = true },
-    })
+    for _, classToken in ipairs({ "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST",
+        "SHAMAN", "MAGE", "WARLOCK", "DRUID" }) do
+        local atlas = "classicon-" .. classToken:lower()
+        local view = makeView(GGM, { classToken = classToken, atlases = { [atlas] = true } })
+        T.assertEqual(GGM.RenderSavedCharacterModel(view, record()), "shown")
+        T.assertTrue(view.model.visible)
+        T.assertTrue(view.portraitRendered)
+        T.assertEqual(view.portraitSource, atlas)
+        T.assertEqual(view.portrait.atlas, atlas)
+        T.assertEqual(view.caption.text, "Class icon")
+        T.assertFalse(view.questionMark.visible)
+    end
+end)
 
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(1, 2)), "shown")
-    T.assertTrue(view.model.visible)
-    T.assertTrue(view.portraitRendered)
-    T.assertEqual(view.portraitSource, "raceicon128-human-male")
-    T.assertEqual(view.portrait.atlas, "raceicon128-human-male")
-    T.assertEqual(view.raceLabel.text, "Human")
-    T.assertEqual(view.sexLabel.text, "Male")
-    T.assertEqual(view.caption.text, "Saved race portrait")
+T.test("saved class renders while offline without any class lookup APIs", function()
+    local GGM = loadModel()
+    local view = makeView(GGM, { atlases = { ["classicon-hunter"] = true } })
+    view.api.GetPlayerInfoByGUID = nil
+    view.api.GetNumGuildMembers = nil
+    local saved = record()
+    saved.identity.classToken = "HUNTER"
+    GGM.RenderSavedCharacterModel(view, saved)
+    T.assertEqual(view.portrait.atlas, "classicon-hunter")
     T.assertFalse(view.questionMark.visible)
 end)
 
-T.test("saved portrait falls back to the legacy race sheet", function()
+T.test("successful class lookup backfills an older saved identity", function()
     local GGM = loadModel()
-    local view = makeView(GGM)
+    local view = makeView(GGM, { classToken = "PRIEST" })
+    local saved = record()
+    GGM.RenderSavedCharacterModel(view, saved)
+    T.assertEqual(saved.identity.classToken, "PRIEST")
+end)
+
+T.test("saved portrait falls back to the built-in class sheet and keeps identity labels", function()
+    local GGM = loadModel()
+    local view = makeView(GGM, { classToken = "MAGE", raceInfo = { raceName = "Orc" } })
 
     T.assertEqual(GGM.RenderSavedCharacterModel(view, record(2, 3)), "shown")
-    T.assertEqual(view.portraitSource, "legacy-race-sheet")
-    T.assertEqual(view.portrait.texture, "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Races")
-    T.assertEqual(view.portrait.texCoord[1], 0.375)
-    T.assertEqual(view.portrait.texCoord[3], 0.75)
+    T.assertEqual(view.portraitSource, "legacy-class-sheet")
+    T.assertEqual(view.portrait.texture, "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes")
+    T.assertEqual(view.portrait.texCoord[1], 0.25)
+    T.assertEqual(view.portrait.texCoord[3], 0)
+    T.assertEqual(view.raceLabel.text, "Orc")
     T.assertEqual(view.sexLabel.text, "Female")
 end)
 
-T.test("saved portrait uses display ID when a race icon is unavailable", function()
+T.test("saved portrait resolves an offline guild member when GUID lookup fails", function()
     local GGM = loadModel()
-    local view, calls = makeView(GGM)
+    local view = makeView(GGM, { classFails = true,
+        atlases = { ["classicon-priest"] = true },
+        roster = { { [1] = "Alice", [9] = false, [11] = "PRIEST", [17] = "Player-1" } },
+    })
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record()), "shown")
+    T.assertEqual(view.portrait.atlas, "classicon-priest")
+end)
 
-    T.assertEqual(GGM.RenderSavedCharacterModel(view, record(99, 2, 12345)), "shown")
-    T.assertEqual(view.portraitSource, "display-id")
-    T.assertEqual(view.portrait.texture, "display:12345")
-    T.assertEqual(calls[#calls], "display:12345")
-    T.assertEqual(view.caption.text, "Saved 2D portrait")
+T.test("guild class name fallback includes realm and rejects a mismatching GUID", function()
+    local GGM = loadModel()
+    local view = makeView(GGM, { roster = {
+        { [1] = "Alice-OtherRealm", [11] = "MAGE" },
+        { [1] = "Alice-Silvermoon", [11] = "PRIEST", [17] = "Player-2" },
+        { [1] = "Alice", [11] = "DRUID" },
+    } })
+    T.assertEqual(GGM.RenderSavedCharacterModel(view, record()), "shown")
+    T.assertEqual(view.portrait.texCoord[1], 0.7421875)
+end)
+
+T.test("non-Classic classes do not render a race or display portrait", function()
+    local GGM = loadModel()
+    for _, classToken in ipairs({ "DEATHKNIGHT", "MONK", "DEMONHUNTER", "EVOKER" }) do
+        local view = makeView(GGM, { classToken = classToken })
+        GGM.RenderSavedCharacterModel(view, record(1, 2, 12345))
+        T.assertFalse(view.portraitRendered)
+        T.assertNil(view.portrait.texture)
+        T.assertTrue(view.questionMark.visible)
+    end
 end)
 
 T.test("unavailable portrait keeps saved gear panel visible and labels the absence", function()
@@ -109,14 +158,15 @@ T.test("unavailable portrait keeps saved gear panel visible and labels the absen
     T.assertTrue(view.questionMark.visible)
     T.assertEqual(view.raceLabel.text, "Race unavailable")
     T.assertEqual(view.sexLabel.text, "Gender unavailable")
-    T.assertEqual(view.caption.text, "Saved gear - portrait not available")
+    T.assertEqual(view.caption.text, "Class icon unavailable")
 end)
 
 T.test("changing selection clears the previous portrait and labels", function()
     local GGM = loadModel()
-    local view = makeView(GGM, { atlases = { ["raceicon128-human-male"] = true } })
+    local view = makeView(GGM, { classToken = "WARRIOR", atlases = { ["classicon-warrior"] = true } })
     T.assertEqual(GGM.RenderSavedCharacterModel(view, record(1, 2, 101)), "shown")
 
+    view.api.GetPlayerInfoByGUID = nil
     T.assertEqual(GGM.RenderSavedCharacterModel(view, record(nil, nil)), "shown")
     T.assertNil(view.portrait.atlas)
     T.assertFalse(view.portraitRendered)

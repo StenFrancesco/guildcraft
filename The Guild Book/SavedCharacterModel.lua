@@ -38,61 +38,69 @@ local function sexNameFor(sex)
     return "Gender unavailable"
 end
 
-local RACE_ATLAS_NAME_FIXES = {
-    highmountaintauren = "highmountain",
-    lightforgeddraenei = "lightforged",
-    scourge = "undead",
-    zandalaritroll = "zandalari",
+-- Built-in Classic class artwork; the sheet also supports clients without atlases.
+local CLASS_TCOORDS = {
+    WARRIOR = {0, 0.25, 0, 0.25},
+    MAGE = {0.25, 0.49609375, 0, 0.25},
+    ROGUE = {0.49609375, 0.7421875, 0, 0.25},
+    DRUID = {0.7421875, 0.98828125, 0, 0.25},
+    HUNTER = {0, 0.25, 0.25, 0.5},
+    SHAMAN = {0.25, 0.49609375, 0.25, 0.5},
+    PRIEST = {0.49609375, 0.7421875, 0.25, 0.5},
+    WARLOCK = {0.7421875, 0.98828125, 0.25, 0.5},
+    PALADIN = {0, 0.25, 0.5, 0.75},
 }
 
-local RACE_ID_FALLBACK = {
-    [1] = "human", [2] = "orc", [3] = "dwarf", [4] = "nightelf",
-    [5] = "undead", [6] = "tauren", [7] = "gnome", [8] = "troll",
-    [9] = "goblin", [10] = "bloodelf", [11] = "draenei", [22] = "worgen",
-    [24] = "pandaren", [25] = "pandaren", [26] = "pandaren",
-}
-
-local LEGACY_RACE_TCOORDS = {
-    human = { male={0,0.125,0,0.25}, female={0,0.125,0.5,0.75} },
-    dwarf = { male={0.125,0.25,0,0.25}, female={0.125,0.25,0.5,0.75} },
-    gnome = { male={0.25,0.375,0,0.25}, female={0.25,0.375,0.5,0.75} },
-    nightelf = { male={0.375,0.5,0,0.25}, female={0.375,0.5,0.5,0.75} },
-    draenei = { male={0.5,0.625,0,0.25}, female={0.5,0.625,0.5,0.75} },
-    worgen = { male={0.625,0.75,0,0.25}, female={0.625,0.75,0.5,0.75} },
-    pandaren = { male={0.75,0.875,0,0.25}, female={0.75,0.875,0.5,0.75} },
-    tauren = { male={0,0.125,0.25,0.5}, female={0,0.125,0.75,1} },
-    undead = { male={0.125,0.25,0.25,0.5}, female={0.125,0.25,0.75,1} },
-    troll = { male={0.25,0.375,0.25,0.5}, female={0.25,0.375,0.75,1} },
-    orc = { male={0.375,0.5,0.25,0.5}, female={0.375,0.5,0.75,1} },
-    bloodelf = { male={0.5,0.625,0.25,0.5}, female={0.5,0.625,0.75,1} },
-    goblin = { male={0.625,0.75,0.25,0.5}, female={0.625,0.75,0.75,1} },
-}
-
-local function addUnique(list, value)
-    if type(value) ~= "string" or value == "" then return end
-    value = string.lower(value):gsub("[^a-z]", "")
-    if value == "" then return end
-    for _, existing in ipairs(list) do
-        if existing == value then return end
-    end
-    table.insert(list, value)
+local function classicClassToken(value)
+    if type(value) ~= "string" then return nil end
+    value = value:upper()
+    return CLASS_TCOORDS[value] and value or nil
 end
 
-local function normalizedRaceNames(api, raceID)
-    local names = {}
-    local info = raceInfoFor(api, raceID)
-    if info then
-        addUnique(names, info.clientFileString)
-        addUnique(names, info.raceName)
-    end
-    addUnique(names, RACE_ID_FALLBACK[raceID])
+local function normalizedCharacterKey(value)
+    return type(value) == "string" and value:gsub("%s", ""):lower() or nil
+end
 
-    local original = {}
-    for _, name in ipairs(names) do table.insert(original, name) end
-    for _, name in ipairs(original) do
-        addUnique(names, RACE_ATLAS_NAME_FIXES[name])
+local function selectedClassToken(api, identity)
+    local savedToken = classicClassToken(identity.classToken)
+    if savedToken then return savedToken end
+    if type(api) ~= "table" then return nil end
+    local guid = type(identity.guid) == "string" and identity.guid ~= "" and identity.guid or nil
+    if guid and type(api.GetPlayerInfoByGUID) == "function" then
+        local ok, _, classToken = pcall(api.GetPlayerInfoByGUID, guid)
+        if ok and classicClassToken(classToken) then return classicClassToken(classToken) end
     end
-    return names
+    if guid and type(api.UnitGUID) == "function" and type(api.UnitClass) == "function" then
+        local ok, playerGUID = pcall(api.UnitGUID, "player")
+        if ok and playerGUID == guid then
+            local classOK, _, classToken = pcall(api.UnitClass, "player")
+            if classOK and classicClassToken(classToken) then return classicClassToken(classToken) end
+        end
+    end
+    if type(api.GetNumGuildMembers) ~= "function" or type(api.GetGuildRosterInfo) ~= "function" then return nil end
+    local countOK, count = pcall(api.GetNumGuildMembers, true)
+    if not countOK or not positiveInteger(count, 1000) then return nil end
+    local localRealm
+    if type(api.GetRealmName) == "function" then
+        local ok, realm = pcall(api.GetRealmName)
+        if ok and type(realm) == "string" and realm ~= "" then localRealm = realm end
+    end
+    local selectedKey = normalizedCharacterKey(identity.key)
+    for index = 1, count do
+        local ok, row = pcall(function() return { api.GetGuildRosterInfo(index) } end)
+        if ok then
+            local rowGUID = type(row[17]) == "string" and row[17] ~= "" and row[17] or nil
+            local matches = guid and rowGUID and guid == rowGUID
+            -- Only use names when a GUID comparison is unavailable, and include the realm.
+            if not (guid and rowGUID) and selectedKey and type(row[1]) == "string" then
+                local name = row[1]
+                if not name:find("-", 1, true) and localRealm then name = name .. "-" .. localRealm end
+                matches = normalizedCharacterKey(name) == selectedKey
+            end
+            if matches and classicClassToken(row[11]) then return classicClassToken(row[11]) end
+        end
+    end
+    return nil
 end
 
 local function clearPortraitTexture(view)
@@ -131,58 +139,25 @@ local function setVerifiedAtlas(view, atlas)
     return true
 end
 
-local function tryRaceAtlas(view, raceID, sex)
-    local gender = sex == 2 and "male" or sex == 3 and "female" or nil
-    if not gender then return false, nil end
-
-    for _, prefix in ipairs({ "raceicon128", "raceicon" }) do
-        for _, raceName in ipairs(normalizedRaceNames(view.api, raceID)) do
-            local atlas = prefix .. "-" .. raceName .. "-" .. gender
-            if setVerifiedAtlas(view, atlas) then return true, atlas end
-        end
-    end
-    return false, nil
-end
-
-local function tryLegacyRaceSheet(view, raceID, sex)
-    if not view or not view.portrait or type(view.portrait.SetTexture) ~= "function" then return false end
-    local gender = sex == 2 and "male" or sex == 3 and "female" or nil
-    if not gender then return false end
-
-    local coords
-    for _, raceName in ipairs(normalizedRaceNames(view.api, raceID)) do
-        local fixed = RACE_ATLAS_NAME_FIXES[raceName] or raceName
-        if LEGACY_RACE_TCOORDS[fixed] then
-            coords = LEGACY_RACE_TCOORDS[fixed][gender]
-            if coords then break end
-        end
-    end
-    if not coords then return false end
+local function tryClassIcon(view, classToken)
+    local coords = CLASS_TCOORDS[classToken]
+    if not coords then return false, nil end
+    local atlas = "classicon-" .. classToken:lower()
+    if setVerifiedAtlas(view, atlas) then return true, atlas end
+    if not view.portrait or type(view.portrait.SetTexture) ~= "function"
+        or type(view.portrait.SetTexCoord) ~= "function" then return false, nil end
 
     clearPortraitTexture(view)
-    local ok = pcall(
+    local ok, result = pcall(
         view.portrait.SetTexture,
         view.portrait,
-        "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Races"
+        "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes"
     )
-    if not ok then return false end
-    if type(view.portrait.SetTexCoord) == "function" then
-        pcall(view.portrait.SetTexCoord, view.portrait, coords[1], coords[2], coords[3], coords[4])
-    end
+    if not ok or result == false then return false, nil end
+    local coordsOK = pcall(view.portrait.SetTexCoord, view.portrait, coords[1], coords[2], coords[3], coords[4])
+    if not coordsOK then showBlankPortrait(view); return false, nil end
     safeHide(view.questionMark)
-    return true
-end
-
-local function tryDisplayIDPortrait(view, displayID)
-    if not view or not view.portrait or not positiveInteger(displayID, 2147483647) then return false end
-    local api = view.api
-    if type(api) ~= "table" or type(api.SetPortraitTextureFromCreatureDisplayID) ~= "function" then return false end
-
-    clearPortraitTexture(view)
-    local ok = pcall(api.SetPortraitTextureFromCreatureDisplayID, view.portrait, displayID)
-    if not ok then return false end
-    safeHide(view.questionMark)
-    return true
+    return true, "legacy-class-sheet"
 end
 
 local function resetView(view)
@@ -274,21 +249,16 @@ function GGM.RenderSavedCharacterModel(view, record)
     if view.raceLabel then view.raceLabel:SetText(raceNameFor(view.api, identity.raceID)) end
     if view.sexLabel then view.sexLabel:SetText(sexNameFor(identity.sex)) end
 
-    local rendered, source = tryRaceAtlas(view, identity.raceID, identity.sex)
+    local classToken = selectedClassToken(view.api, identity)
+    -- Backfill older saved records when cached character or roster data is available.
+    if classToken then identity.classToken = classToken end
+    local rendered, source = tryClassIcon(view, classToken)
     if rendered then
         view.portraitRendered = true
         view.portraitSource = source
-        if view.caption then view.caption:SetText("Saved race portrait") end
-    elseif tryLegacyRaceSheet(view, identity.raceID, identity.sex) then
-        view.portraitRendered = true
-        view.portraitSource = "legacy-race-sheet"
-        if view.caption then view.caption:SetText("Saved race portrait") end
-    elseif tryDisplayIDPortrait(view, identity.displayID) then
-        view.portraitRendered = true
-        view.portraitSource = "display-id"
-        if view.caption then view.caption:SetText("Saved 2D portrait") end
+        if view.caption then view.caption:SetText("Class icon") end
     else
-        if view.caption then view.caption:SetText("Saved gear - portrait not available") end
+        if view.caption then view.caption:SetText("Class icon unavailable") end
     end
 
     safeShow(view.model)

@@ -36,6 +36,14 @@ including when reopening the browser, and lists the current character's captured
 professions. All shows the full profession list. When Own has captured entries,
 the browser selects a listed profession instead of an unowned default.
 
+The Characters page shows the selected character's Classic class icon in the
+portrait frame. It uses built-in game artwork and saves an optional `classToken`
+with the character's identity. The class is captured on login and inspection,
+shared with complete gear snapshots between updated clients, and retained for
+offline display. Older records can also gain it from cached character or guild
+roster information when selected. If the class cannot be determined, the frame
+shows a question mark. Race and gender labels remain below the icon.
+
 If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers and the gear message protocol keep their existing names and formats.
 
 ## Data and synchronization
@@ -60,8 +68,12 @@ cannot overwrite newer observations. Receiving or forwarding a snapshot keeps
 its original times. Conflicting network observations within the same server
 second retain the saved slot; a direct inspection can replace it.
 
-Gear sharing uses protocol 6 and requires matching addon versions among peers.
-Existing gear caches remain readable. Update all three addon folders together.
+Gear sharing uses protocol 6. Updated clients send an optional class-identity
+companion message before a complete gear snapshot; the existing gear messages
+are unchanged, so older clients can still share gear without class information.
+Class metadata is accepted only with the selected responder's valid snapshot
+for a pending request. Existing gear caches remain readable, and missing class
+metadata never clears a known class. Update all three addon folders together.
 
 On the Characters page, select a saved character and click **Sync gear** to
 request the freshest complete snapshot available from responding online guild

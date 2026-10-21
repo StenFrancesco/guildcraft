@@ -39,6 +39,28 @@ local function makeIdentity()
     }
 end
 
+T.test("saved class survives local capture, older peer snapshots and inspections without class data", function()
+    local GGM = loadModules()
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local identity = makeIdentity()
+    identity.classToken = "HUNTER"
+    local snapshot = makeSnapshot(GGM)
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, snapshot, 6))
+    local function savedClass()
+        return assert(GGM.GetCompleteCharacterRecord(db, identity.key)).identity.classToken
+    end
+    T.assertEqual(savedClass(), "HUNTER")
+    local oldIdentity = makeIdentity()
+    assert(GGM.UpdateLocalCharacterModelIdentity(db, oldIdentity))
+    T.assertEqual(savedClass(), "HUNTER")
+    assert(GGM.SaveCompleteCharacterRecord(db, oldIdentity, snapshot, 6))
+    T.assertEqual(savedClass(), "HUNTER")
+    assert(GGM.SaveReceivedCompleteCharacterRecord(db, oldIdentity, snapshot, 6))
+    T.assertEqual(savedClass(), "HUNTER")
+    assert(GGM.SaveObservedCharacterRecord(db, oldIdentity, snapshot))
+    T.assertEqual(savedClass(), "HUNTER")
+end)
+
 T.test("database initialization creates schema seven with GUID ownership state", function()
     local GGM = loadModules()
 

@@ -163,6 +163,7 @@ local function cancelPendingSnapshotResponse(sync, requesterKey, targetKey, requ
     if pending.timer and type(pending.timer.Cancel) == "function" then pending.timer:Cancel() end
     if pending.settleTimer and type(pending.settleTimer.Cancel) == "function" then pending.settleTimer:Cancel() end
     if pending.claimToken then GGM.CancelSyncPayload(sync.transport, pending.claimToken) end
+    if pending.classSendToken then GGM.CancelSyncPayload(sync.transport, pending.classSendToken) end
     if pending.sendToken then GGM.CancelSyncPayload(sync.transport, pending.sendToken) end
     removePendingSnapshotResponse(sync, key, pending)
 end
@@ -240,6 +241,7 @@ local function handleSnapshotRequest(sync, sender, message)
         key = message.target.key, name = message.target.name, realm = message.target.realm,
         guid = record.identity.guid, raceID = record.identity.raceID,
         sex = record.identity.sex, displayID = record.identity.displayID,
+        classToken = record.identity.classToken,
     }
     local payload, encodeErr = GGM.EncodeSyncSnapshotResponse(
         responseIdentity,
@@ -250,6 +252,10 @@ local function handleSnapshotRequest(sync, sender, message)
         message.requestID
     )
     if not payload then return nil, encodeErr end
+    local classPayload
+    if GGM.NormalizeClassicClassToken(responseIdentity.classToken) then
+        classPayload = GGM.EncodeSyncClassIdentity(responseIdentity, message.requester, responder, message.requestID)
+    end
     local responseKey = snapshotResponseKey(message.requester.key, message.target.key, message.requestID)
     if sync.pendingSnapshotResponses[responseKey] then return "ignored", nil end
     local responseTargetKey = pendingSnapshotResponseTargetKey(message.requester.key, message.target.key)
@@ -306,10 +312,19 @@ local function handleSnapshotRequest(sync, sender, message)
                         sync.transport.lastSendError = responseErr
                     end
                 end
+                -- Deliver optional class metadata first; legacy peers can still read
+                -- the unchanged gear snapshot that follows it.
+                local responseFrames = math.ceil(#payload / GGM.SYNC_FRAME_CHUNK_BYTES)
+                local classFrames = classPayload and math.ceil(#classPayload / GGM.SYNC_FRAME_CHUNK_BYTES) or 0
+                if classPayload and #sync.transport.outboundFrames + responseFrames + classFrames <= GGM.SYNC_MAX_OUTBOUND_FRAMES then
+                    local classQueued, _, classToken = GGM.SendSyncPayload(sync.transport, classPayload)
+                    if classQueued then pending.classSendToken = classToken end
+                end
                 local queued, queueErr, sendToken = GGM.SendSyncPayload(sync.transport, payload, responseFinished)
                 if queued then
                     pending.sendToken = sendToken
                 else
+                    if pending.classSendToken then GGM.CancelSyncPayload(sync.transport, pending.classSendToken) end
                     removePendingSnapshotResponse(sync, responseKey, pending)
                     sync.transport.lastSendError = queueErr
                 end
@@ -358,6 +373,20 @@ local function handleSnapshotResponseClaim(sync, sender, message)
     return "snapshot-response-claim-accepted", nil
 end
 
+local function handleClassIdentity(sync, sender, message)
+    if not senderMatches(sync, sender, message.responder) then return "ignored", nil end
+    local now, err = getResponseTime(sync)
+    if not now then return nil, err end
+    clearExpiredSnapshotRequests(sync, now)
+    local pending = sync.pendingSnapshotRequests[message.requestID]
+    if not pending or pending.targetKey ~= message.target.key
+        or pending.requesterKey ~= message.requester.key
+        or pending.selectedResponderKey ~= message.responder.key then return "ignored", nil end
+    -- Bounded by pending requests, and never committed without an accepted snapshot.
+    pending.classIdentity = message
+    return "class-identity-recorded", nil
+end
+
 local function handleSnapshotResponse(sync, sender, message)
     if not senderMatches(sync, sender, message.responder) then return "ignored", nil end
     local pendingResponse = sync.pendingSnapshotResponses[snapshotResponseKey(message.requester.key, message.target.key, message.requestID)]
@@ -381,6 +410,11 @@ local function handleSnapshotResponse(sync, sender, message)
         or observedAt < pending.selectedObservedAt
         or (observedAt == pending.selectedObservedAt and message.confirmedSequence < pending.selectedSequence) then
         return "ignored", nil
+    end
+    local classIdentity = pending.classIdentity
+    if classIdentity and classIdentity.responder.key == message.responder.key
+        and classIdentity.target.guid == message.target.guid then
+        message.target.classToken = classIdentity.classToken
     end
     local saved, saveErr = GGM.SaveReceivedCompleteCharacterRecord(sync.db, message.target, message.snapshot, message.confirmedSequence)
     if not saved then
@@ -507,6 +541,7 @@ function GGM.HandleGuildSyncPayload(sync, sender, payload)
     if message.type == "SLOT_UPDATE" then return handleSlotUpdate(sync, sender, message) end
     if message.type == "SNAPSHOT_REQUEST" then return handleSnapshotRequest(sync, sender, message) end
     if message.type == "SNAPSHOT_RESPONSE_CLAIM" then return handleSnapshotResponseClaim(sync, sender, message) end
+    if message.type == "CLASS_IDENTITY" then return handleClassIdentity(sync, sender, message) end
     if message.type == "SNAPSHOT_RESPONSE" then return handleSnapshotResponse(sync, sender, message) end
     return nil, "sync-message-type-unknown"
 end

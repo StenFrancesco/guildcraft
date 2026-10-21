@@ -2,9 +2,27 @@ local T = require("tests.testlib")
 
 local function loadModule()
     local GGM = {}
+    T.loadAddonFile("The Guild Book gear/Constants.lua", GGM)
     T.loadAddonFile("The Guild Book gear/CharacterIdentity.lua", GGM)
     return GGM
 end
+
+T.test("player identity captures an optional Classic class independently of race data", function()
+    local GGM = loadModule()
+    local api = {
+        UnitFullName = function() return "Alice", "Silvermoon" end,
+        UnitGUID = function() return "Player-1" end,
+        UnitClass = function(unit)
+            T.assertEqual(unit, "player")
+            return "Localized class", "HUNTER"
+        end,
+    }
+    T.assertEqual(assert(GGM.BuildPlayerIdentity(api)).classToken, "HUNTER")
+    api.UnitClass = function() error("class unavailable") end
+    T.assertNil(assert(GGM.BuildPlayerIdentity(api)).classToken)
+    api.UnitClass = function() return "Evoker", "EVOKER" end
+    T.assertNil(assert(GGM.BuildPlayerIdentity(api)).classToken)
+end)
 
 T.test("player identity uses name and realm as the storage key", function()
     local GGM = loadModule()
