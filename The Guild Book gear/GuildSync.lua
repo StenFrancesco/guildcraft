@@ -42,6 +42,21 @@ local function setRequestResult(sync, targetKey, status, err)
     results[targetKey] = { status = status, error = err, at = ok and type(now) == "number" and now or 0 }
 end
 
+local scheduleGearReadyRetry
+local gearReadyRecordIsCurrent
+
+local function clearGearReadyRetry(sync, targetKey, retryState, resultStatus)
+    local current = sync.gearReadyRetryStates[targetKey]
+    if not current or (retryState and current ~= retryState) then return end
+    sync.gearReadyRetryStates[targetKey] = nil
+    if current.timer and type(current.timer.Cancel) == "function" then current.timer:Cancel() end
+    current.timer = nil
+    if resultStatus then
+        setRequestResult(sync, targetKey, resultStatus)
+        notifyChanged(sync, false)
+    end
+end
+
 local function finishSnapshotRequest(sync, requestID, status, err)
     local pending = sync.pendingSnapshotRequests[requestID]
     if not pending then return end
@@ -51,7 +66,24 @@ local function finishSnapshotRequest(sync, requestID, status, err)
     end
     sync.pendingSnapshotRequestCount = sync.pendingSnapshotRequestCount - 1
     if pending.sendToken then GGM.CancelSyncPayload(sync.transport, pending.sendToken) end
-    setRequestResult(sync, pending.targetKey, status, err)
+    if pending.gearReadyTimeoutTimer and type(pending.gearReadyTimeoutTimer.Cancel) == "function" then
+        pending.gearReadyTimeoutTimer:Cancel()
+    end
+    pending.gearReadyTimeoutTimer = nil
+    local resultStatus = status
+    if pending.gearReadyRetryState then
+        if status == "synced" then
+            -- This clears the retry only after the saved record satisfies
+            -- the advertised readiness floors.
+            if not gearReadyRecordIsCurrent(sync, pending.gearReadyRetryState) then
+                resultStatus = "waiting"
+                scheduleGearReadyRetry(sync, pending.gearReadyRetryState)
+            end
+        elseif status == "timeout" then
+            scheduleGearReadyRetry(sync, pending.gearReadyRetryState)
+        end
+    end
+    setRequestResult(sync, pending.targetKey, resultStatus, err)
     notifyChanged(sync, status == "synced")
     if type(pending.onFinished) == "function" then pcall(pending.onFinished, status == "synced") end
 end
@@ -68,6 +100,34 @@ local function clearExpiredSnapshotRequests(sync, now)
             finishSnapshotRequest(sync, requestID, "timeout")
         end
     end
+end
+
+local function scheduleGearReadyRequestTimeout(sync, requestID, pending)
+    if pending.gearReadyTimeoutTimer then return true end
+    local timerAPI = sync.api and sync.api.C_Timer
+    if type(timerAPI) ~= "table" or type(timerAPI.After) ~= "function" then return false end
+    local now = getResponseTime(sync)
+    if not now then return false end
+    local delay = math.max(0, pending.expiresAt - now)
+    local timer = { cancelled = false }
+    function timer:Cancel() self.cancelled = true end
+    local ok = pcall(timerAPI.After, delay, function()
+        if timer.cancelled then return end
+        if sync.pendingSnapshotRequests[requestID] ~= pending then return end
+        pending.gearReadyTimeoutTimer = nil
+        finishSnapshotRequest(sync, requestID, "timeout")
+    end)
+    if not ok then return false end
+    pending.gearReadyTimeoutTimer = timer
+    return true
+end
+
+local function attachGearReadyRetry(sync, requestID, retryState)
+    local pending = sync.pendingSnapshotRequests[requestID]
+    if not pending then return false end
+    pending.gearReadyRetryState = retryState
+    scheduleGearReadyRequestTimeout(sync, requestID, pending)
+    return true
 end
 
 local function clearExpiredSnapshotRequestCooldowns(sync, now)
@@ -167,7 +227,7 @@ local function cancelPendingSnapshotResponse(sync, requesterKey, targetKey, requ
     removePendingSnapshotResponse(sync, key, pending)
 end
 
-local function requestRepair(sync, identity, minimumSequence, minimumObservedAt)
+local function requestRepair(sync, identity, minimumSequence, minimumObservedAt, retryState)
     local now, timeErr = getResponseTime(sync)
     if not now then return nil, timeErr end
     local result = sync.snapshotRequestResults[identity.key]
@@ -181,11 +241,159 @@ local function requestRepair(sync, identity, minimumSequence, minimumObservedAt)
         pending.minimumSequence = math.max(pending.minimumSequence, minimumSequence)
         pending.minimumObservedAt = math.max(pending.minimumObservedAt, minimumObservedAt or 0)
     end
-    local queued, err = GGM.RequestCompleteSnapshot(sync, identity, minimumSequence, minimumObservedAt)
-    if queued then return "snapshot-requested", nil end
-    if err == "sync-snapshot-request-pending" then return "snapshot-request-pending", nil end
+    local queued, err, newRequestID = GGM.RequestCompleteSnapshot(sync, identity, minimumSequence, minimumObservedAt)
+    if queued then
+        if retryState and not attachGearReadyRetry(sync, newRequestID, retryState) then
+            scheduleGearReadyRetry(sync, retryState)
+        end
+        return "snapshot-requested", nil
+    end
+    if err == "sync-snapshot-request-pending" then
+        requestID = sync.pendingSnapshotRequestTargets[identity.key]
+        if retryState and requestID then attachGearReadyRetry(sync, requestID, retryState) end
+        return "snapshot-request-pending", nil
+    end
     if err == "sync-snapshot-request-cooldown" then return "snapshot-request-cooldown", nil end
     return nil, err
+end
+
+gearReadyRecordIsCurrent = function(sync, retryState)
+    local record = GGM.GetCompleteCharacterRecord(sync.db, retryState.targetKey)
+    if not record or not identitiesCompatible(record.identity, retryState.identity) then return false end
+    local sequence = GGM.GetConfirmedSequence(record)
+    if sequence == nil then return false end
+    local observationFloor = GGM.GetGearObservationFloor(record.gear)
+    local current = record.gear.capturedAt >= retryState.minimumCapturedAt
+        and observationFloor >= retryState.minimumObservedAt
+        and (sequence >= retryState.minimumSequence or observationFloor > retryState.minimumCapturedAt)
+    if current then clearGearReadyRetry(sync, retryState.targetKey, retryState, "synced") end
+    return current
+end
+
+local function retryDelay(retryState)
+    local hash = 0
+    local key = retryState.identity.key .. "\031" .. retryState.targetKey
+    for index = 1, #key do
+        hash = (hash * 31 + string.byte(key, index)) % 2147483647
+    end
+    return GGM.SYNC_SNAPSHOT_REPAIR_BACKOFF_SECONDS
+        + (hash % GGM.SYNC_SNAPSHOT_RETRY_JITTER_BUCKETS) * GGM.SYNC_SEND_INTERVAL_SECONDS
+end
+
+scheduleGearReadyRetry = function(sync, retryState)
+    if not retryState or sync.gearReadyRetryStates[retryState.targetKey] ~= retryState or retryState.timer then return end
+    if gearReadyRecordIsCurrent(sync, retryState) then
+        clearGearReadyRetry(sync, retryState.targetKey, retryState)
+        return
+    end
+    local timerAPI = sync.api and sync.api.C_Timer
+    if type(timerAPI) ~= "table" or type(timerAPI.NewTimer) ~= "function" then return end
+    local ok, timer = pcall(timerAPI.NewTimer, retryDelay(retryState), function()
+        retryState.timer = nil
+        if sync.gearReadyRetryStates[retryState.targetKey] ~= retryState then return end
+        if gearReadyRecordIsCurrent(sync, retryState) then
+            clearGearReadyRetry(sync, retryState.targetKey, retryState)
+            return
+        end
+        local state = requestRepair(sync, retryState.identity, retryState.minimumSequence,
+            retryState.minimumObservedAt, retryState)
+        if state ~= "snapshot-requested" and state ~= "snapshot-request-pending" then
+            scheduleGearReadyRetry(sync, retryState)
+        end
+    end)
+    if ok and timer then
+        retryState.timer = timer
+        setRequestResult(sync, retryState.targetKey, "waiting")
+        notifyChanged(sync, false)
+    end
+end
+
+local function updateGearReadyRetryState(sync, identity, minimumSequence, minimumObservedAt, capturedAt)
+    local retryState = sync.gearReadyRetryStates[identity.key]
+    if not retryState then
+        local count = 0
+        for _ in pairs(sync.gearReadyRetryStates) do count = count + 1 end
+        if count >= GGM.SYNC_MAX_SNAPSHOT_REQUEST_COOLDOWN_ENTRIES then return nil end
+        retryState = {
+            identity = identity,
+            targetKey = identity.key,
+            minimumSequence = minimumSequence or 0,
+            minimumObservedAt = minimumObservedAt or 0,
+            minimumCapturedAt = capturedAt or 0,
+        }
+        sync.gearReadyRetryStates[identity.key] = retryState
+    else
+        retryState.identity = identity
+        retryState.minimumSequence = math.max(retryState.minimumSequence, minimumSequence or 0)
+        retryState.minimumObservedAt = math.max(retryState.minimumObservedAt, minimumObservedAt or 0)
+        retryState.minimumCapturedAt = math.max(retryState.minimumCapturedAt, capturedAt or 0)
+    end
+    return retryState
+end
+
+local function requestGearReadyRepair(sync, identity, minimumSequence, minimumObservedAt, capturedAt)
+    local now, timeErr = getResponseTime(sync)
+    if not now then return nil, timeErr end
+    clearExpiredSnapshotRequests(sync, now)
+    clearExpiredSnapshotRequestCooldowns(sync, now)
+    local retryState = updateGearReadyRetryState(sync, identity, minimumSequence, minimumObservedAt, capturedAt)
+    if retryState and retryState.timer then return "snapshot-request-retry-scheduled", nil end
+
+    local requestID = sync.pendingSnapshotRequestTargets[identity.key]
+    local pending = requestID and sync.pendingSnapshotRequests[requestID]
+    if pending and retryState then attachGearReadyRetry(sync, requestID, retryState) end
+    if pending and not pending.gearReadyRefreshUsed then
+        pending.minimumSequence = math.max(pending.minimumSequence or 0, minimumSequence or 0)
+        pending.minimumObservedAt = math.max(pending.minimumObservedAt or 0, minimumObservedAt or 0)
+        pending.gearReadyRefreshUsed = true
+
+        -- A queued request will still reach the now-ready owner. Reissue only
+        -- after the original Q was transmitted and may have been ignored while
+        -- the owner's initial capture was unavailable.
+        if pending.requestSent then
+            local requester = pending.requesterIdentity
+            if not requester then
+                local identityOK, localIdentity, identityErr = pcall(GGM.BuildPlayerIdentity, sync.api)
+                if not identityOK then return "snapshot-request-pending", nil end
+                if not localIdentity then
+                    pending.gearReadyRefreshError = identityErr
+                    return "snapshot-request-pending", nil
+                end
+                requester = localIdentity
+                pending.requesterIdentity = requester
+            end
+            local payload, encodeErr = GGM.EncodeSyncSnapshotRequest(requester, identity, requestID)
+            if not payload then
+                pending.gearReadyRefreshError = encodeErr
+                return "snapshot-request-pending", nil
+            end
+            local function refreshSent(sent, err)
+                if sync.pendingSnapshotRequests[requestID] ~= pending then return end
+                pending.requestSent = sent == true
+                if not sent then pending.gearReadyRefreshError = err end
+            end
+            local queued, sendErr, sendToken = GGM.SendSyncPayload(sync.transport, payload, refreshSent)
+            if queued then
+                pending.sendToken = sendToken
+                pending.gearReadyRefreshError = nil
+                return "snapshot-request-refreshed", nil
+            end
+            pending.gearReadyRefreshError = sendErr
+        end
+
+        setRequestResult(sync, identity.key, "waiting")
+        return "snapshot-request-pending", nil
+    end
+
+    local state, err = requestRepair(sync, identity, minimumSequence, minimumObservedAt, retryState)
+    if state == "snapshot-requested" or state == "snapshot-request-pending" then
+        requestID = sync.pendingSnapshotRequestTargets[identity.key]
+        pending = requestID and sync.pendingSnapshotRequests[requestID]
+        if pending then pending.gearReadyRefreshUsed = true end
+    elseif retryState then
+        scheduleGearReadyRetry(sync, retryState)
+    end
+    return state, err
 end
 
 local function handleSlotUpdate(sync, sender, message)
@@ -213,9 +421,56 @@ local function handleSlotUpdate(sync, sender, message)
     return "slot-applied", nil
 end
 
+local function sameCharacterNameRealm(left, right)
+    return type(left) == "table" and type(right) == "table"
+        and left.name == right.name
+        and type(left.realm) == "string" and type(right.realm) == "string"
+        and left.realm:gsub("%s", ""):lower() == right.realm:gsub("%s", ""):lower()
+end
+
+local function handleGearReady(sync, sender, message)
+    if not senderMatches(sync, sender, message.identity) then return nil, "sync-sender-identity-mismatch" end
+    local identityOk, playerIdentity, identityErr = pcall(GGM.BuildPlayerIdentity, sync.api)
+    if not identityOk then return nil, tostring(playerIdentity) end
+    if not playerIdentity then return nil, identityErr end
+    if sameCharacterNameRealm(playerIdentity, message.identity) then
+        if playerIdentity.guid and message.identity.guid and playerIdentity.guid ~= message.identity.guid then
+            return nil, "identity-mismatch"
+        end
+        return "ignored", nil
+    end
+
+    local record, recordErr = GGM.GetCharacterRecord(sync.db, message.identity.key)
+    if record then
+        if not identitiesCompatible(record.identity, message.identity) then return nil, "identity-mismatch" end
+        if record.complete == true then
+            local sequence, sequenceErr = GGM.GetConfirmedSequence(record)
+            if sequence == nil then return nil, sequenceErr end
+            local observationFloor = GGM.GetGearObservationFloor(record.gear)
+            if record.gear.capturedAt >= message.capturedAt
+                and observationFloor >= message.baselineObservedAt
+                and (sequence >= message.confirmedSequence or observationFloor > message.capturedAt) then
+                clearGearReadyRetry(sync, message.identity.key, nil, "synced")
+                return "gear-ready-current", nil
+            end
+        end
+    elseif recordErr ~= "record-missing" then
+        return nil, recordErr
+    end
+
+    return requestGearReadyRepair(sync, message.identity, message.confirmedSequence,
+        message.baselineObservedAt, message.capturedAt)
+end
+
 local function handleSnapshotRequest(sync, sender, message)
     if not senderMatches(sync, sender, message.requester) then return nil, "sync-sender-identity-mismatch" end
     local record, recordErr = GGM.GetCompleteCharacterRecord(sync.db, message.target.key)
+    if not record and recordErr == "record-missing" and type(sync.onLocalSnapshotRequest) == "function" then
+        local recovered, recoveryValue, recoveryErr = pcall(sync.onLocalSnapshotRequest, message.target)
+        if not recovered then sync.localSnapshotRecoveryError = tostring(recoveryValue)
+        else sync.localSnapshotRecoveryError = recoveryErr end
+        record, recordErr = GGM.GetCompleteCharacterRecord(sync.db, message.target.key)
+    end
     if not record then
         if recordErr == "record-missing" then return "ignored", nil end
         return nil, recordErr
@@ -404,9 +659,36 @@ local function handleSnapshotResponse(sync, sender, message)
     return "snapshot-saved", nil
 end
 
+function GGM.AnnounceLocalGearReady(sync, onFinished)
+    if type(sync) ~= "table" or type(sync.localGearTracker) ~= "table" then
+        return false, "local-gear-tracker-unavailable"
+    end
+    local trackerKey = sync.localGearTracker.characterKey
+    if type(trackerKey) ~= "string" or trackerKey == "" then return false, "local-gear-tracker-invalid" end
+    local record, recordErr = GGM.GetCompleteCharacterRecord(sync.db, trackerKey)
+    if not record then return false, recordErr end
+    local identity, identityErr = GGM.BuildPlayerIdentity(sync.api)
+    if not identity then return false, identityErr end
+    if not identitiesCompatible(record.identity, identity)
+        or (record.identity.guid and identity.guid and record.identity.guid ~= identity.guid) then
+        return false, "identity-mismatch"
+    end
+    local sequence, sequenceErr = GGM.GetConfirmedSequence(record)
+    if sequence == nil then return false, sequenceErr end
+    local baselineObservedAt = GGM.GetGearObservationFloor(record.gear)
+    local payload, encodeErr = GGM.EncodeSyncGearReady(
+        record.identity,
+        sequence,
+        record.gear.capturedAt,
+        baselineObservedAt
+    )
+    if not payload then return false, encodeErr end
+    return GGM.SendSyncPayload(sync.transport, payload, onFinished)
+end
+
 function GGM.CreateGuildSync(api, db)
     if type(db) ~= "table" or type(db.characters) ~= "table" then return nil, "database-invalid" end
-    local sync = { api = api, db = db, transport = nil, snapshotResponseCooldowns = {}, snapshotResponseCooldownEntryCount = 0, pendingSnapshotResponses = {}, pendingSnapshotResponseTargets = {}, pendingSnapshotResponseCount = 0, pendingSnapshotRequests = {}, pendingSnapshotRequestTargets = {}, pendingSnapshotRequestCount = 0, snapshotRequestResults = {}, snapshotRequestCooldowns = {}, snapshotRequestCooldownEntryCount = 0, nextRequestID = 0 }
+    local sync = { api = api, db = db, transport = nil, snapshotResponseCooldowns = {}, snapshotResponseCooldownEntryCount = 0, pendingSnapshotResponses = {}, pendingSnapshotResponseTargets = {}, pendingSnapshotResponseCount = 0, pendingSnapshotRequests = {}, pendingSnapshotRequestTargets = {}, pendingSnapshotRequestCount = 0, snapshotRequestResults = {}, snapshotRequestCooldowns = {}, snapshotRequestCooldownEntryCount = 0, gearReadyRetryStates = {}, nextRequestID = 0 }
     local transport, transportErr = GGM.CreateSyncTransport(api, function(sender, payload)
         return GGM.HandleGuildSyncPayload(sync, sender, payload)
     end)
@@ -462,14 +744,15 @@ function GGM.RequestCompleteSnapshot(sync, targetIdentity, minimumSequence, mini
     local record = GGM.GetCharacterRecord(sync.db, targetIdentity.key)
     local knownSequence = record and (record.requiredBaselineSequence or record.confirmedSequence) or 0
     local knownObservation = record and (record.requiredBaselineObservedAt or GGM.GetGearObservationFloor(record.gear)) or 0
-    local pending = { onFinished = onFinished, minimumObservedAt = math.max(minimumObservedAt or 0, knownObservation), minimumSequence = math.max(minimumSequence or 0, knownSequence), requesterKey = requester.key, targetKey = targetIdentity.key, expiresAt = now + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS, selectedResponderKey = nil, selectedSequence = -1, selectedObservedAt = -1 }
+    local pending = { onFinished = onFinished, minimumObservedAt = math.max(minimumObservedAt or 0, knownObservation), minimumSequence = math.max(minimumSequence or 0, knownSequence), requesterIdentity = requester, requesterKey = requester.key, targetKey = targetIdentity.key, expiresAt = now + GGM.SYNC_SNAPSHOT_REQUEST_TTL_SECONDS, selectedResponderKey = nil, selectedSequence = -1, selectedObservedAt = -1, requestSent = false }
     sync.pendingSnapshotRequests[requestID] = pending
     sync.pendingSnapshotRequestTargets[targetIdentity.key] = requestID
     sync.pendingSnapshotRequestCount = sync.pendingSnapshotRequestCount + 1
     setRequestResult(sync, targetIdentity.key, "waiting")
     local function requestSent(sent, err)
         if sync.pendingSnapshotRequests[requestID] ~= pending then return end
-        if not sent then finishSnapshotRequest(sync, requestID, "failed", err) end
+        if not sent then finishSnapshotRequest(sync, requestID, "failed", err)
+        else pending.requestSent = true end
     end
     local sent, sendErr, sendToken = GGM.SendSyncPayload(sync.transport, payload, requestSent)
     if not sent then
@@ -506,6 +789,7 @@ function GGM.HandleGuildSyncPayload(sync, sender, payload)
     if not message then return nil, decodeErr end
     if message.type == "SLOT_UPDATE" then return handleSlotUpdate(sync, sender, message) end
     if message.type == "SNAPSHOT_REQUEST" then return handleSnapshotRequest(sync, sender, message) end
+    if message.type == "GEAR_READY" then return handleGearReady(sync, sender, message) end
     if message.type == "SNAPSHOT_RESPONSE_CLAIM" then return handleSnapshotResponseClaim(sync, sender, message) end
     if message.type == "SNAPSHOT_RESPONSE" then return handleSnapshotResponse(sync, sender, message) end
     return nil, "sync-message-type-unknown"

@@ -52,8 +52,22 @@ cannot overwrite newer observations. Receiving or forwarding a snapshot keeps
 its original times. Conflicting network observations within the same server
 second retain the saved slot; a direct inspection can replace it.
 
-Gear sharing uses protocol 6 and requires matching addon versions among peers.
-Existing gear caches remain readable. Update all three addon folders together.
+Gear sharing keeps its existing protocol-6 request, update and snapshot formats.
+The gear addon adds an optional compact readiness hint. Automatic discovery of
+never-inspected characters requires peers that understand this hint. Older
+protocol-6 peers keep their existing manual and incremental sync behavior, but
+cannot discover a fresh character from the new hint. Existing gear caches remain
+readable. Update all three addon folders together.
+
+At login, the gear addon tries to capture and persist the local character's
+complete gear after delays of 1, 2, 4, 8, 16 and 30 seconds when an item link is
+temporarily unavailable. Once a complete cache and stable tracker are available,
+it sends a small readiness hint after a short delay when guild membership is
+usable. A peer with missing, incomplete or older gear then requests a complete
+snapshot through the existing paced sync path; the hint itself never contains
+gear. If all startup attempts fail, a later valid request for this character can
+retry capture, at most once every five seconds. Cached and shared equipment
+remains last-known data, not proof of the character's current state.
 
 On the Characters page, select a saved character and click **Sync gear** to
 request the freshest complete snapshot available from responding online guild
@@ -174,8 +188,10 @@ unavailable APIs, combat restrictions and throttling.
 ChatThrottleLib version 29 is embedded, unchanged, under `Libs/ChatThrottleLib`
 in both The Guild Book and The Guild Book gear. The first loaded copy
 initializes the shared library; the second reuses it. No fourth addon folder is needed. Gear and
-profession frames use BULK priority and retain their existing pacing and queue
-limits. A frame counts as submitted only when the library calls back successfully;
+profession frames use BULK priority and retain their existing queue limits.
+After each successful send callback, gear yields to the next update without an
+additional fixed delay; ChatThrottleLib controls bandwidth and throttle pacing.
+A frame counts as submitted only when the library calls back successfully;
 this does not guarantee delivery to the recipient. Missing library support disables
 synchronization rather than falling back to unthrottled sends.
 
