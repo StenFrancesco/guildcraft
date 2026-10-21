@@ -255,6 +255,23 @@ local function findCreateAllButton(professionFrame)
         or (craftingPage and craftingPage.CreateAllButton)
 end
 
+local function getCreateAllButtonSize(professionFrame)
+    local button = findCreateAllButton(professionFrame)
+    if not button then return nil, nil end
+
+    local width, height
+    if type(button.GetWidth) == "function" then
+        local ok, value = pcall(button.GetWidth, button)
+        if ok and type(value) == "number" and value > 0 then width = value end
+    end
+    if type(button.GetHeight) == "function" then
+        local ok, value = pcall(button.GetHeight, button)
+        if ok and type(value) == "number" and value > 0 then height = value end
+    end
+    if width and height then return width, height end
+    return nil, nil
+end
+
 local function establishOwnProfessionContext(controller, trade)
     if (controller.activeIdentity and controller.activeSource ~= "guild")
         or type(trade) ~= "table"
@@ -320,23 +337,6 @@ function GGM.TryAutoSaveProfession(controller)
     return result, err
 end
 
-local function addButtonIcon(button)
-    if not button or type(button.CreateTexture) ~= "function" then return end
-    local icon = button:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(18, 18)
-    icon:SetPoint("LEFT", button, "LEFT", 11, 0)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_Note_01")
-    icon:SetAlpha(0.90)
-    button.saveIcon = icon
-
-    if button.label and button.label.ClearAllPoints then
-        button.label:ClearAllPoints()
-        button.label:SetPoint("LEFT", icon, "RIGHT", 8, 0)
-        button.label:SetPoint("RIGHT", button, "RIGHT", -12, 0)
-        button.label:SetJustifyH("CENTER")
-    end
-end
-
 function GGM.CreateProfessionSaveButton(controller)
     if controller and controller.button then
         return true, nil
@@ -352,18 +352,14 @@ function GGM.CreateProfessionSaveButton(controller)
         return false, "profession-frame-unavailable"
     end
 
-    local button
-    if type(GGM.CreateFlatButton) == "function" then
-        button = GGM.CreateFlatButton(api, professionFrame, "Save Snapshot", 172, 32, "primary")
-        addButtonIcon(button)
-    else
-        button = api.CreateFrame("Button", nil, professionFrame, "UIPanelButtonTemplate")
-        button:SetSize(172, 26)
-        button:SetText("Save Snapshot")
-    end
+    local createAllButton = findCreateAllButton(professionFrame)
+    local buttonWidth, buttonHeight = getCreateAllButtonSize(professionFrame)
+
+    local button = api.CreateFrame("Button", nil, professionFrame, "UIPanelButtonTemplate")
+    button:SetSize(buttonWidth or 172, buttonHeight or 26)
+    button:SetText("Save Snapshot")
 
     local buttonGap = GGM.UIStyleTokens and GGM.UIStyleTokens.space2 or 8
-    local createAllButton = findCreateAllButton(professionFrame)
     if createAllButton then
         button:SetPoint("RIGHT", createAllButton, "LEFT", -buttonGap, 0)
     else
@@ -445,6 +441,9 @@ function GGM.RefreshProfessionSaveButton(controller)
         else
             setStatus(controller, "The Guild Book  •  guild profession  •  last-known recipes")
         end
+        local professionFrame = findProfessionFrame(controller.api)
+        local width, height = getCreateAllButtonSize(professionFrame)
+        if width and height then controller.button:SetSize(width, height) end
         controller.button:Show()
         return "shown"
     end

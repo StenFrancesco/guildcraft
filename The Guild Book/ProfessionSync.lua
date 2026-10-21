@@ -1,7 +1,7 @@
 local _, GGM = ...
 
 local PREFIX, PROTOCOL = "GC_PROF4", "P4"
-local PROFESSIONS = { 164, 165, 171, 197, 202, 333 }
+local PROFESSIONS = { 129, 164, 165, 171, 185, 197, 202, 333, 356 }
 local SUPPORTED = {}
 for _, professionID in ipairs(PROFESSIONS) do SUPPORTED[professionID] = true end
 local MAX_RECORDS, MAX_PAGES, PAGE_SIZE = 4, 4, 32

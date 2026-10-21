@@ -2,15 +2,15 @@
 
 The UI follows the approved `ui-concepts/03-artisan-journal.png` reference: a bronze and wood journal frame, illustrated leather sidebar, torn parchment, inset profession buttons, large serif text, and profession artwork behind the recipe page. Controls, labels, native item icons, and cached records are rendered by the addon.
 
-The revised layout is 1400 × 630 logical UI units and scales down to fit the screen. All six professions switch their own full-page background and show their selected quoted subtitle in readable 18px dark-ink italic serif type, left-aligned beneath the heading. Search, recipe details, crafter selection, navigation, and cached-data wording retain their existing behavior. No gameplay, data acquisition, or synchronization logic changes.
+The revised layout is 1400 × 630 logical UI units and scales down to fit the screen. All nine professions switch their own full-page background. The profession library keeps its sidebar viewport fixed and scrolls longer lists with a native vertical scrollbar. Each supported profession shows its selected quoted subtitle in readable dark-ink italic serif type, left-aligned beneath the icon. Shared gear and profession status appears left-aligned in a fixed header slot above the artwork, without a backing bar. Search, recipe details, crafter selection, navigation, and cached-data wording retain their existing behavior.
 
 ## Runtime files
 
 - `recipe-page.tga`: custom 1024 × 1024 uncompressed RGBA background for the 540 × 620 Recipe Details card. Bronze/wood framing, torn parchment and faint workshop sketches match the journal. Source: `tests/Source/recipe-page.png`. Created by a `gpt-6-luna` subagent at medium effort using ImageGen. No baked text or controls.
 - `journal-window.tga`: 2048 × 1024 complete journal chrome, with transparent outside corners.
 - `profession-button-framed.tga`: 1024 × 256 darker inset button; the UI crops its transparent padding.
-- `{profession}-page.tga`: six 1024 × 1024 backgrounds displayed at the reference panel proportions.
-- `profession-page-mask.tga`: shared rounded perimeter mask for all six recipe panels. The top corners use a broader radius and the upper fade is 50% wider than the lower 5% fade. Profession artwork, chrome, controls, and anchors are unchanged.
+- `{profession}-page.tga`: nine 1024 × 1024 backgrounds displayed at the reference panel proportions, with 1536 × 1024 editable PNG sources.
+- `profession-page-mask.tga`: shared rounded perimeter mask for all nine profession panels. The top corners use a broader radius and the upper fade is 50% wider than the lower 5% fade. Profession artwork, chrome, controls, and anchors are unchanged.
 - `journal-serif.ttf`, `journal-serif-bold.ttf`, and `journal-serif-italic.ttf`: Crimson Text regular, bold, and italic; license included in `FONT-LICENSE.txt`.
 - `parchment.tga`, `leather.tga`, and `profession-button.tga` remain available for recipe details and secondary panels.
 
@@ -18,7 +18,7 @@ All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source P
 
 ## Reproduction and checking
 
-`ui-concepts/export-journal-reference.py` exports the eight revised textures, verifies pixel round-trips, and builds the complete `The-Guild-Book-ArtisanJournal-v2.zip`. `reference-export.json` records sources and dimensions. `ui-concepts/export-artisan-journal.py` exports the three shared surfaces and rebuilds the smaller artwork package; `manifest.json` records those surfaces.
+`ui-concepts/export-journal-reference.py` exports the nine profession backgrounds and two shared journal textures, verifies pixel round-trips, and builds the complete `The-Guild-Book-ArtisanJournal-v2.zip`. `reference-export.json` records sources and dimensions. `ui-concepts/export-artisan-journal.py` exports the three shared surfaces and rebuilds the smaller artwork package; `manifest.json` records those surfaces.
 
 `ui-concepts/render-journal-preview.py` creates an off-game preview from the actual Lua UI anchors, fonts, and runtime textures. Native WoW icons are represented by placeholders. This preview does not establish in-game texture loading or font rendering.
 
@@ -26,7 +26,7 @@ All TGA files use uncompressed 32-bit RGBA and power-of-two dimensions. Source P
 
 The current integrated PR CI run passes 405 tests with 0 failures; Lua syntax validation covers 38 Lua files. These results cover the integrated changes in that CI run. Final in-game appearance still needs checking after installing the complete v2 ZIP and reloading WoW.
 
-Artwork was coordinated by `gpt-6-luna` subagents at `max` effort using the built-in ImageGen tool. Original images are in `tests/Source/`; exact prompts are in `ui-concepts/artisan-journal-prompts/`.
+Artwork was created using the built-in ImageGen tool. Original images are in `tests/Source/`; exact prompts are in `ui-concepts/artisan-journal-prompts/`.
 
 Font sources: https://github.com/google/fonts/tree/main/ofl/crimsontext
 
