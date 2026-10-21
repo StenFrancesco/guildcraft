@@ -7,6 +7,23 @@ local createCrafterDropdown
 local refreshCrafterWhisperState
 local shown
 
+local function createUIPanelButton(api, parent, label, width, height)
+    local button = api.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    button:SetSize(width, height)
+    button.label = button.Text
+    if not button.label then
+        button.label = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        button.label:SetPoint("CENTER", button, "CENTER", 0, 0)
+        local nativeSetText = button.SetText
+        button.SetText = function(self, value)
+            if nativeSetText then nativeSetText(self, value) end
+            self.label:SetText(value or "")
+        end
+    end
+    button:SetText(label)
+    return button
+end
+
 local function isPublic(api, value)
     if type(api.issecretvalue) ~= "function" then return false end
     local ok, secret = pcall(api.issecretvalue, value)
@@ -595,7 +612,7 @@ local function createWhisperControls(details)
     end)
 
     local function makeAmountButton(label, offset, delta)
-        local button = GGM.CreateFlatButton(api, details, label, 30, 30, "secondary")
+        local button = createUIPanelButton(api, details, label, 30, 30)
         button:SetPoint("BOTTOMLEFT", details, "BOTTOMLEFT", offset, 88)
         button:SetScript("OnClick", function()
             local amount = parseAmount(api, details.amountInput:GetText()) or 1
@@ -606,21 +623,18 @@ local function createWhisperControls(details)
     details.amountMinusButton = makeAmountButton("−", 36, -1)
     details.amountPlusButton = makeAmountButton("+", 134, 1)
 
-    details.whisperButton = GGM.CreateFlatButton(api, details, "Whisper crafter", 180, 30, "primary")
+    details.whisperButton = createUIPanelButton(api, details, "Whisper crafter", 180, 30)
     details.whisperButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 88)
-    GGM.ApplyJournalFont(details.whisperButton.label, 16, "bold")
     details.whisperButton:SetScript("OnClick", function() sendCrafterWhisper(details) end)
 
-    details.createButton = GGM.CreateFlatButton(api, details, "Create", 180, 30, "primary")
+    details.createButton = createUIPanelButton(api, details, "Create", 180, 30)
     details.createButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 106)
-    GGM.ApplyJournalFont(details.createButton.label, 16, "bold")
     details.createButton:SetScript("OnClick", function()
         craftRecipe(details, parseAmount(api, details.amountInput:GetText()))
     end)
 
-    details.createAllButton = GGM.CreateFlatButton(api, details, "Create All [0]", 180, 30, "primary")
+    details.createAllButton = createUIPanelButton(api, details, "Create All [0]", 180, 30)
     details.createAllButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 68)
-    GGM.ApplyJournalFont(details.createAllButton.label, 16, "bold")
     details.createAllButton:SetScript("OnClick", function()
         craftRecipe(details, details.maxCraftable)
     end)
@@ -727,7 +741,8 @@ local function createWindow(browser, recipe)
     details.TitleText:SetText("RECIPE DETAILS")
     applyTextTheme(details.TitleText, "muted")
     GGM.ApplyJournalFont(details.TitleText, 13, "bold")
-    details.closeButton = GGM.CreateFlatButton(api, details, "×", 28, 28, "secondary")
+    details.closeButton = api.CreateFrame("Button", nil, details, "UIPanelCloseButton")
+    details.closeButton:SetSize(32, 32)
     details.closeButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -24, -22)
     details.closeButton:SetScript("OnClick", function() details:Hide() end)
     details.iconFrame = surface(api, details, "button", details, -5)

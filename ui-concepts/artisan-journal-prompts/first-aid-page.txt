@@ -1,0 +1,10 @@
+Use case: stylized-concept
+Asset type: concept preview for a 3:2 landscape World of Warcraft addon profession-page background.
+Input image: Image 1 is the existing Engineering profession background; use it only as the style, parchment palette, detail level, and composition reference.
+Scene/backdrop: a full, unframed sheet of bright pale-honey aged parchment with subtle paper grain and restrained amber-brown staining.
+Style/medium: finely detailed fantasy artisan-journal illustration, warm inked linework and softly integrated still-life painting, matching Image 1.
+Composition/framing: put a richly detailed but softly blended craft still life only in the upper-right 50–55%, across roughly the upper 30% of the canvas. Keep the upper-left 42% quiet for the live title and search UI. Keep the center and lower 70% mostly open parchment for recipe rows, with only very faint profession-themed technical sketches near the far-right margin.
+Lighting/mood: warm subdued workshop light.
+Constraints: background artwork only; no frame, border, vignette, drop shadow, UI, text, letters, numbers, labels, symbols, watermark, or logo. No bright saturated colors.
+Primary request: First Aid profession background.
+Subject: a neatly arranged healer's field kit with clean rolled linen bandages, folded cloth, a small leather medical pouch, scissors, a wooden splint, and a few subdued glass remedy vials. Use cream linen, leather brown, muted olive, and antique brass; no blood, wounds, or graphic medical imagery.

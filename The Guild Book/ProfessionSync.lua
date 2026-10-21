@@ -1,7 +1,7 @@
 local _, GGM = ...
 
 local PREFIX, PROTOCOL = "GC_PROF5", "P5"
-local PROFESSIONS = { 164, 165, 171, 197, 202, 333 }
+local PROFESSIONS = { 129, 164, 165, 171, 185, 197, 202, 333, 356 }
 local SUPPORTED = {}
 for _, professionID in ipairs(PROFESSIONS) do SUPPORTED[professionID] = true end
 local MAX_RECORDS, MAX_PAGES, PAGE_SIZE = 4, 4, 32
@@ -218,6 +218,7 @@ function GGM.CancelProfessionSync(sync)
         operation.uncertainPeers = operation.uncertainPeers or {}
         if operation.currentPeer then operation.uncertainPeers[operation.currentPeer] = true end
     end
+    sync.buttonRequest = nil
     sync.generation = sync.generation + 1
     flushCatalogRefresh(sync)
     if sync.manualOperation then sync.manualOperation.cancelled = true end
@@ -402,7 +403,7 @@ local function sendManifest(sync, session)
 end
 
 drainPending = function(sync)
-    if sync.active or sync.manualOperation then return end
+    if sync.active or sync.manualOperation or sync.buttonRequest then return end
     local selected
     for professionID, pending in pairs(sync.pending) do
         if pending.ready and (not selected or professionID < selected) then selected = professionID end
@@ -1360,6 +1361,11 @@ local function continueManualOperationNow(sync, operation)
         timer(sync, math.min(0.5, operation.deadline - current), function() continueManualOperation(sync, operation) end)
         return true
     end
+    -- Give an explicit click the next safe boundary without interrupting a transfer.
+    if sync.buttonRequest and sync.automaticAttempt and sync.automaticAttempt.operation == operation then
+        finishManualOperation(sync, operation, "Catch-up needed")
+        return true
+    end
     if operation.attempted >= operation.maxComparisons then
         finishManualOperation(sync, operation, "Catch-up needed")
         return true
@@ -1465,6 +1471,62 @@ function GGM.RequestProfessionSync(sync, professionID, reason, preferredPeer, on
     return continueManualOperation(sync, operation)
 end
 
+-- Keep one explicit UI request while a comparison or cooldown owns the slot.
+-- Direct protocol callers retain their existing busy/cooldown return values.
+function GGM.RequestProfessionSyncFromButton(sync, professionID)
+    local running = sync and sync.manualOperation
+    if running and running.fromButton and running.professionID == professionID then
+        sync.buttonRequest = nil
+        return true
+    end
+    if sync and sync.buttonRequest and sync.buttonRequest.professionID == professionID then return true end
+    if sync and SUPPORTED[professionID] then sync.buttonRequest = nil end
+    local accepted, err = GGM.RequestProfessionSync(sync, professionID, "manual")
+    if accepted then
+        if sync.manualOperation then sync.manualOperation.fromButton = true end
+        return true
+    end
+    if err ~= "profession-sync-busy" and err ~= "profession-sync-cooldown" then return false, err end
+    local request = { professionID = professionID, deadline = now(sync) + MANUAL_OPERATION_SECONDS }
+    sync.buttonRequest = request
+    local pump
+    pump = function()
+        if sync.buttonRequest ~= request then return end
+        if not safe(sync) or now(sync) >= request.deadline then
+            sync.buttonRequest = nil
+            notify(sync, professionID, "Catch-up needed")
+            drainPending(sync)
+            return
+        end
+        local ok, failure = GGM.RequestProfessionSync(sync, professionID, "manual")
+        if ok or (failure ~= "profession-sync-busy" and failure ~= "profession-sync-cooldown") then
+            sync.buttonRequest = nil
+            if ok then
+                if sync.manualOperation then sync.manualOperation.fromButton = true end
+            else
+                notify(sync, professionID, failure == "profession-sync-peer-unavailable" and "Catch-up needed" or "Sync unavailable")
+                if safe(sync) then
+                    timer(sync, 0.5, function()
+                        if safe(sync) then drainPending(sync) end
+                    end)
+                end
+            end
+            if type(GGM.RefreshVisibleProfessionSyncStatus) == "function" then GGM.RefreshVisibleProfessionSyncStatus() end
+            return
+        end
+        local remaining = (sync.cooldowns[professionID] or -COOLDOWN) + COOLDOWN - now(sync)
+        local delay = failure == "profession-sync-cooldown" and math.max(0.5, remaining) or 0.5
+        if not timer(sync, math.min(delay, request.deadline - now(sync)), pump) then
+            sync.buttonRequest = nil
+            notify(sync, professionID, "Sync unavailable")
+            drainPending(sync)
+        end
+    end
+    pump()
+    if sync.buttonRequest == request then return true end
+    return false, "profession-sync-unavailable"
+end
+
 function GGM.LoginProfessionSync(sync)
     if type(GGM.StartProfessionAutomaticSync) == "function" then return GGM.StartProfessionAutomaticSync(sync) end
     return false
@@ -1506,5 +1568,9 @@ function GGM.PublishProfessionSyncSave(sync, professionID, beforeHash)
 end
 
 function GGM.GetProfessionSyncStatus(sync, professionID)
+    if sync and sync.buttonRequest and sync.buttonRequest.professionID == professionID then
+        if sync.active or sync.manualOperation then return "Sync queued: waiting for current comparison" end
+        return "Sync queued: waiting for cooldown"
+    end
     return sync and sync.status[professionID] or "Sync unavailable"
 end
