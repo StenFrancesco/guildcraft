@@ -1759,7 +1759,9 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     button.icon:SetPoint("TOPLEFT", button, "TOPLEFT", 4, -4)
     button.icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
 
-    button.quickslot = button:CreateTexture(nil, "OVERLAY")
+    -- Quickslot artwork has an inset rim; keep it behind the opaque item
+    -- texture so that rim cannot draw a second box across the icon.
+    button.quickslot = button:CreateTexture(nil, "BORDER")
     button.quickslot:SetAllPoints(button)
     button.quickslot:SetTexture("Interface\\Buttons\\UI-Quickslot2")
     button.quickslot:SetAlpha(0.92)

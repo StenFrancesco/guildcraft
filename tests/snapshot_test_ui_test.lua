@@ -864,6 +864,28 @@ T.test("character realm stays left aligned beneath the character name", function
         "realm label must share the name's left edge")
 end)
 
+T.test("equipment quickslot border stays behind the item artwork", function()
+    local GGM = loadUI()
+    local api = makeBrowserAPI()
+    local createFrame = api.CreateFrame
+    api.CreateFrame = function(...)
+        local control = createFrame(...)
+        local createTexture = control.CreateTexture
+        control.CreateTexture = function(self, name, layer, ...)
+            local texture = createTexture(self, name, layer, ...)
+            texture.drawLayer = layer
+            return texture
+        end
+        return control
+    end
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
+    for _, button in ipairs(frame.slotButtons) do
+        T.assertEqual(button.quickslot.drawLayer, "BORDER",
+            "padded quickslot artwork must not draw an inset box over the item")
+        T.assertEqual(button.icon.drawLayer, "ARTWORK")
+    end
+end)
+
 T.test("portrait decoration follows the portrait bounds without an overlay icon texture", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeModelBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
