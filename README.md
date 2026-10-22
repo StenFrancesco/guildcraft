@@ -255,6 +255,25 @@ To create a local install ZIP containing all three addon folders, run
 `python ui-concepts/package-bank-polish.py` (requires Pillow). The output is
 `ui-concepts/The-Guild-Book-Addons.zip`.
 
+## Large catalog browsing
+
+Recipe and character lists reuse rows for the visible area plus four buffered
+rows. Scrolling rebinds those rows without rebuilding search results or details;
+search waits 125 ms after the latest edit. Full scroll ranges and selection by
+recipe ID or character key keep every result accessible.
+
+Profession catalog models and shared owner/date descriptors live only in runtime
+memory. Unchanged catalogs reuse their models and formatted dates. Changes to
+recipes, labels/icons, observation times, identities, ownership, membership,
+activity, repairs or database inputs are checked before reuse; unrelated profession
+updates retain the selected catalog. Full validation still runs on catalog reads.
+
+Run `lua tests/bench_catalog_browsing.lua` for a reproducible cold/warm CPU and
+date-format probe. An optional path to a baseline `ProfessionIndex.lua` allows the
+same fixture to measure the prior implementation. Results and limitations are in
+`tests/bench_catalog_browsing_results.txt`. In-game visual, scrolling, tooltip and
+frame-time checks remain necessary; standalone timings do not establish FPS gains.
+
 ## Development
 
 Run the regression suite with Lua 5.1:

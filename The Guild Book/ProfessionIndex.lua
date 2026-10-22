@@ -1179,9 +1179,9 @@ local function catalogSavedDate(api, capturedAt)
 end
 
 local function catalogOwnerLess(left, right)
-    local leftName, rightName = string.lower(left.name), string.lower(right.name)
+    local leftName, rightName = left.searchName, right.searchName
     if leftName ~= rightName then return leftName < rightName end
-    local leftRealm, rightRealm = string.lower(left.realm), string.lower(right.realm)
+    local leftRealm, rightRealm = left.searchRealm, right.searchRealm
     if leftRealm ~= rightRealm then return leftRealm < rightRealm end
     return left.key < right.key
 end
@@ -1199,6 +1199,65 @@ end
 
 local function unconfirmedRosterMessage()
     return "Current guild membership could not be confirmed. Showing saved local characters only."
+end
+
+-- Runtime-only, bounded to the professions being browsed. Keep validated input
+-- copies so in-place edits and repairs cannot serve an old model. Full validation
+-- remains below; reducing its cost is a separate operation.
+local catalogCaches = setmetatable({}, { __mode = "k" })
+local function sameCatalogInput(left, right)
+    if type(left) ~= type(right) then return false end
+    if type(left) ~= "table" then return left == right end
+    for key, value in pairs(left) do
+        if not sameCatalogInput(value, right[key]) then return false end
+    end
+    for key in pairs(right) do if left[key] == nil then return false end end
+    return true
+end
+
+local function catalogInput(db, professionLabel, api, snapshots, hasSnapshot, incomplete)
+    local owners, eligible = {}, {}
+    for localID, member in pairs(db.professionCharacters) do
+        eligible[localID] = catalogCharacterEligible(db, member, GGM.professionRosterMembershipCurrent == true)
+    end
+    for localID, snapshot in pairs(snapshots) do
+        local member = db.professionCharacters[localID]
+        local identity = db.professions[member.key].identity
+        owners[localID] = {
+            key = member.key, name = identity.name, realm = identity.realm,
+            capturedAt = snapshot.capturedAt,
+        }
+    end
+    return {
+        owners = owners, eligible = eligible, hasSnapshot = hasSnapshot, incomplete = incomplete,
+        membershipCurrent = GGM.professionRosterMembershipCurrent == true,
+        label = professionLabel, date = type(api) == "table" and api.date or nil,
+    }
+end
+
+local function sameCatalogRecipes(saved, current)
+    local count = 0
+    for id, recipe in pairs(current or {}) do
+        count = count + 1
+        local previous = saved[id]
+        if not previous or previous.name ~= recipe.name or previous.outputIcon ~= recipe.outputIcon
+            or #previous.crafters ~= #recipe.crafters then return false end
+        for index, localID in ipairs(recipe.crafters) do
+            if previous.crafters[index] ~= localID then return false end
+        end
+    end
+    return count == saved.count
+end
+
+local function copyCatalogRecipes(recipes)
+    local result = { count = 0 }
+    for id, recipe in pairs(recipes or {}) do
+        local crafters = {}
+        for index, localID in ipairs(recipe.crafters) do crafters[index] = localID end
+        result[id] = { name = recipe.name, outputIcon = recipe.outputIcon, crafters = crafters }
+        result.count = result.count + 1
+    end
+    return result
 end
 
 function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api)
@@ -1262,6 +1321,38 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         end
     end
 
+    local input = catalogInput(db, professionLabel, api, validSnapshotsByLocalID, hasSnapshot, incomplete)
+    local cache = catalogCaches[db]
+    local cached = cache and cache[professionID]
+    if cached and sameCatalogInput(cached.input, input)
+        and sameCatalogRecipes(cached.recipes, db.professionRecipeIndex[professionID]) then return cached.model end
+    if not cache then cache = {}; catalogCaches[db] = cache end
+    local ownersByLocalID = {}
+    local function publish(model)
+        -- A caller can request arbitrary IDs; retain at most twelve catalog models.
+        if not cache[professionID] then
+            cache.order = cache.order or {}
+            cache.order[#cache.order + 1] = professionID
+            if #cache.order > 12 then cache[table.remove(cache.order, 1)] = nil end
+        end
+        cache[professionID] = {
+            input = input, recipes = copyCatalogRecipes(db.professionRecipeIndex[professionID]),
+            owners = ownersByLocalID, model = model,
+        }
+        return model
+    end
+    for localID, owner in pairs(input.owners) do
+        if cached and cached.input.date == input.date
+            and sameCatalogInput(cached.input.owners[localID], owner) then
+            ownersByLocalID[localID] = cached.owners[localID]
+        else
+            ownersByLocalID[localID] = {
+                key = owner.key, name = owner.name, realm = owner.realm,
+                searchName = string.lower(owner.name), searchRealm = string.lower(owner.realm),
+                capturedAt = owner.capturedAt, savedDate = catalogSavedDate(api, owner.capturedAt),
+            }
+        end
+    end
     local recipesByID = {}
     local indexedRecipes = db.professionRecipeIndex[professionID]
     if indexedRecipes ~= nil and type(indexedRecipes) ~= "table" then
@@ -1277,6 +1368,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
             local row = {
                 recipeID = recipeID,
                 name = indexedRecipe.name,
+                searchName = string.lower(indexedRecipe.name),
                 outputIcon = indexedRecipe.outputIcon,
                 knownBy = {},
             }
@@ -1287,14 +1379,7 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                     if not snapshot then
                         incomplete = true
                     else
-                        local canonical = db.professions[member.key]
-                        row.knownBy[#row.knownBy + 1] = {
-                            key = member.key,
-                            name = canonical.identity.name,
-                            realm = canonical.identity.realm,
-                            capturedAt = snapshot.capturedAt,
-                            savedDate = catalogSavedDate(api, snapshot.capturedAt),
-                        }
+                        row.knownBy[#row.knownBy + 1] = ownersByLocalID[localID]
                     end
                 end
             end
@@ -1310,22 +1395,22 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
         recipes[#recipes + 1] = recipe
     end
     table.sort(recipes, function(left, right)
-        local leftName, rightName = string.lower(left.name), string.lower(right.name)
+        local leftName, rightName = left.searchName, right.searchName
         if leftName ~= rightName then return leftName < rightName end
         return left.recipeID < right.recipeID
     end)
 
     if not membershipCurrent and not validSelectedSnapshot then
-        return {
+        return publish({
             state = "unavailable",
             hasSnapshot = nil,
             recipes = {},
             message = rosterWarning,
-        }
+        })
     end
 
     if incomplete or hasSnapshot == nil then
-        return {
+        return publish({
             state = "incomplete",
             hasSnapshot = hasSnapshot,
             recipes = recipes,
@@ -1333,21 +1418,21 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                 "Some saved profession data is incomplete.",
                 rosterWarning
             ),
-        }
+        })
     end
 
     if not hasSnapshot then
-        return {
+        return publish({
             state = "empty",
             hasSnapshot = false,
             recipes = recipes,
             message = "No saved " .. professionLabel
                 .. " snapshots for local characters or current guild members.",
-        }
+        })
     end
 
     if #recipes == 0 then
-        return {
+        return publish({
             state = "empty",
             hasSnapshot = true,
             recipes = recipes,
@@ -1356,13 +1441,13 @@ function GGM.BuildProfessionRecipeCatalog(db, professionID, professionLabel, api
                     .. " snapshots contain no learned recipes.",
                 rosterWarning
             ),
-        }
+        })
     end
 
-    return {
+    return publish({
         state = "ready",
         hasSnapshot = true,
         recipes = recipes,
         message = rosterWarning,
-    }
+    })
 end

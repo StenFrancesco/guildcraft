@@ -715,7 +715,7 @@ T.test("Own is the first default filter and both filters retain their meaning af
     T.assertEqual(#frame.visibleProfessionEntries, 2)
     T.assertEqual(frame.selectedProfession, "Tailoring", "reopening keeps a still-owned selection")
     T.assertEqual(frame.professionSearchBox:GetText(), "cloth")
-    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 18)
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
 end)
 
 T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
@@ -2103,7 +2103,7 @@ T.test("profession search filters cached recipes only, changing profession clear
     T.assertEqual(#calls, builderCalls)
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Copper Bracers")
-    T.assertTrue(string.find(frame.professionRecipeRows[1].knownBy.text, "saved 2026-09-01", 1, true) ~= nil)
+    T.assertEqual(frame.professionRecipeRows[1].recipe.knownBy[1].savedDate, "saved 2026-09-01")
 
     frame.professionButtons[2].scripts.OnClick(frame.professionButtons[2])
     T.assertEqual(frame.professionSearchBox:GetText(), "")
@@ -2192,7 +2192,7 @@ T.test("visible profession catalog refreshes locally after roster reconciliation
     T.assertEqual(#frame.filteredProfessionRecipes, 0)
 end)
 
-T.test("profession owner rows show name realm and date without ownership badges", function()
+T.test("profession rows retain owner metadata for details without constructing hidden labels", function()
     local GGM = loadUI()
     local calls = {}
     local localOwner = {
@@ -2225,9 +2225,10 @@ T.test("profession owner rows show name realm and date without ownership badges"
     )
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
 
-    local text = frame.professionRecipeRows[1].knownBy.text
-    T.assertEqual(text,
-        "Known by: Alice-Silvermoon — 2026-10-01\nBob-ArgentDawn — 2026-09-30")
+    local row = frame.professionRecipeRows[1]
+    T.assertNil(row.knownBy)
+    T.assertTrue(row.recipe.knownBy[1] == localOwner)
+    T.assertTrue(row.recipe.knownBy[2] == guildOwner)
 end)
 
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
@@ -3214,7 +3215,7 @@ T.test("PR1 hidden profession events build nothing and opening consumes latest d
     T.assertEqual(#calls, before + 1, "reopening dirty data must build once")
     T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Revision 2")
     T.assertEqual(frame.professionSearchBox:GetText(), "Revision")
-    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 30)
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
     frame:Hide()
     G.ShowGuildGearBrowserWindow(api, db)
     T.assertEqual(#calls, before + 1, "clean reopening must reuse the catalog")
@@ -3280,6 +3281,8 @@ T.test("PR1 gear refresh rebinds saved selection and coalesces without losing br
     G.db = db
     local frame = showBrowser(G, api, db)
     frame.searchBox:SetText("Alice")
+    timers[1]() -- Apply the debounced search before measuring event coalescing.
+    timers = {}
     frame.listScroll:SetVerticalScroll(24)
     local replacement = makeDB(G, { makeRecord(G) }).characters["Alice-Silvermoon"]
     replacement.gear.capturedAt = 1700000900
@@ -3290,7 +3293,7 @@ T.test("PR1 gear refresh rebinds saved selection and coalesces without losing br
     T.assertTrue(frame.selectedEntry.record == replacement)
     T.assertEqual(frame.capturedLine.text, "saved-1700000900")
     T.assertEqual(frame.searchBox:GetText(), "Alice")
-    T.assertEqual(frame.listScroll:GetVerticalScroll(), 24)
+    T.assertEqual(frame.listScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
     frame.listRows[1].scripts.OnClick(frame.listRows[1])
 end)
 
@@ -3375,4 +3378,143 @@ T.test("PR1 hidden and inactive profession sidebar resizing defers widget work",
     T.assertEqual(layouts, before)
     G.SelectGuildGearBrowserTab(frame, "Professions")
     T.assertEqual(layouts, before + 1)
+end)
+
+
+T.test("large recipe lists recycle a bounded viewport pool and keep the last recipe clickable", function()
+    local GGM, recipes = loadUI(), {}
+    for i = 1, 4096 do recipes[i] = { recipeID = i, name = string.format("Recipe %04d", i), knownBy = {} } end
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
+    local api = makeBrowserAPI()
+    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    local frame = GGM.guildGearBrowserFrame
+    frame.professionRecipeScroll:SetHeight(230)
+    frame.professionRecipeScroll.scripts.OnSizeChanged(frame.professionRecipeScroll)
+    local pool = #frame.professionRecipeRows
+    T.assertTrue(pool <= 10, "4096 results must allocate only viewport rows")
+    local opened
+    GGM.ShowRecipeDetailsWindow = function(_, recipe) opened = recipe end
+    local seen = {}
+    for pass = 1, 3 do
+        for offset = 0, 4096 * 46, 230 do
+            frame.professionRecipeScroll:SetVerticalScroll(offset)
+            for _, row in ipairs(frame.professionRecipeRows) do
+                if row.recipe then seen[row.recipe.recipeID] = true end
+            end
+        end
+    end
+    for id = 1, 4096 do T.assertTrue(seen[id], "every recipe must remain reachable") end
+    frame.professionRecipeScroll:SetVerticalScroll(4096 * 46 - 230)
+    T.assertEqual(#frame.professionRecipeRows, pool)
+    local last
+    for _, row in ipairs(frame.professionRecipeRows) do
+        if row.recipe and row.recipe.recipeID == 4096 then last = row end
+    end
+    T.assertNotNil(last)
+    last.scripts.OnClick(last)
+    T.assertTrue(opened == recipes[4096])
+    frame.professionSearchBox:SetText("Recipe 4096")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0)
+    T.assertTrue(frame.professionRecipeRows[1].recipe == recipes[4096])
+    for i = 2, pool do T.assertNil(frame.professionRecipeRows[i].recipe) end
+    frame.professionSearchBox:SetText("")
+    T.assertEqual(#frame.professionRecipeRows, pool)
+end)
+
+T.test("large character lists recycle rows without refiltering or changing selection on scroll", function()
+    local GGM, api = loadUI(), makeBrowserAPI()
+    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    local frame = GGM.guildGearBrowserFrame
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    local entries = {}
+    for i = 1, 1000 do
+        entries[i] = { key = "Char" .. i .. "-Realm", name = "Char" .. i, realm = "Realm" }
+    end
+    frame.entries = entries
+    frame.listScroll:SetHeight(200)
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    local pool, filtered, selected = #frame.listRows, frame.filteredEntries, frame.selectedEntry
+    T.assertTrue(pool <= 9, "1000 characters must allocate only viewport rows")
+    local seen = {}
+    for offset = 0, frame.listContent.height, 200 do
+        frame.listScroll:SetVerticalScroll(offset)
+        for _, row in ipairs(frame.listRows) do if row.entry then seen[row.entry.key] = true end end
+    end
+    for _, entry in ipairs(entries) do T.assertTrue(seen[entry.key], "every character must remain reachable") end
+    T.assertTrue(frame.filteredEntries == filtered)
+    T.assertTrue(frame.selectedEntry == selected)
+    local last
+    for _, row in ipairs(frame.listRows) do if row.entry == entries[1000] then last = row end end
+    T.assertNotNil(last)
+    last.scripts.OnClick(last)
+    T.assertTrue(frame.selectedEntry == entries[1000])
+    frame.searchBox:SetText("Char1000")
+    T.assertEqual(frame.listScroll:GetVerticalScroll(), 0)
+    T.assertEqual(#frame.filteredEntries, 1)
+    T.assertTrue(frame.listRows[1].entry == entries[1000])
+    T.assertEqual(#frame.listRows, pool)
+end)
+
+T.test("search debounces edits and hidden callbacks do no rendering", function()
+    local GGM, api = loadUI(), makeBrowserAPI()
+    local recipes = { { recipeID = 1, name = "Alpha" }, { recipeID = 2, name = "Beta" } }
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
+    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    local frame = GGM.guildGearBrowserFrame
+    local timers = {}
+    api.C_Timer = { After = function(seconds, callback)
+        timers[#timers + 1] = { seconds = seconds, callback = callback }
+    end }
+    frame.professionSearchBox:SetText("Al")
+    frame.professionSearchBox:SetText("Beta")
+    T.assertEqual(#frame.filteredProfessionRecipes, 2)
+    T.assertEqual(timers[#timers].seconds, 0.125)
+    for _, timer in ipairs(timers) do timer.callback() end
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.filteredProfessionRecipes[1].recipeID, 2)
+    frame.professionSearchBox:SetText("Alpha")
+    frame:Hide()
+    timers[#timers].callback()
+    T.assertEqual(frame.filteredProfessionRecipes[1].recipeID, 2)
+end)
+
+
+T.test("character search applies only the latest edit and pending profession search refreshes after reopening", function()
+    local GGM, api, timers = loadUI(), makeBrowserAPI(), {}
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    frame.searchBox:SetText("missing")
+    frame.searchBox:SetText("Alice")
+    local original = frame.filteredEntries
+    timers[1]()
+    T.assertTrue(frame.filteredEntries == original)
+    timers[2]()
+    T.assertEqual(#frame.filteredEntries, 1)
+    T.assertEqual(frame.selectedEntry.name, "Alice")
+    local recipes = { { recipeID = 1, name = "Alpha" }, { recipeID = 2, name = "Beta" } }
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    frame.professionSearchBox:SetText("Beta")
+    frame:Hide()
+    timers[#timers]()
+    GGM.ShowGuildGearBrowserWindow(api, frame.db)
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.professionRecipeRows[1].recipe.recipeID, 2)
+end)
+
+
+T.test("switching profession cancels an obsolete pending search", function()
+    local GGM, api, timers = loadUI(), makeBrowserAPI(), {}
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", { { recipeID = 1, name = "Alpha" } }) end, {})
+    GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM))
+    local frame = GGM.guildGearBrowserFrame
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    local filters, filter = 0, GGM.FilterProfessionRecipeBrowserEntries
+    GGM.FilterProfessionRecipeBrowserEntries = function(...) filters = filters + 1; return filter(...) end
+    frame.professionSearchBox:SetText("Alpha")
+    GGM.SelectProfession(frame, "Blacksmithing")
+    local afterSelection = filters
+    timers[1]()
+    T.assertEqual(filters, afterSelection, "the previous profession's search must be cancelled")
 end)

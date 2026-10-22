@@ -2582,3 +2582,137 @@ T.test("roster rename rejects a third canonical same-GUID record without mutatio
     T.assertNotNil(db.professions["Alice-Argent-Dawn"])
     T.assertNotNil(db.professions["Alicia-Silvermoon"])
 end)
+
+
+T.test("catalog warm reads reuse models and share one immutable date descriptor per owner", function()
+    local GGM = loadModules()
+    local snapshot = catalogSnapshot(GGM, 171, 1700000000, {
+        { recipeID = 1, name = "Alpha" }, { recipeID = 2, name = "Beta" },
+    })
+    local db = catalogDB({ { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon",
+        guid = "Player-1-A", active = true, localOwned = true, snapshots = { [171] = snapshot } } })
+    local dates = 0
+    local api = { date = function(_, timestamp) dates = dates + 1; return tostring(timestamp) end }
+    local first = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+    T.assertEqual(#first.recipes, 2)
+    T.assertEqual(dates, 1)
+    T.assertTrue(first.recipes[1].knownBy[1] == first.recipes[2].knownBy[1])
+    T.assertTrue(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api) == first)
+    T.assertEqual(dates, 1)
+    T.assertEqual(first.recipes[1].searchName, "alpha")
+    snapshot.capturedAt = 1700000100
+    local second = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+    T.assertTrue(second ~= first)
+    T.assertEqual(second.recipes[1].knownBy[1].capturedAt, 1700000100)
+    T.assertEqual(first.recipes[1].knownBy[1].capturedAt, 1700000000)
+    T.assertEqual(dates, 2)
+    db.professionRecipeIndex[171][1].name = "Zulu"
+    db.professionRecipeIndex[171][1].outputIcon = 456
+    local third = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+    T.assertEqual(third.recipes[2].name, "Zulu")
+    T.assertEqual(third.recipes[2].outputIcon, 456)
+    db.localCharacterGUIDs = {}
+    local hidden = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+    T.assertEqual(#hidden.recipes, 0)
+    GGM.professionRosterMembershipCurrent = true
+    local guild = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+    T.assertEqual(#guild.recipes, 2)
+    assert(GGM.SetProfessionCharacterActive(db, 1, false))
+    T.assertEqual(#GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api).recipes, 0)
+    db.localCharacterGUIDs["Player-1-A"] = true
+    T.assertEqual(#GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api).recipes, 2)
+    db.professionIndexRepairNeeded = true
+    T.assertEqual(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api).state, "unavailable")
+end)
+
+
+T.test("catalog models survive unrelated profession changes and date descriptors survive label edits", function()
+    local GGM = loadModules()
+    local snapshot = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 1, name = "Alpha" } })
+    local other = catalogSnapshot(GGM, 164, 1700000000, { { recipeID = 2, name = "Beta" } })
+    local db = catalogDB({ { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon",
+        guid = "Player-1-A", active = true, localOwned = true, snapshots = { [171] = snapshot, [164] = other } } })
+    local dates = 0
+    local api = { date = function() dates = dates + 1; return "date" end }
+    local first = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+    other.capturedAt = 1700000200
+    T.assertTrue(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api) == first)
+    db.professionRecipeIndex[171][1].name = "Changed"
+    local second = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+    T.assertTrue(second ~= first)
+    T.assertTrue(second.recipes[1].knownBy[1] == first.recipes[1].knownBy[1])
+    T.assertEqual(dates, 1)
+end)
+
+
+T.test("warm catalog agrees with a cold build through membership identity purge and malformed-data changes", function()
+    local GGM = loadModules()
+    local members = {}
+    for i, name in ipairs({ "Alice", "Bob" }) do
+        members[i] = { key = name .. "-Silvermoon", name = name, realm = "Silvermoon",
+            guid = "Player-1-" .. i, active = true, localOwned = true,
+            snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000,
+                { { recipeID = 1, name = "Alpha" }, { recipeID = 2, name = "Beta" } }) } }
+    end
+    local db = catalogDB(members)
+    local api = { date = function(_, timestamp) return tostring(timestamp) end }
+    local function compare()
+        local actual = GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+        local cold = loadModules()
+        cold.professionRosterMembershipCurrent = GGM.professionRosterMembershipCurrent
+        local expected = cold.BuildProfessionRecipeCatalog(db, 171, "Alchemy", api)
+        assertTablesEqual(actual, expected)
+        return actual
+    end
+    local first = compare()
+    db.professionRecipeIndex[171][1].crafters = { 2 }
+    T.assertTrue(compare() ~= first)
+    db.professionRecipeIndex[171][2] = nil
+    T.assertEqual(#compare().recipes, 1)
+    local record = db.professions["Bob-Silvermoon"]
+    db.professions["Bob-Silvermoon"] = nil
+    record.identity.key, record.identity.name = "Robert-Silvermoon", "Robert"
+    db.professions[record.identity.key] = record
+    db.professionCharacters[2].key = record.identity.key
+    T.assertEqual(compare().recipes[1].knownBy[1].name, "Robert")
+    record.snapshots[171].complete = false
+    T.assertEqual(compare().state, "incomplete")
+    record.snapshots[171].complete = true
+    db.localCharacterIDByGUID["Player-1-2"] = nil
+    T.assertEqual(compare().state, "unavailable")
+    db.localCharacterIDByGUID["Player-1-2"] = 2
+    T.assertEqual(compare().state, "ready")
+    db.professionRecipeIndex[171][1].crafters = { 1 }
+    db.professionCharacters[2] = nil
+    db.professions["Robert-Silvermoon"] = nil
+    db.localCharacterIDByGUID["Player-1-2"] = nil
+    db.localCharacterGUIDs["Player-1-2"] = nil
+    T.assertEqual(compare().recipes[1].knownBy[1].name, "Alice")
+    local prior = compare()
+    local replacement = copyTable(db)
+    local replaced = GGM.BuildProfessionRecipeCatalog(replacement, 171, "Alchemy", api)
+    T.assertTrue(replaced ~= prior)
+    assertTablesEqual(replaced, prior)
+    local formatter = { date = function() return "new formatter" end }
+    T.assertEqual(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", formatter).recipes[1].knownBy[1].savedDate, "new formatter")
+end)
+
+
+T.test("catalog cache tracks eligibility for indexed crafters without selected snapshots", function()
+    local GGM = loadModules()
+    local db = catalogDB({
+        { key = "Alice-Silvermoon", name = "Alice", realm = "Silvermoon", guid = "Player-1-A",
+            active = true, snapshots = { [171] = catalogSnapshot(GGM, 171, 1700000000, { { recipeID = 1, name = "Alpha" } }) } },
+        { key = "Bob-Silvermoon", name = "Bob", realm = "Silvermoon", guid = "Player-1-B",
+            active = true, snapshots = {} },
+    })
+    GGM.professionRosterMembershipCurrent = true
+    db.professionRecipeIndex[171][1].crafters = { 1, 2 }
+    T.assertEqual(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {}).state, "incomplete")
+    assert(GGM.SetProfessionCharacterActive(db, 2, false))
+    T.assertEqual(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {}).state, "ready")
+    db.localCharacterGUIDs["Player-1-B"] = true
+    T.assertEqual(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {}).state, "incomplete")
+    db.localCharacterGUIDs["Player-1-B"] = nil
+    T.assertEqual(GGM.BuildProfessionRecipeCatalog(db, 171, "Alchemy", {}).state, "ready")
+end)
