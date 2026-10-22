@@ -921,6 +921,40 @@ local function openSelectedProfessionContext(frame, skillLineID)
     return true
 end
 
+-- Dirty state belongs to the runtime browser, never SavedVariables.
+local flushProfessionCatalog, refreshCharacterBrowser
+
+local function browserVisible(frame)
+    if not frame then return false end
+    if type(frame.IsVisible) == "function" then return frame:IsVisible() end
+    return type(frame.IsShown) == "function" and frame:IsShown()
+end
+
+local function flushBrowserRefresh(frame)
+    if not browserVisible(frame) then return false end
+    if frame.activeTab == "Professions" then return flushProfessionCatalog(frame) end
+    if frame.activeTab == "Character" and frame.charactersDirty then return refreshCharacterBrowser(frame) end
+    return false
+end
+
+local function queueBrowserRefresh(frame)
+    if not browserVisible(frame) then return false end
+    if frame.activeTab ~= "Professions" and frame.activeTab ~= "Character" then return false end
+    if frame.browserRefreshPending then return true end
+    local timer = frame.api and frame.api.C_Timer
+    if timer and type(timer.After) == "function" then
+        frame.browserRefreshPending = true
+        timer.After(0, function()
+            frame.browserRefreshPending = nil
+            if GGM.guildGearBrowserFrame == frame then flushBrowserRefresh(frame) end
+        end)
+    else
+        -- Older clients and synchronous callers without a timer still flush safely.
+        flushBrowserRefresh(frame)
+    end
+    return true
+end
+
 function GGM.SelectProfession(frame, selectedKey)
     local selectedProfession
     for _, profession in ipairs(PROFESSIONS) do if profession.key == selectedKey then selectedProfession = profession; break end end
@@ -937,23 +971,32 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionHeroArtwork:SetVertexColor(1, 1, 1, 1)
     end
     for _, button in ipairs(frame.professionButtons) do professionButtonColor(button, button.key == selectedKey) end
+    if changed then frame.professionCatalog = nil end
     if changed and frame.professionSearchBox then frame.professionSearchBox:SetText("") end
-    if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
-        frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, selectedProfession.professionID, selectedProfession.key, frame.api)
-        if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
-    end
-    if frame.professionLibraryMode == "Own" and frame.db and frame.activeTab == "Professions" then
+    frame.professionDirty = true
+    if flushProfessionCatalog then flushProfessionCatalog(frame) end
+    if browserVisible(frame) and frame.professionLibraryMode == "Own" and frame.db and frame.activeTab == "Professions" then
         frame.craftingContextSkillLineID = nil
         frame.craftingContextOpenedByGuildBook = nil
         openSelectedProfessionContext(frame, selectedProfession.professionID)
     end
-    if frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
+    if browserVisible(frame) and frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
     return true
 end
 
 function GGM.RefreshVisibleProfessionLibrary(frame)
-    frame = frame or GGM.guildGearBrowserFrame
-    if not frame or type(frame.professionButtons) ~= "table" then return false end
+    if not frame then
+        frame = GGM.guildGearBrowserFrame
+        if not frame then return false end
+        frame.professionLibraryDirty = true
+        if frame.activeTab ~= "Professions" then return false end
+        return queueBrowserRefresh(frame)
+    end
+    if type(frame.professionButtons) ~= "table" then return false end
+    if not browserVisible(frame) or frame.activeTab ~= "Professions" then
+        frame.professionLibraryDirty = true
+        return false
+    end
 
     local visibleEntries = {}
     if frame.professionLibraryMode == "Own" then
@@ -1319,7 +1362,8 @@ local function createProfessionsPage(api, frame)
     frame.professionRecipeScroll:SetScrollChild(frame.professionRecipeContent)
     frame.professionRecipeRows = {}
     frame.professionSearchBox:SetScript("OnTextChanged", function()
-        if updateProfessionRecipeBrowser and frame.professionCatalog then updateProfessionRecipeBrowser(frame) end
+        if browserVisible(frame) and frame.activeTab == "Professions"
+            and updateProfessionRecipeBrowser and frame.professionCatalog then updateProfessionRecipeBrowser(frame) end
     end)
 
     frame.professionsPage = page
@@ -1420,21 +1464,40 @@ updateProfessionRecipeBrowser = function(frame)
     if GGM.RefreshRecipeDetailsWindow then GGM.RefreshRecipeDetailsWindow(frame) end
 end
 
-function GGM.RefreshVisibleProfessionCatalog()
-    local frame = GGM.guildGearBrowserFrame
-    if not frame or frame.activeTab ~= "Professions" or not frame.db
-        or type(GGM.BuildProfessionRecipeCatalog) ~= "function" then
-        return false
+flushProfessionCatalog = function(frame)
+    if not browserVisible(frame) or frame.activeTab ~= "Professions" or not frame.db
+        or type(GGM.BuildProfessionRecipeCatalog) ~= "function" then return false end
+    if not frame.professionDirty and not frame.professionLibraryDirty and frame.professionCatalog then return false end
+    GGM.RefreshVisibleProfessionLibrary(frame)
+    frame.professionLibraryDirty = nil
+    if frame.professionLibraryMode == "Own" and frame.visibleProfessionEntries[1] then
+        local selectedVisible = false
+        for _, entry in ipairs(frame.visibleProfessionEntries) do
+            if entry.key == frame.selectedProfession then selectedVisible = true; break end
+        end
+        if not selectedVisible then return GGM.SelectProfession(frame, frame.visibleProfessionEntries[1].key) end
     end
+    if not frame.professionDirty and frame.professionCatalog then return false end
     local profession
     for _, item in ipairs(PROFESSIONS) do
         if item.key == frame.selectedProfession then profession = item; break end
     end
     if not profession then return false end
+    frame.professionDirty = nil
+    local scroll = frame.professionRecipeScroll:GetVerticalScroll()
     frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(
         frame.db, profession.professionID, profession.key, frame.api)
     updateProfessionRecipeBrowser(frame)
+    frame.professionRecipeScroll:SetVerticalScroll(scroll)
     return true
+end
+
+function GGM.RefreshVisibleProfessionCatalog()
+    local frame = GGM.guildGearBrowserFrame
+    if not frame then return false end
+    frame.professionDirty = true
+    if frame.activeTab ~= "Professions" then return false end
+    return queueBrowserRefresh(frame)
 end
 
 local updateBrowserList
@@ -1484,14 +1547,12 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if selectedKey == "Professions" then
         frame.professionsPage:Show()
         frame.professionLibraryToggle:Show()
-        if frame.db then GGM.SyncSelectedProfession(frame, false) end
-        if frame.db and type(GGM.BuildProfessionRecipeCatalog) == "function" then
-            local profession
-            for _, item in ipairs(PROFESSIONS) do if item.key == frame.selectedProfession then profession = item; break end end
-            if profession then
-                frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(frame.db, profession.professionID, profession.key, frame.api)
-                updateProfessionRecipeBrowser(frame)
+        flushProfessionCatalog(frame)
+        if browserVisible(frame) and frame.db then
+            if frame.professionLibraryMode == "Own" then
+                openSelectedProfessionContext(frame, frame.selectedProfessionID)
             end
+            GGM.SyncSelectedProfession(frame, false)
         end
     else
         frame.professionsPage:Hide()
@@ -1509,7 +1570,10 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
 
     if showCharacter then
         setBrowserContentVisible(frame, true)
-        updateBrowserList(frame, frame.api)
+        if browserVisible(frame) then
+            if frame.charactersDirty then refreshCharacterBrowser(frame)
+            else updateBrowserList(frame, frame.api) end
+        end
     else
         setBrowserContentVisible(frame, false)
     end
@@ -1528,7 +1592,11 @@ updateBrowserList = function(frame, api)
 
     local selectedStillVisible = false
     for _, entry in ipairs(frame.filteredEntries) do
-        if frame.selectedEntry and entry.key == frame.selectedEntry.key then selectedStillVisible = true; break end
+        if frame.selectedEntry and entry.key == frame.selectedEntry.key then
+            frame.selectedEntry = entry
+            selectedStillVisible = true
+            break
+        end
     end
     if not selectedStillVisible then frame.selectedEntry = frame.filteredEntries[1] end
 
@@ -1630,7 +1698,6 @@ updateBrowserList = function(frame, api)
     else frame.listEmpty:Hide() end
 
     updateSearchHint(frame)
-    GGM.RefreshVisibleProfessionLibrary(frame)
     renderBrowserDetail(frame, frame.selectedEntry, api)
     if frame.activeTab ~= "Character" then setBrowserContentVisible(frame, false) end
 end
@@ -1849,9 +1916,8 @@ function GGM.CreateGuildGearBrowserWindow(api)
                 pcall(professionFrame.Hide, professionFrame)
             end
         end
+        self.professionLibraryDirty = true
         self.professionLibraryMode = "Own"
-        self.selectedProfession = nil
-        self.selectedProfessionID = nil
         self.craftingContextSkillLineID = nil
         self.craftingContextOpenedByGuildBook = nil
     end)
@@ -1966,7 +2032,9 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.searchBox:SetScript("OnEditFocusLost", function(self)
         self.hasFocus = false; recolorBorder(frame.searchBoxBorder, THEME.border); updateSearchHint(frame)
     end)
-    frame.searchBox:SetScript("OnTextChanged", function() updateBrowserList(frame, api) end)
+    frame.searchBox:SetScript("OnTextChanged", function()
+        if browserVisible(frame) and frame.activeTab == "Character" then updateBrowserList(frame, api) end
+    end)
 
     frame.listPanel = createSurface(api, frame, THEME.panel, THEME.borderSoft, true)
     frame.listPanel:SetSize(UI.characterLibraryWidth, UI.characterLibraryBottom - UI.contentTop - 148)
@@ -2151,51 +2219,40 @@ function GGM.CreateGuildGearBrowserWindow(api)
     return frame
 end
 
+refreshCharacterBrowser = function(frame)
+    if not browserVisible(frame) or frame.activeTab ~= "Character" or not frame.db then return false end
+    local scroll = frame.listScroll:GetVerticalScroll()
+    frame.entries = GGM.BuildGuildGearBrowserEntries(frame.db)
+    frame.charactersDirty = nil
+    updateBrowserList(frame, frame.api)
+    frame.listScroll:SetVerticalScroll(scroll)
+    return true
+end
+
 function GGM.ShowGuildGearBrowserWindow(api, db)
     if not GGM.guildGearBrowserFrame then GGM.guildGearBrowserFrame = GGM.CreateGuildGearBrowserWindow(api) end
     local frame = GGM.guildGearBrowserFrame
-    local query = frame.searchBox:GetText() or ""
-    local selectedKey = frame.selectedEntry and frame.selectedEntry.key or nil
-    frame.entries = GGM.BuildGuildGearBrowserEntries(db)
+    if frame.db ~= db then frame.professionDirty = true end
     frame.db = db
-    GGM.RefreshVisibleProfessionLibrary(frame)
-    local selectedProfession = frame.selectedProfession
-    if frame.professionLibraryMode == "Own" then
-        local selectionVisible = false
-        for _, entry in ipairs(frame.visibleProfessionEntries or {}) do
-            if entry.key == selectedProfession then selectionVisible = true; break end
-        end
-        if not selectionVisible and frame.visibleProfessionEntries[1] then
-            selectedProfession = frame.visibleProfessionEntries[1].key
-        end
-    end
-    GGM.SelectProfession(frame, selectedProfession or "Alchemy")
-    frame.searchBox:SetText(query)
-    frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.entries, query)
-    frame.selectedEntry = nil
-    for _, entry in ipairs(frame.filteredEntries) do if entry.key == selectedKey then frame.selectedEntry = entry; break end end
-    if not frame.selectedEntry then frame.selectedEntry = frame.filteredEntries[1] end
-    updateBrowserList(frame, api)
-    GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Professions")
+    -- Reopening reads current gear even if no companion notification was available.
+    frame.charactersDirty = true
     frame:Show()
+    GGM.SelectGuildGearBrowserTab(frame, frame.activeTab or "Professions")
     if frame.SetFrameStrata then frame:SetFrameStrata("DIALOG") end
     if frame.Raise then frame:Raise() end
-    if frame.activeTab == "Bank" and type(GGM.RefreshVisibleBankView) == "function" then
-        GGM.RefreshVisibleBankView()
-    end
     return frame.detailModel
 end
 
 function GGM.RefreshVisibleGuildGearBrowser()
     local frame = GGM.guildGearBrowserFrame
-    if not frame or type(frame.IsShown) ~= "function" or not frame:IsShown() then
-        return false
+    if not frame then return false end
+    frame.charactersDirty = true
+    if type(GGM.db) == "table" then
+        if frame.db ~= GGM.db then frame.professionDirty = true end
+        frame.db = GGM.db
     end
-    if type(GGM.ShowGuildGearBrowserWindow) ~= "function" or type(GGM.db) ~= "table" then
-        return false
-    end
-    GGM.ShowGuildGearBrowserWindow(frame.api, GGM.db)
-    return true
+    if frame.activeTab ~= "Character" then return false end
+    return queueBrowserRefresh(frame)
 end
 
 local function parseRequestedIdentity(message)

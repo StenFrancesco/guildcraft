@@ -704,12 +704,18 @@ T.test("Own is the first default filter and both filters retain their meaning af
     T.assertFalse(toggle.allRadio:GetChecked())
     T.assertEqual(#frame.visibleProfessionEntries, 2)
     toggle.allRadio.scripts.OnClick(toggle.allRadio)
+    GGM.SelectProfession(frame, "Tailoring")
+    frame.professionSearchBox:SetText("cloth")
+    frame.professionRecipeScroll:SetVerticalScroll(18)
     frame:Hide()
     GGM.ShowGuildGearBrowserWindow(api, db)
     T.assertEqual(frame.professionLibraryMode, "Own")
     T.assertTrue(toggle.ownRadio:GetChecked())
     T.assertFalse(toggle.allRadio:GetChecked())
     T.assertEqual(#frame.visibleProfessionEntries, 2)
+    T.assertEqual(frame.selectedProfession, "Tailoring", "reopening keeps a still-owned selection")
+    T.assertEqual(frame.professionSearchBox:GetText(), "cloth")
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 18)
 end)
 
 T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
@@ -749,6 +755,7 @@ end)
 T.test("profession library scrolls all nine rows within its sidebar", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
     local scroll = frame.professionLibraryScroll
     local content = frame.professionLibraryContent
 
@@ -1281,6 +1288,7 @@ T.test("closing the guild book only closes a profession context it opened", func
     T.assertEqual(closeCalls, 0, "an independently opened profession context must remain open")
     T.assertEqual(hideCalls, 0, "the independently opened profession frame must remain visible")
 
+    frame:Show()
     frame.professionLibraryMode = "Own"
     GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(openedSkillLineID, frame.selectedProfessionID)
@@ -2088,6 +2096,7 @@ T.test("profession search filters cached recipes only, changing profession clear
     end
     local before = copy(db)
     local frame = showBrowser(GGM, api, db)
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
     local builderCalls = #calls
 
     frame.professionSearchBox:SetText("COPPER")
@@ -2100,14 +2109,14 @@ T.test("profession search filters cached recipes only, changing profession clear
     T.assertEqual(frame.professionSearchBox:GetText(), "")
     T.assertEqual(#frame.filteredProfessionRecipes, 2)
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
-    T.assertEqual(#calls, builderCalls + 2)
+    T.assertEqual(#calls, builderCalls + 1)
     T.assertEqual(frame.professionSearchBox:GetText(), "")
 
     frame.professionSearchBox:SetText("ring")
     builderCalls = #calls
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
-    T.assertEqual(#calls, builderCalls + 1)
+    T.assertEqual(#calls, builderCalls)
     T.assertEqual(frame.professionSearchBox:GetText(), "ring")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Silver Ring")
@@ -2132,6 +2141,7 @@ T.test("profession messages preserve unavailable and empty base states and disti
     end, calls)
     local frame = showBrowser(GGM, makeBrowserAPI(), { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
 
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
     T.assertEqual(frame.professionStatus.text, "Current guild membership could not be confirmed.")
     mode = "identities"; GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(frame.professionStatus.text, "Current guild member identities could not be confirmed.")
@@ -2168,12 +2178,12 @@ T.test("visible profession catalog refreshes locally after roster reconciliation
     end
     local frame = showBrowser(GGM, api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
-    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 2")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 1")
 
     -- A completed reconciliation refreshes the currently visible catalog from local saved data.
     GGM.professionRosterMembershipCurrent = true
     T.assertTrue(GGM.RefreshVisibleProfessionCatalog())
-    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 3")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 2")
 
     -- A failed reconciliation clears stale owners by rebuilding the fail-closed unavailable model.
     GGM.professionRosterMembershipCurrent = false
@@ -3177,4 +3187,192 @@ T.test("item-name refresh follows the selected character without replacing empty
     T.assertEqual(head.status.text, "Empty")
     T.assertEqual(head.label.height, 14)
     T.assertNil(head.itemLink)
+end)
+
+
+T.test("PR1 hidden profession events build nothing and opening consumes latest data once", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local calls, revision = {}, 1
+    installProfessionCatalogStub(G, function()
+        return professionCatalog("ready", { { recipeID = 1, name = "Revision " .. revision, knownBy = {} } })
+    end, calls)
+    local db = makeDB(G)
+    local frame = G.CreateGuildGearBrowserWindow(api)
+    G.guildGearBrowserFrame, frame.db = frame, db
+    for i = 1, 5 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
+    T.assertEqual(#calls, 0, "an initialized hidden browser must build no catalog")
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(#calls, 1, "opening must build one catalog")
+    frame.professionSearchBox:SetText("Revision")
+    frame.professionRecipeScroll:SetVerticalScroll(30)
+    frame:Hide()
+    local before = #calls
+    revision = 2
+    for i = 1, 5 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
+    T.assertEqual(#calls, before, "hidden events must build zero catalogs")
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(#calls, before + 1, "reopening dirty data must build once")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Revision 2")
+    T.assertEqual(frame.professionSearchBox:GetText(), "Revision")
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 30)
+    frame:Hide()
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(#calls, before + 1, "clean reopening must reuse the catalog")
+end)
+
+T.test("PR1 inactive profession events wait until tab entry and gear never rebuilds other pages", function()
+    local G, api, calls = loadUI(), makeBrowserAPI(), {}
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    local db = makeDB(G, { makeRecord(G) })
+    G.db = db
+    local frame = showBrowser(G, api, db)
+    T.assertEqual(#calls, 0, "opening Characters must not build professions")
+    local banks = 0
+    G.RefreshVisibleBankView = function() banks = banks + 1 end
+    for _, tab in ipairs({ "Character", "Bank", "Professions" }) do
+        G.SelectGuildGearBrowserTab(frame, tab)
+        local before, beforeBanks = #calls, banks
+        for i = 1, 3 do G.RefreshVisibleGuildGearBrowser() end
+        T.assertEqual(#calls, before, "gear must not build professions on " .. tab)
+        T.assertEqual(banks, beforeBanks, "gear must not refresh Bank on " .. tab)
+    end
+    G.SelectGuildGearBrowserTab(frame, "Bank")
+    local before = #calls
+    for i = 1, 3 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
+    T.assertEqual(#calls, before)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 1)
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 1, "clean tab entry reuses saved rendering")
+end)
+
+T.test("PR1 visible invalidations coalesce and callbacks retain hidden dirty data", function()
+    local G, api, calls, timers = loadUI(), makeBrowserAPI(), {}, {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    local frame, before = G.guildGearBrowserFrame, #calls
+    for i = 1, 5 do G.RefreshVisibleProfessionCatalog() end
+    T.assertEqual(#calls, before)
+    T.assertEqual(#timers, 1, "one callback for an event burst")
+    timers[1]()
+    T.assertEqual(#calls, before + 1)
+    G.RefreshVisibleProfessionCatalog()
+    frame:Hide()
+    timers[2]()
+    T.assertEqual(#calls, before + 1, "queued callback must check actual visibility")
+    G.ShowGuildGearBrowserWindow(api, frame.db)
+    T.assertEqual(#calls, before + 2)
+    G.RefreshVisibleProfessionCatalog()
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 3)
+    timers[3]()
+    T.assertEqual(#calls, before + 3, "tab entry consumes queued work")
+end)
+
+T.test("PR1 gear refresh rebinds saved selection and coalesces without losing browsing state", function()
+    local G, api, timers = loadUI(), makeBrowserAPI(), {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    G.RequestCompleteSnapshot = function() error("browsing must not request gear") end
+    local db = makeDB(G, { makeRecord(G) })
+    G.db = db
+    local frame = showBrowser(G, api, db)
+    frame.searchBox:SetText("Alice")
+    frame.listScroll:SetVerticalScroll(24)
+    local replacement = makeDB(G, { makeRecord(G) }).characters["Alice-Silvermoon"]
+    replacement.gear.capturedAt = 1700000900
+    db.characters["Alice-Silvermoon"] = replacement
+    for i = 1, 4 do G.RefreshVisibleGuildGearBrowser() end
+    T.assertEqual(#timers, 1)
+    timers[1]()
+    T.assertTrue(frame.selectedEntry.record == replacement)
+    T.assertEqual(frame.capturedLine.text, "saved-1700000900")
+    T.assertEqual(frame.searchBox:GetText(), "Alice")
+    T.assertEqual(frame.listScroll:GetVerticalScroll(), 24)
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
+end)
+
+
+T.test("PR1 shown but invisible professions and hidden selections retain dirty state", function()
+    local G, api, calls = loadUI(), makeBrowserAPI(), {}
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    local frame, before = G.guildGearBrowserFrame, #calls
+    frame.professionLibraryMode = "All"
+    frame.IsVisible = function() return false end
+    T.assertTrue(frame:IsShown())
+    T.assertFalse(G.RefreshVisibleProfessionCatalog())
+    G.SelectProfession(frame, "Blacksmithing")
+    T.assertEqual(#calls, before)
+    frame.IsVisible = function() return true end
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 1)
+    T.assertEqual(calls[#calls].professionID, 164)
+end)
+
+T.test("PR1 paired catalog and library invalidations share one catalog build", function()
+    local G, api, calls, timers = loadUI(), makeBrowserAPI(), {}, {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    local before = #calls
+    G.RefreshVisibleProfessionCatalog()
+    G.RefreshVisibleProfessionLibrary()
+    T.assertEqual(#timers, 1)
+    timers[1]()
+    T.assertEqual(#calls, before + 1)
+end)
+
+
+T.test("PR1 hidden gear changes flush latest Characters once and Bank opens once", function()
+    local G, api, timers = loadUI(), makeBrowserAPI(), {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    local db = makeDB(G, { makeRecord(G) })
+    G.db = db
+    local frame = showBrowser(G, api, db)
+    local builds, original = 0, G.BuildGuildGearBrowserEntries
+    G.BuildGuildGearBrowserEntries = function(...)
+        builds = builds + 1
+        return original(...)
+    end
+    frame:Hide()
+    db.characters["Alice-Silvermoon"].gear.capturedAt = 1700000999
+    for i = 1, 3 do T.assertFalse(G.RefreshVisibleGuildGearBrowser()) end
+    T.assertEqual(builds, 0)
+    T.assertEqual(#timers, 0)
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(builds, 1)
+    T.assertEqual(frame.capturedLine.text, "saved-1700000999")
+    local banks = 0
+    G.RefreshVisibleBankView = function() banks = banks + 1 end
+    G.SelectGuildGearBrowserTab(frame, "Bank")
+    frame:Hide()
+    banks = 0
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(banks, 1)
+end)
+
+
+T.test("PR1 hidden and inactive profession sidebar resizing defers widget work", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local frame = G.CreateGuildGearBrowserWindow(api)
+    G.guildGearBrowserFrame = frame
+    local layouts = 0
+    local original = frame.professionLibraryContent.SetSize
+    frame.professionLibraryContent.SetSize = function(self, ...)
+        layouts = layouts + 1
+        return original(self, ...)
+    end
+    frame.professionLibraryScroll.scripts.OnSizeChanged()
+    T.assertEqual(layouts, 0)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    T.assertTrue(layouts > 0)
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    local before = layouts
+    frame.professionLibraryScroll.scripts.OnSizeChanged()
+    T.assertEqual(layouts, before)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(layouts, before + 1)
 end)

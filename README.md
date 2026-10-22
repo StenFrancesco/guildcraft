@@ -31,6 +31,14 @@ Enable the three addons in the game's AddOns list, then open the browser with `/
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
 within the same session preserves the last selected tab.
+
+Profession changes received while the browser is closed or another page is open
+are saved immediately and drawn once when Professions becomes visible. Repeated
+visible updates share one queued refresh. Gear changes refresh only the visible
+Characters list and selected equipment; they do not rebuild Professions or Bank.
+Refreshes retain searches, valid selections and scroll positions. Opening or
+selecting a character continues to show saved gear without requesting an update.
+
 The profession filters are ordered Own, then All. Own is selected by default,
 including when reopening the browser, and lists the current character's captured
 professions. All shows the full profession list. When Own has captured entries,
