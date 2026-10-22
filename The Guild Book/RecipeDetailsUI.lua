@@ -734,7 +734,7 @@ local function createWhisperControls(details)
         if not shown(details) then return end
         if event == "PLAYER_REGEN_ENABLED" or event == "TRADE_SKILL_LIST_UPDATE"
             or event == "GET_ITEM_INFO_RECEIVED" then
-            renderMaterials(details, GGM.BuildRecipeMaterialDetails(api, details.recipeID))
+            renderMaterials(details, GGM.BuildRecipeMaterialDetails(api, details.recipeID), true)
         end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil

@@ -1043,6 +1043,26 @@ T.test("recipe details show personal bank notes below individual materials witho
     T.assertEqual(details.materialRows[2].height, 32)
 end)
 
+T.test("recipe material refresh events preserve the current scroll position", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    local materials = {}
+    for index = 1, 20 do
+        materials[index] = { quantity = 1, choices = {
+            { itemID = index, name = "Material " .. index },
+        } }
+    end
+    G.BuildRecipeMaterialDetails = function()
+        return { state = "ready", materials = materials }
+    end
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    for _, event in ipairs({ "GET_ITEM_INFO_RECEIVED", "TRADE_SKILL_LIST_UPDATE" }) do
+        details.materialScroll:SetVerticalScroll(87)
+        details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, event)
+        T.assertEqual(details.materialScroll.verticalScroll, 87,
+            event .. " should retain the material list scroll position")
+    end
+end)
+
 T.test("single recipe material bank note clears when rows are reused for currency or missing data", function()
     local G, api, browser, recipes = recipeDetailsFixture()
     api.issecretvalue = function() return false end
