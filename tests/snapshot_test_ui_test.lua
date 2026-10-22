@@ -650,7 +650,7 @@ T.test("browser opens Professions first, orders navigation, and remembers the se
     T.assertTrue(frame.professionsPage:IsShown())
     T.assertTrue(frame.navigationTabs[1].accent:IsShown())
     T.assertFalse(frame.navigationTabs[2].accent:IsShown())
-    T.assertEqual(syncCalls, 1, "opening the default page uses the existing bounded selection sync")
+    T.assertEqual(syncCalls, 0, "empty Own must not synchronize an unowned default profession")
 
     for index = 2, 3 do
         local tab = frame.navigationTabs[index]
@@ -1004,11 +1004,37 @@ T.test("changing profession library mode closes open recipe details", function()
     T.assertEqual(browser.professionLibraryMode, "Own")
     T.assertFalse(details:IsShown())
 
+    browser.professionLibraryToggle.allRadio.scripts.OnClick(browser.professionLibraryToggle.allRadio)
     details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
     T.assertTrue(details:IsShown())
+    browser.professionLibraryToggle.ownRadio.scripts.OnClick(browser.professionLibraryToggle.ownRadio)
+    T.assertFalse(details:IsShown())
     browser.professionLibraryToggle.allRadio.scripts.OnClick(browser.professionLibraryToggle.allRadio)
     T.assertEqual(browser.professionLibraryMode, "All")
     T.assertFalse(details:IsShown())
+end)
+
+T.test("recipe list labels have explicit bounds inside their scroll rows", function()
+    local _, _, browser, recipes = recipeDetailsFixture()
+    for index, recipe in ipairs(recipes) do
+        local row = browser.professionRecipeRows[index]
+        T.assertEqual(row.name:GetText(), recipe.name)
+        local top = row.name.points.TOPLEFT
+        local bottom = row.name.points.BOTTOMRIGHT
+        T.assertNotNil(top, "recipe label needs a top bound inside its scroll row")
+        T.assertNotNil(bottom, "recipe label needs a bottom bound inside its scroll row")
+        T.assertEqual(top.relativeTo, row)
+        T.assertEqual(top.relativePoint, "TOPLEFT")
+        T.assertEqual(bottom.relativeTo, row)
+        T.assertEqual(bottom.relativePoint, "BOTTOMRIGHT")
+        T.assertTrue(top.x > 38, "recipe text must clear the icon")
+        T.assertTrue(bottom.x < 0, "recipe text must stay inside the right edge")
+        local height = row:GetHeight() + top.y - bottom.y
+        T.assertTrue(height >= row.name.font.size, "recipe label must have room for its font")
+        T.assertTrue(height <= row:GetHeight(), "recipe label must stay inside the row")
+    end
+    browser.professionSearchBox:SetText("silver")
+    T.assertEqual(browser.professionRecipeRows[1].name:GetText(), "Silver Ring")
 end)
 
 local function configureCrafterWhisperAPI(GGM, api, rows)
@@ -1972,6 +1998,64 @@ T.test("profession library Own mode shows an empty state for a character without
     T.assertTrue(frame.professionLibraryEmpty.text:find("No captured professions", 1, true) ~= nil)
 end)
 
+T.test("empty Own clears an All recipe selection and stays empty across refresh and reopen", function()
+    local GGM, api, frame, recipes = recipeDetailsFixture()
+    frame.db.professions = {}
+    GGM.ShowRecipeDetailsWindow(frame, recipes[1])
+    frame.professionLibraryToggle.ownRadio.scripts.OnClick(frame.professionLibraryToggle.ownRadio)
+    local function assertEmpty()
+        T.assertNil(frame.selectedProfession)
+        T.assertNil(frame.selectedProfessionID)
+        T.assertFalse(frame.professionDetailPanel:IsShown())
+        T.assertEqual(#frame.filteredProfessionRecipes, 0)
+        for _, row in ipairs(frame.professionRecipeRows) do T.assertFalse(row:IsShown()) end
+        T.assertFalse(frame.recipeDetailsFrame:IsShown())
+    end
+    assertEmpty()
+    GGM.RefreshVisibleProfessionCatalog()
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    assertEmpty()
+    frame:Hide()
+    GGM.ShowGuildGearBrowserWindow(api, frame.db)
+    assertEmpty()
+    frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
+    T.assertEqual(frame.selectedProfession, "Alchemy")
+    T.assertTrue(frame.professionDetailPanel:IsShown())
+    T.assertEqual(frame.professionRecipeRows[1].name:GetText(), recipes[1].name)
+end)
+
+T.test("opening empty Own never builds or syncs the default Alchemy catalog", function()
+    local GGM, api = loadUI(), makeBrowserAPI()
+    local calls = {}
+    installProfessionCatalogStub(GGM, function()
+        error("empty Own must not read an unowned recipe catalog")
+    end, calls)
+    GGM.professionSync = {}
+    GGM.RequestProfessionSync = function() error("empty Own must not sync an unowned profession") end
+    GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM))
+    local frame = GGM.guildGearBrowserFrame
+    T.assertEqual(frame.professionLibraryMode, "Own")
+    T.assertNil(frame.selectedProfession)
+    T.assertFalse(frame.professionDetailPanel:IsShown())
+    T.assertTrue(frame.professionLibraryEmpty:IsShown())
+    T.assertEqual(#calls, 0)
+end)
+
+T.test("switching to Own replaces an unowned selection with a listed profession", function()
+    local GGM, _, frame = recipeDetailsFixture()
+    local engineering = frame.professionButtons[5]
+    GGM.FilterProfessionLibraryEntries = function() return { engineering } end
+    frame.professionLibraryToggle.ownRadio.scripts.OnClick(frame.professionLibraryToggle.ownRadio)
+    T.assertEqual(frame.selectedProfession, "Engineering")
+    T.assertEqual(frame.selectedProfessionID, 202)
+    T.assertTrue(frame.professionDetailPanel:IsShown())
+    GGM.FilterProfessionLibraryEntries = function() return {} end
+    GGM.RefreshVisibleProfessionLibrary(frame)
+    T.assertNil(frame.selectedProfession)
+    T.assertFalse(frame.professionDetailPanel:IsShown())
+end)
+
 T.test("profession selection changes the full page artwork for each supported profession", function()
     local GGM = loadUI()
     local frame = GGM.CreateGuildGearBrowserWindow(makeBrowserAPI())
@@ -2028,6 +2112,7 @@ T.test("profession page defers catalog construction until database assignment an
     T.assertEqual(#calls, 0)
     T.assertEqual(frame.selectedProfession, "Alchemy")
     T.assertNil(frame.db)
+    frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
     GGM.ShowGuildGearBrowserWindow(api, db)
     local initialBuilds = #calls
     T.assertTrue(initialBuilds > 0)

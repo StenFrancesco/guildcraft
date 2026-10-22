@@ -35,6 +35,9 @@ The profession filters are ordered Own, then All. Own is selected by default,
 including when reopening the browser, and lists the current character's captured
 professions. All shows the full profession list. When Own has captured entries,
 the browser selects a listed profession instead of an unowned default.
+When Own has no captured professions, the recipe panel is hidden and no
+profession is selected. Switching from All to Own selects a listed profession
+or clears the previous selection when the list is empty.
 
 The Characters page shows the selected character's Classic class icon in the
 portrait frame. It uses built-in game artwork and saves an optional `classToken`
