@@ -44,6 +44,11 @@ offline display. Older records can also gain it from cached character or guild
 roster information when selected. If the class cannot be determined, the frame
 shows a question mark. Race and gender labels remain below the icon.
 
+The equipment snapshot uses a compact Classic character-sheet layout with 44px
+slots, larger built-in UI text, outward-facing item names and weapons grouped
+below the portrait. The journal is slightly taller to fit the larger slots;
+its width is unchanged. It reuses native slot artwork and the existing journal art.
+
 The Characters footer keeps the equipment helper text on the left and the
 Last Captured label with its date/time on the right, with separate space for each.
 
