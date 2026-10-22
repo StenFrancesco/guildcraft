@@ -1044,6 +1044,42 @@ T.test("recipe track button uses Amount and tracker survives closing the browser
     T.assertNil(GGM.LoadMaterialTracking(api, browser.db))
 end)
 
+T.test("recipe tracking toggles off on a second click even when Amount or material data is unavailable", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    T.assertTrue(tracker:IsShown())
+    details.amountInput:SetText("0")
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    GGM.BuildRecipeMaterialDetails = function() error("untracking must not read the recipe schematic") end
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertFalse(tracker:IsShown())
+    T.assertNil(tracker.snapshot)
+    T.assertNil(GGM.LoadMaterialTracking(api, browser.db))
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertFalse(tracker:IsShown())
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertNil(fresh.materialTrackerFrame)
+end)
+
+T.test("recipe tracking can be enabled again after toggling off", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertFalse(GGM.materialTrackerFrame:IsShown())
+    details.amountInput:SetText("2")
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertTrue(GGM.materialTrackerFrame:IsShown())
+    T.assertEqual(GGM.LoadMaterialTracking(api, browser.db).amount, 2)
+end)
+
 T.test("tracker restores without browser and saves its position independently for each character", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     api.issecretvalue = function() return false end

@@ -54,7 +54,9 @@ If The Guild Book gear has an unsupported database, gear capture and synchroniza
 Open a recipe in the Professions browser, set **Amount** to the number of crafts
 (1–999), and click **Track materials**. A movable material tracker stays on screen
 when the recipe window and `/ggm` browser are closed. Drag its background to move
-it; long material lists can be scrolled. Click **Untrack** to remove it.
+it; long material lists can be scrolled. Click **Track materials** again for the
+same recipe, or click **Untrack** on the tracker, to remove it. Removing tracking
+also clears the saved target, so it stays closed after a reload or login.
 
 Each row shows the current character's available materials against the amount
 required, for example `Linen Cloth: 1 / 5`. Completed rows turn green. Counts update
@@ -68,10 +70,13 @@ a count, and inventory is allocated across material groups without counting the
 same items twice. Optional reagents are excluded. The craft quantity is a fixed
 shopping target; crafting does not automatically reduce it.
 
-One recipe is tracked per character. Clicking **Track materials** replaces the
-previous target using the current Amount. The recipe, quantity and tracker position
+One recipe is tracked per character. Clicking **Track materials** for a different
+recipe replaces the previous target using the current Amount. To change the amount
+for the tracked recipe, toggle it off, set Amount, then track it again.
+The recipe, quantity and tracker position
 are remembered across reloads and logins. Tracking requires readable recipe material
-data; the button is disabled when those details or a valid quantity are unavailable.
+data; starting tracking is disabled when those details or a valid quantity are
+unavailable. An already tracked recipe can still be toggled off.
 Tracking does not craft, buy items or send messages, and does not require either
 companion addon. Its per-character settings are stored locally in an additive
 `materialTracking` field of `TheGuildBookDB`; sharing protocols are unchanged.

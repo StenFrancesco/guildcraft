@@ -597,6 +597,11 @@ end
 
 updateTrackingControls = function(details)
     if not details.trackMaterialsButton then return end
+    local tracked = GGM.LoadMaterialTracking(details.api, details.browser.db)
+    if tracked and tracked.recipeID == details.recipeID then
+        details.trackMaterialsButton:SetEnabled(true)
+        return
+    end
     local amount = parseAmount(details.api, details.amountInput:GetText())
     local snapshot = GGM.CreateMaterialTrackingSnapshot(details.api, details.recipeID,
         details.currentRecipeName, amount, details.materialModel)
@@ -805,6 +810,12 @@ local function createWindow(browser, recipe)
     details.trackMaterialsButton = createUIPanelButton(api, details, "Track materials", 144, 26)
     details.trackMaterialsButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -46, -172)
     details.trackMaterialsButton:SetScript("OnClick", function()
+        local tracked = GGM.LoadMaterialTracking(api, browser.db)
+        if tracked and tracked.recipeID == details.recipeID then
+            GGM.UntrackRecipeMaterials(api, browser.db)
+            updateTrackingControls(details)
+            return
+        end
         local amount = parseAmount(api, details.amountInput:GetText())
         -- Read again at the user's click rather than trusting a stale schematic.
         local model = GGM.BuildRecipeMaterialDetails(api, details.recipeID)

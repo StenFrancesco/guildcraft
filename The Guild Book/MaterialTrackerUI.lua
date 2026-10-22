@@ -1,5 +1,15 @@
 local _, GGM = ...
 
+function GGM.UntrackRecipeMaterials(api, db)
+    if not GGM.SaveMaterialTracking(api, db, nil) then return false end
+    local frame = GGM.materialTrackerFrame
+    if frame then
+        frame.snapshot = nil
+        frame:Hide()
+    end
+    return true
+end
+
 local function text(parent, template, width)
     local label = parent:CreateFontString(nil, "OVERLAY", template)
     label:SetWidth(width)
@@ -72,10 +82,7 @@ local function createFrame(api)
     frame.untrackButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -9)
     frame.untrackButton:SetText("Untrack")
     frame.untrackButton:SetScript("OnClick", function()
-        if GGM.SaveMaterialTracking(api, frame.db, nil) then
-            frame.snapshot = nil
-            frame:Hide()
-        end
+        GGM.UntrackRecipeMaterials(api, frame.db)
     end)
     frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
     frame:SetScript("OnDragStop", function(self)
