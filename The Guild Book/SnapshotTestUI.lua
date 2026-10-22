@@ -1861,7 +1861,11 @@ function GGM.CreateGuildGearBrowserWindow(api)
     if frame.SetMovable then frame:SetMovable(true) end
     if frame.EnableMouse then frame:EnableMouse(true) end
     if frame.RegisterForDrag then frame:RegisterForDrag("LeftButton") end
-    frame:SetScript("OnDragStart", function(self) if self.StartMoving then self:StartMoving() end end)
+    frame:SetScript("OnDragStart", function(self)
+        local settings = GGM.ReadBrowserWindowSettings and GGM.ReadBrowserWindowSettings(self.db)
+        if settings and settings.locked then return end
+        if self.StartMoving then self:StartMoving() end
+    end)
     frame:SetScript("OnDragStop", function(self) if self.StopMovingOrSizing then self:StopMovingOrSizing() end end)
 
     frame.background = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
@@ -2158,6 +2162,7 @@ function GGM.ShowGuildGearBrowserWindow(api, db)
     local selectedKey = frame.selectedEntry and frame.selectedEntry.key or nil
     frame.entries = GGM.BuildGuildGearBrowserEntries(db)
     frame.db = db
+    if GGM.ApplyBrowserWindowSettings then GGM.ApplyBrowserWindowSettings(frame, db) end
     GGM.RefreshVisibleProfessionLibrary(frame)
     local selectedProfession = frame.selectedProfession
     if frame.professionLibraryMode == "Own" then

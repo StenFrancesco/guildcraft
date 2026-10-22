@@ -24,6 +24,13 @@ local function fixture(db)
         end
         function r:IsShown() return self.shown end
         function r:SetText(text) self.text = text end
+        function r:SetOrientation(value) self.orientation = value end
+        function r:SetMinMaxValues(low, high) self.low, self.high = low, high end
+        function r:SetValueStep(value) self.step = value end
+        function r:SetValue(value)
+            self.value = value
+            if self.scripts.OnValueChanged then self.scripts.OnValueChanged(self, value) end
+        end
         function r:SetChecked(value) self.checked = value end
         function r:GetChecked() return self.checked end
         function r:CreateTexture() return region() end
@@ -49,6 +56,7 @@ local function fixture(db)
         T.assertEqual(passedDB, db)
         opens = opens + 1
     end
+    T.loadAddonFile("The Guild Book/WindowSettings.lua", GGM)
     T.loadAddonFile("The Guild Book/MinimapLauncher.lua", GGM)
     return GGM, api, frames, function() return opens end
 end
@@ -203,4 +211,43 @@ T.test("saved angles normalize and scaled drag reaches every quadrant", function
         T.assertEqual(db.uiSettings.minimap.angle, sample[3])
         icon.scripts.OnDragStop(icon)
     end
+end)
+
+T.test("window options save changes immediately and reset only appearance", function()
+    local db = { uiSettings = { window = {locked=true,autoAlignRecipe=false},
+        minimap = {hide=true,angle=90} } }
+    local G, api = fixture(db)
+    local applied = 0
+    G.guildGearBrowserFrame = {}
+    G.ApplyBrowserWindowSettings = function(_, passedDB)
+        T.assertEqual(passedDB, db)
+        applied = applied + 1
+    end
+    local options = G.ShowGuildBookOptions(api, db)
+    T.assertNotNil(options.windowScale)
+    T.assertEqual(options.windowScale.value, 100)
+    T.assertEqual(options.windowOpacity.value, 100)
+    T.assertEqual(applied, 0, "opening settings must not rewrite appearance")
+    options.windowScale:SetValue(85)
+    options.windowOpacity:SetValue(65)
+    T.assertEqual(db.uiSettings.window.scale, 0.85)
+    T.assertEqual(db.uiSettings.window.opacity, 0.65)
+    T.assertEqual(applied, 2)
+    options.lockWindow:SetChecked(false)
+    options.lockWindow.scripts.OnClick(options.lockWindow)
+    T.assertFalse(db.uiSettings.window.locked)
+    options.alignRecipe:SetChecked(true)
+    options.alignRecipe.scripts.OnClick(options.alignRecipe)
+    T.assertTrue(db.uiSettings.window.autoAlignRecipe)
+    options.resetAppearance.scripts.OnClick()
+    T.assertEqual(db.uiSettings.window.scale, 1)
+    T.assertEqual(db.uiSettings.window.opacity, 1)
+    T.assertFalse(db.uiSettings.window.locked)
+    T.assertTrue(db.uiSettings.window.autoAlignRecipe)
+    T.assertTrue(db.uiSettings.minimap.hide)
+    T.assertEqual(db.uiSettings.minimap.angle, 90)
+    local fresh, freshAPI = fixture(db)
+    local restored = fresh.ShowGuildBookOptions(freshAPI, db)
+    T.assertFalse(restored.lockWindow:GetChecked())
+    T.assertTrue(restored.alignRecipe:GetChecked())
 end)

@@ -36,6 +36,21 @@ position are saved across reloads for the account. Reset restores the lower-left
 position without changing visibility or locking. Use `/ggm options` to reopen
 settings when the icon is hidden. Escape closes the menu and settings window.
 
+The options window also offers **Window size** (75-125%) and **Opacity**
+(60-100%). These apply immediately to the main browser and recipe details and
+are saved across reloads. Both default to 100%; actual window size is capped to
+fit the screen. **Lock window position** prevents dragging the main window.
+**Center window** restores its center position, and **Reset appearance** restores
+only size and opacity without changing the other settings.
+
+**Auto-align recipe details** is enabled by default. Each time you open a recipe,
+its details line up with the top of the main browser, with a small gap on the
+right. If there is no room, they open on the left or stay within the screen.
+Both windows remain independently draggable after opening; background data
+refreshes do not reposition recipe details. Disable this option to retain the
+details window's last position within the session. Appearance and alignment
+preferences are account-wide; dragged window positions remain session-only.
+
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
 within the same session preserves the last selected tab.

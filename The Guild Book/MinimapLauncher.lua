@@ -72,7 +72,7 @@ function GGM.ShowGuildBookOptions(api, db)
     if not settings or type(api.CreateFrame) ~= "function" then return nil end
     local frame = GGM.guildBookOptionsFrame
     if not frame then
-        frame = panel(api, "TheGuildBookOptionsFrame", 310, 220)
+        frame = panel(api, "TheGuildBookOptionsFrame", 340, 520)
         GGM.guildBookOptionsFrame = frame
         frame:SetPoint("CENTER", api.UIParent, "CENTER", 0, 0)
         frame:SetMovable(true)
@@ -110,10 +110,12 @@ function GGM.ShowGuildBookOptions(api, db)
             frame.settings.angle = DEFAULT_ANGLE
             refreshLauncher()
         end)
-        local hint = label(frame, "/ggm options opens this window.", 20, -175)
+        GGM.CreateWindowOptionsControls(api, frame)
+        local hint = label(frame, "/ggm options opens this window.", 20, -490)
         hint:SetFontObject("GameFontHighlightSmall")
     end
     frame.settings = settings
+    GGM.RefreshWindowOptionsControls(frame, db)
     frame.showIcon:SetChecked(not settings.hide)
     frame.lockIcon:SetChecked(settings.locked)
     frame:Show()
