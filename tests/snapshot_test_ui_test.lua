@@ -3229,3 +3229,18 @@ T.test("recipe opens align independently and background refresh preserves dragge
     G.ShowRecipeDetailsWindow(browser, recipes[1])
     T.assertEqual(details.point.point, "CENTER")
 end)
+T.test("recipe opening and main reopening preserve separately saved sizes", function()
+    local G, api, browser, recipes, _, db = recipeDetailsFixture()
+    db.uiSettings = {window={scale=0.8,recipeScale=1.2}}
+    G.ShowGuildGearBrowserWindow(api, db)
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(browser.scale, 0.8)
+    T.assertEqual(details.scale, 1.2)
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(browser.scale, 0.8)
+    T.assertEqual(details.scale, 1.2)
+    db.uiSettings.window.recipeScale = 0.9
+    G.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(browser.scale, 0.8)
+    T.assertEqual(details.scale, 0.9)
+end)

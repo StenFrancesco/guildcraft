@@ -13,8 +13,10 @@ function GGM.ReadBrowserWindowSettings(db)
     local ui = type(db) == "table" and db.uiSettings
     local saved = type(ui) == "table" and ui.window
     if type(saved) ~= "table" then saved = {} end
+    local scale = bounded(saved.scale, 0.75, 1.25, 1)
     return {
-        scale = bounded(saved.scale, 0.75, 1.25, 1),
+        scale = scale,
+        recipeScale = bounded(saved.recipeScale, 0.75, 1.25, scale),
         opacity = bounded(saved.opacity, 0.6, 1, 1),
         locked = saved.locked == true,
         autoAlignRecipe = saved.autoAlignRecipe ~= false,
@@ -30,24 +32,27 @@ function GGM.GetBrowserWindowSettings(db)
     return db.uiSettings.window
 end
 
+local function fittedScale(frame, root, requested)
+    if root and root.GetWidth and root.GetHeight and frame.GetWidth and frame.GetHeight then
+        local width, height = frame:GetWidth(), frame:GetHeight()
+        local sw, sh = root:GetWidth(), root:GetHeight()
+        if width > 0 and height > 0 and sw > 24 and sh > 24 then
+            return math.max(0.01, math.min(requested, (sw - 24) / width, (sh - 24) / height))
+        end
+    end
+    return requested
+end
+
 function GGM.ApplyBrowserWindowSettings(browser, db)
     local saved = GGM.ReadBrowserWindowSettings(db)
     if not browser or not saved then return end
-    local scale = saved.scale
     local root = browser.api.UIParent
-    if root and root.GetWidth and root.GetHeight and browser.GetWidth and browser.GetHeight then
-        local width, height = browser:GetWidth(), browser:GetHeight()
-        local sw, sh = root:GetWidth(), root:GetHeight()
-        if width > 0 and height > 0 and sw > 24 and sh > 24 then
-            scale = math.max(0.01, math.min(scale, (sw - 24) / width, (sh - 24) / height))
-        end
-    end
-    if browser.SetScale then browser:SetScale(scale) end
+    if browser.SetScale then browser:SetScale(fittedScale(browser, root, saved.scale)) end
     if browser.SetAlpha then browser:SetAlpha(saved.opacity) end
     if saved.locked and browser.StopMovingOrSizing then browser:StopMovingOrSizing() end
     local details = browser.recipeDetailsFrame
     if details then
-        if details.SetScale then details:SetScale(scale) end
+        if details.SetScale then details:SetScale(fittedScale(details, root, saved.recipeScale)) end
         if details.SetAlpha then details:SetAlpha(saved.opacity) end
     end
 end
@@ -99,10 +104,12 @@ function GGM.RefreshWindowOptionsControls(frame, db)
     frame.windowSettings = saved
     frame.updatingWindowControls = true
     frame.windowScale:SetValue(saved.scale * 100)
+    frame.recipeScale:SetValue(saved.recipeScale * 100)
     frame.windowOpacity:SetValue(saved.opacity * 100)
     frame.lockWindow:SetChecked(saved.locked)
     frame.alignRecipe:SetChecked(saved.autoAlignRecipe)
-    frame.windowScale.caption:SetText("Window size: " .. math.floor(saved.scale * 100 + 0.5) .. "%")
+    frame.windowScale.caption:SetText("Main window size: " .. math.floor(saved.scale * 100 + 0.5) .. "%")
+    frame.recipeScale.caption:SetText("Recipe details size: " .. math.floor(saved.recipeScale * 100 + 0.5) .. "%")
     frame.windowOpacity.caption:SetText("Opacity: " .. math.floor(saved.opacity * 100 + 0.5) .. "%")
     frame.updatingWindowControls = nil
 end
@@ -133,8 +140,9 @@ function GGM.CreateWindowOptionsControls(api, frame)
         end)
         return control
     end
-    frame.windowScale = slider("TheGuildBookWindowScaleSlider", "Window size", -224, 75, 125, "scale")
-    frame.windowOpacity = slider("TheGuildBookWindowOpacitySlider", "Opacity", -285, 60, 100, "opacity")
+    frame.windowScale = slider("TheGuildBookWindowScaleSlider", "Main window size", -224, 75, 125, "scale")
+    frame.recipeScale = slider("TheGuildBookRecipeScaleSlider", "Recipe details size", -285, 75, 125, "recipeScale")
+    frame.windowOpacity = slider("TheGuildBookWindowOpacitySlider", "Opacity", -346, 60, 100, "opacity")
     local function checkbox(text, y, key)
         local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
         check:SetSize(26, 26)
@@ -148,8 +156,8 @@ function GGM.CreateWindowOptionsControls(api, frame)
         end)
         return check
     end
-    frame.lockWindow = checkbox("Lock window position", -321, "locked")
-    frame.alignRecipe = checkbox("Auto-align recipe details", -355, "autoAlignRecipe")
+    frame.lockWindow = checkbox("Lock window position", -382, "locked")
+    frame.alignRecipe = checkbox("Auto-align recipe details", -416, "autoAlignRecipe")
     local function button(text, y, action)
         local control = api.CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         control:SetSize(180, 24)
@@ -158,11 +166,11 @@ function GGM.CreateWindowOptionsControls(api, frame)
         control:SetScript("OnClick", action)
         return control
     end
-    frame.centerWindow = button("Center window", -399, function()
+    frame.centerWindow = button("Center window", -460, function()
         GGM.CenterGuildBookWindow(GGM.guildGearBrowserFrame)
     end)
-    frame.resetAppearance = button("Reset appearance", -434, function()
-        frame.windowSettings.scale, frame.windowSettings.opacity = 1, 1
+    frame.resetAppearance = button("Reset appearance", -495, function()
+        frame.windowSettings.scale, frame.windowSettings.recipeScale, frame.windowSettings.opacity = 1, 1, 1
         GGM.RefreshWindowOptionsControls(frame, frame.windowDB)
         apply()
     end)

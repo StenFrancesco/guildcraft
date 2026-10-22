@@ -36,12 +36,15 @@ position are saved across reloads for the account. Reset restores the lower-left
 position without changing visibility or locking. Use `/ggm options` to reopen
 settings when the icon is hidden. Escape closes the menu and settings window.
 
-The options window also offers **Window size** (75-125%) and **Opacity**
-(60-100%). These apply immediately to the main browser and recipe details and
-are saved across reloads. Both default to 100%; actual window size is capped to
-fit the screen. **Lock window position** prevents dragging the main window.
-**Center window** restores its center position, and **Reset appearance** restores
-only size and opacity without changing the other settings.
+The options window offers separate **Main window size** and **Recipe details
+size** sliders (75-125%), plus a shared **Opacity** slider (60-100%). Changes
+apply immediately and are saved across reloads. Both sizes default to 100%.
+Existing shared size preferences are used as the starting value for each;
+afterward the sizes are saved independently. Each window's actual size is
+capped separately to fit the screen. **Lock window position** prevents dragging
+the main window. **Center window** restores its center position, and **Reset
+appearance** restores both sizes and opacity to 100% without changing the
+other settings.
 
 **Auto-align recipe details** is enabled by default. Each time you open a recipe,
 its details line up with the top of the main browser, with a small gap on the

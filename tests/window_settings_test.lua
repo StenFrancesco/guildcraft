@@ -141,3 +141,78 @@ T.test("reading defaults for browsing or recipe alignment never creates saved pr
     T.assertNil(db.uiSettings)
     T.assertTrue(db.professions.kept)
 end)
+
+T.test("main and recipe sizes apply independently and preserve legacy shared preferences", function()
+    local G, b, db = fixture({scale=0.85, recipeScale=1.2, opacity=0.7})
+    G.ApplyBrowserWindowSettings(b, db)
+    T.assertEqual(b.scale, 0.85)
+    T.assertEqual(b.recipeDetailsFrame.scale, 1.2)
+    db.uiSettings.window.scale = 1.1
+    G.ApplyBrowserWindowSettings(b, db)
+    T.assertEqual(b.scale, 1.1)
+    T.assertEqual(b.recipeDetailsFrame.scale, 1.2)
+    db.uiSettings.window.recipeScale = 0.75
+    G.ApplyBrowserWindowSettings(b, db)
+    T.assertEqual(b.scale, 1.1)
+    T.assertEqual(b.recipeDetailsFrame.scale, 0.75)
+    db.uiSettings.window = {scale=0.9}
+    local saved = G.ReadBrowserWindowSettings(db)
+    T.assertEqual(saved.recipeScale, 0.9)
+    T.assertNil(db.uiSettings.window.recipeScale, "legacy fallback reads must remain read-only")
+    saved = G.GetBrowserWindowSettings(db)
+    T.assertEqual(saved.recipeScale, 0.9)
+    saved.scale = 1.2
+    T.assertEqual(G.ReadBrowserWindowSettings(db).recipeScale, 0.9)
+end)
+
+T.test("recipe size normalizes independently and each window fits the screen separately", function()
+    local G, b, db = fixture({scale=0.85, recipeScale=5}, 1000, 600)
+    T.assertEqual(G.ReadBrowserWindowSettings(db).recipeScale, 1.25)
+    db.uiSettings.window.recipeScale = 0/0
+    T.assertEqual(G.ReadBrowserWindowSettings(db).recipeScale, 0.85)
+    db.uiSettings.window.recipeScale = 0.75
+    G.ApplyBrowserWindowSettings(b, db)
+    T.assertTrue(b.scale < 0.75)
+    T.assertEqual(b.recipeDetailsFrame.scale, 0.75)
+    db.uiSettings.window.recipeScale = 1.25
+    G.ApplyBrowserWindowSettings(b, db)
+    local details = b.recipeDetailsFrame
+    T.assertTrue(details.width*details.scale <= 976)
+    T.assertTrue(details.height*details.scale <= 576)
+    T.assertTrue(details.scale > b.scale)
+    T.assertEqual(db.uiSettings.window.recipeScale, 1.25)
+end)
+
+T.test("different main and recipe sizes align their physical top edges", function()
+    local G, b, db, root = fixture({scale=0.75,recipeScale=1.25})
+    G.ApplyBrowserWindowSettings(b, db)
+    local d = b.recipeDetailsFrame
+    T.assertEqual(b.scale, 0.75)
+    T.assertEqual(d.scale, 1.25)
+    G.PositionRecipeDetailsWindow(b, d)
+    local p = d.points[1]
+    T.assertEqual(p[2], root)
+    T.assertTrue(math.abs(p[4]*d.scale - (b:GetRight()+8)*b.scale) < 0.001)
+    T.assertTrue(math.abs(p[5]*d.scale - b.top*b.scale) < 0.001)
+end)
+
+T.test("unequal window sizes align at a non-unit UI scale on either side of the browser", function()
+    local G, b, db, root = fixture({scale=0.75,recipeScale=1.25})
+    root.scale, b.parentScale = 0.8, 0.8
+    local d = b.recipeDetailsFrame
+    d.parentScale = 0.8
+    G.ApplyBrowserWindowSettings(b, db)
+    G.PositionRecipeDetailsWindow(b, d)
+    local p = d.points[1]
+    local actualLeft = p[4]*d:GetEffectiveScale()
+    local actualTop = p[5]*d:GetEffectiveScale()
+    T.assertTrue(math.abs(actualLeft - (b:GetRight()+8)*b:GetEffectiveScale()) < 0.001)
+    T.assertTrue(math.abs(actualTop - b.top*b:GetEffectiveScale()) < 0.001)
+    b.left = 1500
+    G.PositionRecipeDetailsWindow(b, d)
+    p = d.points[1]
+    local actualRight = (p[4]+d:GetWidth())*d:GetEffectiveScale()
+    T.assertTrue(math.abs(actualRight - (b:GetLeft()-8)*b:GetEffectiveScale()) < 0.001)
+    T.assertTrue(p[4] >= 0)
+    T.assertTrue(actualRight <= root:GetWidth()*root:GetEffectiveScale())
+end)
