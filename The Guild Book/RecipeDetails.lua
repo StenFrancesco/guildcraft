@@ -109,6 +109,7 @@ end
 local function readItemMetadata(api, itemID, isPublic)
     local name = "Item #" .. itemID
     local icon
+    local pending = false
     local itemAPI = api.C_Item
     if itemAPI == nil then return name, icon, true end
     if type(itemAPI) ~= "table" then return nil, nil, false end
@@ -122,6 +123,11 @@ local function readItemMetadata(api, itemID, isPublic)
             end
             if value ~= "" then name = value end
         end
+
+        if name == "Item #" .. itemID and type(itemAPI.RequestLoadItemDataByID) == "function" then
+            local requestOK = pcall(itemAPI.RequestLoadItemDataByID, itemID)
+            pending = requestOK
+        end
     end
 
     if type(itemAPI.GetItemIconByID) == "function" then
@@ -132,7 +138,7 @@ local function readItemMetadata(api, itemID, isPublic)
         icon = value
     end
 
-    return name, icon, true
+    return name, icon, true, pending
 end
 
 local function readCurrencyMetadata(api, currencyID, isPublic)
@@ -176,9 +182,10 @@ local function normalizeChoice(api, reagent, isPublic)
     local choice
     if hasItemID then
         if not isPositiveInteger(itemID) then return nil end
-        local name, icon, valid = readItemMetadata(api, itemID, isPublic)
+        local name, icon, valid, pending = readItemMetadata(api, itemID, isPublic)
         if not valid then return nil end
         choice = { itemID = itemID, name = name, icon = icon }
+        return choice, pending
     else
         if not isPositiveInteger(currencyID) then return nil end
         local name, icon, valid = readCurrencyMetadata(api, currencyID, isPublic)
@@ -186,7 +193,7 @@ local function normalizeChoice(api, reagent, isPublic)
         choice = { currencyID = currencyID, name = name, icon = icon }
     end
 
-    return choice
+    return choice, false
 end
 
 function GGM.BuildRecipeMaterialDetails(api, recipeID)
@@ -229,6 +236,7 @@ function GGM.BuildRecipeMaterialDetails(api, recipeID)
     if slotCount == nil then return unavailable("Recipe materials are unavailable.") end
 
     local materials = {}
+    local pendingItemIDs = {}
     local totalChoices = 0
     for slotIndex = 1, slotCount do
         local slot = rawget(slotSchematics, slotIndex)
@@ -257,8 +265,9 @@ function GGM.BuildRecipeMaterialDetails(api, recipeID)
 
         local choices = {}
         for choiceIndex = 1, choiceCount do
-            local choice = normalizeChoice(api, rawget(reagents, choiceIndex), isPublic)
+            local choice, pending = normalizeChoice(api, rawget(reagents, choiceIndex), isPublic)
             if not choice then return unavailable("Recipe materials are unavailable.") end
+            if pending then pendingItemIDs[choice.itemID] = true end
             choices[#choices + 1] = choice
         end
 
@@ -289,5 +298,6 @@ function GGM.BuildRecipeMaterialDetails(api, recipeID)
         state = "ready",
         message = nil,
         materials = materials,
+        pendingItemIDs = pendingItemIDs,
     }
 end

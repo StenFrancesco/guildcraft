@@ -543,6 +543,7 @@ end
 
 local function renderMaterials(details, model)
     details.materialModel = model
+    details.pendingMaterialItemIDs = model.pendingItemIDs or {}
     local message = model.message or (#model.materials == 0 and "No crafting materials required." or "")
     details.materialStatus:SetText(message)
     if message == "" then details.materialStatus:Hide() else details.materialStatus:Show() end
@@ -661,8 +662,17 @@ local function createWhisperControls(details)
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CRAFT_BEGIN")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CLOSE")
-    details.rosterEventFrame:SetScript("OnEvent", function(_, event)
+    details.rosterEventFrame:RegisterEvent("ITEM_DATA_LOAD_RESULT")
+    details.rosterEventFrame:SetScript("OnEvent", function(_, event, ...)
         if not shown(details) then return end
+        if event == "ITEM_DATA_LOAD_RESULT" then
+            local itemID, success = ...
+            if isPublic(details.api, itemID) and isPublic(details.api, success)
+                and success == true and details.pendingMaterialItemIDs[itemID] then
+                renderMaterials(details, GGM.BuildRecipeMaterialDetails(details.api, details.recipeID))
+            end
+            return
+        end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.browser.craftingContextSkillLineID = nil
