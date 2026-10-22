@@ -1,0 +1,4 @@
+Lua 5.1; five samples; median os.clock CPU; fixture setup/forced GC excluded
+10x500: cold=5.000ms warm=3.000ms coldDates=10 warmDates=0 ownerDescriptors=10 sameModel=true
+50x1000: cold=38.000ms warm=21.000ms coldDates=50 warmDates=0 ownerDescriptors=50 sameModel=true
+100x2000: cold=149.000ms warm=80.000ms coldDates=100 warmDates=0 ownerDescriptors=100 sameModel=true

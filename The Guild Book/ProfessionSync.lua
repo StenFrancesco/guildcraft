@@ -17,6 +17,7 @@ local BLOOM_MULTIPLIERS, BLOOM_OFFSETS = { 17, 31, 47, 61, 73 }, { 1, 3, 5, 7, 9
 local continueManualOperation, finishManualOperation, cancelManualOperation
 local publishOperationResult
 local drainResponses
+local logical
 local function integer(value, low, high) return GGM.IsProfessionSyncInteger(value, low, high) end
 local function split(text, separator)
     local result, start = {}, 1
@@ -211,6 +212,14 @@ end
 
 function GGM.CancelProfessionSync(sync)
     if not sync then return end
+    for _, preparation in pairs(sync.preparationTokens or {}) do
+        if type(GGM.CancelCPUJob) == "function" then GGM.CancelCPUJob(preparation.token) end
+    end
+    sync.preparationTokens = {}
+    for token in pairs(sync.validationTokens or {}) do
+        if type(GGM.CancelCPUJob) == "function" then GGM.CancelCPUJob(token) end
+    end
+    sync.validationTokens = {}
     local operation = sync.manualOperation
     local conflictProfession = manualOperationHasConflict(operation) and operation.professionID or nil
     if operation and not operation.finished then
@@ -345,7 +354,29 @@ function GGM.RefreshProfessionSyncRoster(sync)
         GGM.CancelProfessionSync(sync)
         sync.peers, sync.heard, sync.cursor, sync.manualCursor, sync.presenceEvidence = {}, {}, {}, {}, {}
     end
-    sync.members, sync.senders, sync.selfKey, sync.selfGUID, sync.guild = rows.byGUID, rows.bySender, rows.selfKey, rows.selfGUID, rows.guild
+    local members = rows.byGUID
+    local oldMembers = sync.members
+    local sameMembership = sync.guild == rows.guild and type(oldMembers) == "table"
+    if sameMembership then
+        local oldCount, newCount = 0, 0
+        for guid, identity in pairs(oldMembers) do
+            oldCount = oldCount + 1
+            local updated = rows.byGUID[guid]
+            if not updated or identity.key ~= updated.key then sameMembership = false; break end
+        end
+        for _ in pairs(rows.byGUID) do newCount = newCount + 1 end
+        if oldCount ~= newCount then sameMembership = false end
+    end
+    if sameMembership then
+        for guid, updated in pairs(rows.byGUID) do
+            local identity = oldMembers[guid]
+            identity.name, identity.realm, identity.presence = updated.name, updated.realm, updated.presence
+            rows.byGUID[guid] = identity
+            rows.bySender[key(identity.key)] = identity
+        end
+        members = oldMembers
+    end
+    sync.members, sync.senders, sync.selfKey, sync.selfGUID, sync.guild = members, rows.bySender, rows.selfKey, rows.selfGUID, rows.guild
     sync.presenceRevision = rows.presenceRevision
     for sender, evidence in pairs(sync.presenceEvidence or {}) do
         if not sync.senders[sender] or observedAt < evidence.at or observedAt - evidence.at > PRESENCE_EVIDENCE_SECONDS then
@@ -364,7 +395,137 @@ function GGM.RefreshProfessionSyncRoster(sync)
     return true, nil
 end
 
+local function preparedProfession(sync, professionID)
+    local prepared = sync.preparedProfession and sync.preparedProfession[professionID]
+    if prepared and prepared.db == sync.db and prepared.members == sync.members
+        and (type(GGM.GetCPURevision) ~= "function" or prepared.revision == GGM.GetCPURevision(sync.db))
+        and (not prepared.input or type(GGM.IsCPUInputCurrent) ~= "function"
+            or GGM.IsCPUInputCurrent(sync.db, prepared.input)) then
+        return prepared
+    end
+end
+
+local function digestForProfession(sync, professionID)
+    local prepared = preparedProfession(sync, professionID)
+    if prepared then return prepared.digest end
+    if type(GGM.StartCPUJob) == "function" then return nil end
+    return GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
+end
+
+local function prepareProfession(sync, professionID, owner, complete, deadline)
+    local ready = preparedProfession(sync, professionID)
+    if ready then
+        local accepted, err = complete(ready.rows, ready.digest)
+        if accepted == false then return false, err end
+        return true
+    end
+    if type(GGM.StartCPUJob) ~= "function" then
+        local rows, err = GGM.GetProfessionSyncManifest(sync.db, professionID)
+        if not rows then return false, err end
+        local filtered = {}
+        for _, row in ipairs(rows) do if sync.members[row.guid] then filtered[#filtered + 1] = row end end
+        local digest, digestErr = GGM.GetProfessionSyncManifestDigest(professionID, filtered)
+        if not digest then return false, digestErr end
+        local prepared = { rows = filtered, digest = digest, db = sync.db, members = sync.members,
+            revision = type(GGM.GetCPURevision) == "function" and GGM.GetCPURevision(sync.db) or nil }
+        sync.preparedProfession = sync.preparedProfession or {}
+        sync.preparedProfession[professionID] = prepared
+        local accepted, completeErr = complete(filtered, digest)
+        if sync.preparedProfession[professionID] == prepared then
+            sync.preparedProfession[professionID] = nil
+        end
+        if accepted == false then return false, completeErr end
+        return true
+    end
+    sync.preparationTokens = sync.preparationTokens or {}
+    local generation, db, members = sync.generation, sync.db, sync.members
+    local revision = type(GGM.GetCPURevision) == "function" and GGM.GetCPURevision(db) or nil
+    local input = type(GGM.CaptureCPUInput) == "function" and GGM.CaptureCPUInput(db) or nil
+    local function subscriberCurrent(subscriber, includeRevision)
+        return sync.generation == generation and sync.db == db and sync.members == members
+            and (subscriber.owner == sync or (sync.manualOperation == subscriber.owner
+                and not subscriber.owner.finished and not subscriber.owner.cancelled))
+            and (not subscriber.deadline or now(sync) < subscriber.deadline)
+            and (not includeRevision or revision == nil or GGM.GetCPURevision(db) == revision)
+            and (not includeRevision or not input or GGM.IsCPUInputCurrent(db, input))
+    end
+    local subscriber = { owner = owner, complete = complete, deadline = deadline }
+    local existing = sync.preparationTokens[professionID]
+    if existing and (existing.generation ~= generation or existing.db ~= db or existing.members ~= members
+        or existing.revision ~= revision or (existing.input and not GGM.IsCPUInputCurrent(db, existing.input))) then
+        GGM.CancelCPUJob(existing.token)
+        if sync.preparationTokens[professionID] == existing then sync.preparationTokens[professionID] = nil end
+        existing = nil
+    end
+    if existing then
+        if not subscriberCurrent(subscriber, true) then return false, "profession-sync-preparation-stale" end
+        if #existing.subscribers >= 16 then return false, "profession-sync-preparation-full" end
+        existing.subscribers[#existing.subscribers + 1] = subscriber
+        return true, "profession-sync-preparing"
+    end
+    local preparation = { token = {}, subscribers = { subscriber }, generation = generation,
+        db = db, members = members, revision = revision, input = input }
+    sync.preparationTokens[professionID] = preparation
+    local function current()
+        if sync.preparationTokens[professionID] ~= preparation then return false end
+        for _, candidate in ipairs(preparation.subscribers) do
+            if subscriberCurrent(candidate, true) then return true end
+        end
+        return false
+    end
+    local function cancelled(reason)
+        if sync.preparationTokens[professionID] ~= preparation then return end
+        sync.preparationTokens[professionID] = nil
+        if reason == "superseded" then return end
+        for _, candidate in ipairs(preparation.subscribers) do
+            if subscriberCurrent(candidate, false) then
+                if candidate.owner ~= sync and sync.manualOperation == candidate.owner and cancelManualOperation then
+                    cancelManualOperation(sync, candidate.owner, "Catch-up needed")
+                else
+                    notify(sync, professionID, "Catch-up needed")
+                end
+            end
+        end
+    end
+    local job, err = GGM.StartCPUJob(preparation.token, function()
+        local sourceRows, readErr = GGM.GetProfessionSyncManifest(db, professionID)
+        if not sourceRows then return nil, readErr end
+        local rows = {}
+        for _, row in ipairs(sourceRows) do if members[row.guid] then rows[#rows + 1] = row end end
+        local digest, digestErr = GGM.GetProfessionSyncManifestDigest(professionID, rows)
+        if not digest then return nil, digestErr end
+        return { rows = rows, digest = digest }
+    end, function(result, readErr)
+        if sync.preparationTokens[professionID] == preparation then sync.preparationTokens[professionID] = nil end
+        if not result then
+            for _, candidate in ipairs(preparation.subscribers) do
+                if subscriberCurrent(candidate, false) then
+                    if candidate.owner ~= sync and sync.manualOperation == candidate.owner and cancelManualOperation then
+                        cancelManualOperation(sync, candidate.owner, "Catch-up needed")
+                    else
+                        notify(sync, professionID, "Catch-up needed")
+                    end
+                end
+            end
+            return
+        end
+        result.db, result.members, result.revision, result.input = db, members, revision, input
+        sync.preparedProfession = sync.preparedProfession or {}
+        sync.preparedProfession[professionID] = result
+        for _, candidate in ipairs(preparation.subscribers) do
+            if subscriberCurrent(candidate, true) then candidate.complete(result.rows, result.digest) end
+        end
+    end, { current = current, onCancel = cancelled, api = sync.api })
+    if not job then
+        sync.preparationTokens[professionID] = nil
+        return false, err or "profession-sync-preparation-unavailable"
+    end
+    return true, "profession-sync-preparing"
+end
+
 local function manifest(sync, professionID)
+    local prepared = preparedProfession(sync, professionID)
+    if prepared then return prepared.rows, nil end
     local rows, err = GGM.GetProfessionSyncManifest(sync.db, professionID)
     if not rows then return nil, err end
     local filtered = {}
@@ -423,7 +584,8 @@ drainPending = function(sync)
     sync.pending[selected] = pending.following
     if pending.following then pending.following.ready = true end
     local peer = pending.preferredPeer and sync.peers[pending.preferredPeer]
-    if peer and peer[selected] == GGM.GetProfessionSyncDigest(sync.db, selected, sync.members) then
+    local localDigest = digestForProfession(sync, selected)
+    if peer and localDigest and peer[selected] == localDigest then
         timer(sync, 0.5, function() drainPending(sync) end)
         return
     end
@@ -508,7 +670,8 @@ local function finish(sync, session, message)
             operation.uncertainPeers[peer] = true
         end
         if peer and not session.truncated and (message == "Cache hashes match" or message == "Compared cached data") then
-            local digest = GGM.GetProfessionSyncDigest(sync.db, session.professionID, sync.members)
+            local digest = digestForProfession(sync, session.professionID)
+            if digest then
             for previous, compared in pairs(operation.comparedDigests) do
                 if previous ~= peer and compared ~= digest then
                     operation.uncertainPeers[previous] = true
@@ -522,6 +685,9 @@ local function finish(sync, session, message)
                 end
             end
             operation.comparedDigests[peer] = digest
+            else
+                operation.uncertainPeers[peer] = true
+            end
         end
         operation.currentPeer = nil
         if message == "Cache hashes match" and not session.truncated then
@@ -540,9 +706,21 @@ local function finish(sync, session, message)
     if sync.selfKey == session.initiator or sync.selfKey == session.selected then
         local peer = sync.selfKey == session.initiator and session.selected or session.initiator
         if peer and message ~= "Conflict: fresh observation needed" and message ~= "Sync unavailable" then
-            local digest = GGM.GetProfessionSyncDigest(sync.db, session.professionID, sync.members)
+            local function rememberDigest(digest)
+                if digest and session.finished and sync.generation == session.generation then
+                    sync.peers[peer] = sync.peers[peer] or {}; sync.peers[peer][session.professionID] = digest
+                end
+            end
             if message == "Cache hashes match" or message == "Compared cached data" then
-                sync.peers[peer] = sync.peers[peer] or {}; sync.peers[peer][session.professionID] = digest
+                local digest = digestForProfession(sync, session.professionID)
+                if digest then rememberDigest(digest)
+                elseif type(GGM.StartCPUJob) == "function" then
+                    local generation = sync.generation
+                    session.generation = generation
+                    prepareProfession(sync, session.professionID, sync, function(_, preparedDigest)
+                        if sync.generation == generation then rememberDigest(preparedDigest) end
+                    end)
+                end
             end
         end
     end
@@ -631,6 +809,98 @@ planTransfers = function(sync, session)
     maybeFinish(sync, session)
 end
 
+local function validationOperationCurrent(sync, session, item)
+    if type(GGM.GetCPURevision) ~= "function" then return nil end
+    local saved = session.validationOperations and session.validationOperations[item.key]
+    return saved and saved.db == sync.db and saved.members == sync.members
+        and saved.revision == GGM.GetCPURevision(sync.db)
+        and (not saved.input or GGM.IsCPUInputCurrent(sync.db, saved.input))
+        and (saved.token or saved.fallback) or nil
+end
+
+local function prepareValidationOperation(sync, session, item, complete)
+    local token = validationOperationCurrent(sync, session, item)
+    if token then complete(token); return true end
+    session.validationOperations = session.validationOperations or {}
+    session.validationOperations[item.key] = nil
+    if type(GGM.PrepareProfessionValidationOperation) ~= "function" then
+        return false, "profession-index-operation-unavailable"
+    end
+    if type(GGM.StartCPUJob) ~= "function" then
+        local prepared, err = GGM.PrepareProfessionValidationOperation(sync.db, sync.members[item.guid])
+        if not prepared then return false, err end
+        session.validationOperations[item.key] = { token = prepared, db = sync.db, members = sync.members,
+            revision = GGM.GetCPURevision(sync.db), input = type(GGM.CaptureCPUInput) == "function"
+                and GGM.CaptureCPUInput(sync.db) or nil }
+        complete(prepared)
+        return true
+    end
+    if session.validationPreparation then return true, "profession-sync-preparing" end
+    local generation, db, members = sync.generation, sync.db, sync.members
+    local revision = GGM.GetCPURevision(db)
+    local input = type(GGM.CaptureCPUInput) == "function" and GGM.CaptureCPUInput(db) or nil
+    local tokenOwner = {}
+    local preparation = { token = tokenOwner, item = item }
+    session.validationPreparation = preparation
+    sync.validationTokens = sync.validationTokens or {}
+    sync.validationTokens[tokenOwner] = true
+    local function current()
+        return session.validationPreparation == preparation and not session.finished
+            and sync.sessions[sessionKey(session.initiator, session.id)] == session
+            and sync.generation == generation and sync.db == db and sync.members == members
+            and GGM.GetCPURevision(db) == revision
+            and (not input or GGM.IsCPUInputCurrent(db, input))
+            and now(sync) < session.startedAt + TTL
+    end
+    local function cleanup()
+        if session.validationPreparation == preparation then session.validationPreparation = nil end
+        sync.validationTokens[tokenOwner] = nil
+    end
+    local function cancelled(reason)
+        cleanup()
+        if reason ~= "superseded" and not session.finished then finish(sync, session, "Catch-up needed") end
+    end
+    local job, err = GGM.StartCPUJob(tokenOwner, function()
+        local prepared, prepareErr = GGM.PrepareProfessionValidationOperation(db, members[item.guid])
+        -- Renames and repairs deliberately cannot reuse a save proof. They may
+        -- proceed through the original complete recovery validation at commit.
+        local fallback = not prepared and GGM.EnsureProfessionIndex(db, true, nil, true) == true
+        return { token = prepared, fallback = fallback, err = prepareErr }
+    end, function(result)
+        cleanup()
+        if not result or (not result.token and not result.fallback) then
+            if not session.finished then finish(sync, session, "Catch-up needed") end
+            return
+        end
+        session.validationOperations = session.validationOperations or {}
+        session.validationOperations[item.key] = { token = result.token, fallback = result.fallback,
+            db = db, members = members, revision = revision, input = input }
+        complete(result.token or result.fallback)
+    end, { current = current, onCancel = cancelled, api = sync.api })
+    if not job then
+        cleanup()
+        if not session.finished then finish(sync, session, "Catch-up needed") end
+        return false, err or "profession-sync-preparation-unavailable"
+    end
+    return true, "profession-sync-preparing"
+end
+
+local function waitForReceivedValidationOperation(sync, session, item, payload, rawSender, channel, deadline)
+    if type(GGM.StartCPUJob) ~= "function" or validationOperationCurrent(sync, session, item) then return false end
+    if session.pendingValidationItem == item.key then return true end
+    session.pendingValidationItem = item.key
+    local accepted = prepareValidationOperation(sync, session, item, function()
+        if session.pendingValidationItem ~= item.key or session.finished then return end
+        session.pendingValidationItem = nil
+        logical(sync, payload, rawSender, channel, deadline)
+    end)
+    if not accepted then
+        session.pendingValidationItem = nil
+        finish(sync, session, "Catch-up needed")
+    end
+    return true
+end
+
 requestNext = function(sync, session)
     if session.finished then return end
     -- At most one outstanding record in each direction. Four large records
@@ -661,14 +931,22 @@ requestNext = function(sync, session)
                 if not send(sync, "K", item.provider, session.id, session.professionID,
                     session.initiator .. ";" .. item.guid .. ";" .. item.capturedAt .. ";" .. reason) then return end
             else
-                session.requested[item.key] = true
-                local action, nameBits, nameFilter, iconBits, iconFilter = item.action, "0", "-", "0", "-"
-                if action == "record" then
-                    nameBits, nameFilter, iconBits, iconFilter = knownMetadataFilters(sync, session.professionID)
+                local function sendRequest()
+                    if session.finished or session.requested[item.key] then return end
+                    session.requested[item.key] = true
+                    local action, nameBits, nameFilter, iconBits, iconFilter = item.action, "0", "-", "0", "-"
+                    if action == "record" then
+                        nameBits, nameFilter, iconBits, iconFilter = knownMetadataFilters(sync, session.professionID)
+                    end
+                    send(sync, "R", item.provider, session.id, session.professionID,
+                        table.concat({ session.initiator, item.guid, item.capturedAt, item.hash, action,
+                            nameBits, nameFilter, iconBits, iconFilter }, ";"))
                 end
-                send(sync, "R", item.provider, session.id, session.professionID,
-                    table.concat({ session.initiator, item.guid, item.capturedAt, item.hash, action,
-                        nameBits, nameFilter, iconBits, iconFilter }, ";"))
+                if type(GGM.StartCPUJob) == "function" then
+                    prepareValidationOperation(sync, session, item, sendRequest)
+                else
+                    sendRequest()
+                end
                 return
             end
         end
@@ -760,9 +1038,18 @@ local function selectResponder(sync, session)
     end
     if not chosen then return false end
     sync.lastError = nil
+    local prepared = preparedProfession(sync, session.professionID)
+    if not prepared and type(GGM.StartCPUJob) == "function" then
+        local deadline = session.startedAt + TTL
+        local accepted = prepareProfession(sync, session.professionID, sync, function()
+            if not session.finished and sync.active == session then selectResponder(sync, session) end
+        end, deadline)
+        if not accepted and not session.finished then finish(sync, session, "Catch-up needed") end
+        return accepted
+    end
     session.selected = chosen
-    if session.claims[chosen] == session.digest
-        and GGM.GetProfessionSyncDigest(sync.db, session.professionID, sync.members) == session.digest then
+    local localDigest = prepared and prepared.digest or digestForProfession(sync, session.professionID)
+    if session.claims[chosen] == session.digest and localDigest == session.digest then
         send(sync, "F", "*", session.id, session.professionID, "Cache hashes match")
         finish(sync, session, "Cache hashes match")
     elseif send(sync, "S", chosen, session.id, session.professionID, "") then
@@ -771,7 +1058,6 @@ local function selectResponder(sync, session)
     return true
 end
 
-local logical
 drainResponses = function(sync)
     if not safe(sync) or sync.active or sync.manualOperation or #sync.transport.outboundFrames > 0 then return end
     local selected
@@ -834,8 +1120,15 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
             sync.peers[sender] = sync.peers[sender] or {}; sync.peers[sender][pid] = bits[2]
             sync.heard[pid] = { digest = bits[2], at = now(sync) }
             if bits[3] == "save" then
-                local digest = GGM.GetProfessionSyncDigest(sync.db, pid, sync.members)
-                if digest and digest ~= bits[2] then scheduleComparison(sync, pid, "save", sender) end
+                local prepared = preparedProfession(sync, pid)
+                if prepared then
+                    if prepared.digest ~= bits[2] then scheduleComparison(sync, pid, "save", sender) end
+                elseif type(GGM.StartCPUJob) == "function" then
+                    scheduleComparison(sync, pid, "save", sender)
+                else
+                    local digest = digestForProfession(sync, pid)
+                    if digest and digest ~= bits[2] then scheduleComparison(sync, pid, "save", sender) end
+                end
             end
         end
         return "announced"
@@ -871,10 +1164,34 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
         if eligible and (sync.active or sync.manualOperation or #sync.transport.outboundFrames > 0) then
             return deferResponse(sync, sender, professionID, payload, queryDeadline)
         end
+        if not preparedProfession(sync, professionID) and type(GGM.StartCPUJob) == "function" then
+            local queued = deferResponse(sync, sender, professionID, payload, queryDeadline)
+            if queued ~= "response-queued" then return queued end
+            local accepted = prepareProfession(sync, professionID, sync, function()
+                local queuedKey = sender .. ":" .. professionID
+                local item = sync.deferredResponses[queuedKey]
+                if item and item.payload == payload then
+                    sync.deferredResponses[queuedKey] = nil
+                    sync.deferredResponseCount = math.max(0, sync.deferredResponseCount - 1)
+                    logical(sync, payload, sender, "GUILD", queryDeadline)
+                end
+            end, queryDeadline)
+            if not accepted then
+                local queuedKey = sender .. ":" .. professionID
+                local item = sync.deferredResponses[queuedKey]
+                if item and item.payload == payload then
+                    sync.deferredResponses[queuedKey] = nil
+                    sync.deferredResponseCount = math.max(0, sync.deferredResponseCount - 1)
+                end
+                return "observing"
+            end
+            return "response-queued"
+        end
         sync.peerCooldowns[cooldownKey] = now(sync)
         if cannotRespond then return "observing" end
         local rows = manifest(sync, professionID)
-        local digest = GGM.GetProfessionSyncManifestDigest(professionID, rows)
+        local prepared = preparedProfession(sync, professionID)
+        local digest = prepared and prepared.digest or GGM.GetProfessionSyncManifestDigest(professionID, rows)
         if not rows or not digest then return "observing" end
         local session = createSession(sync, sender, id, professionID, bits[1], bits[2], bits[3], preferredPeer)
         if not session then return "observing" end
@@ -1018,6 +1335,9 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
         for _, item in ipairs(session.plan) do
             if item.guid == record.guid and item.action == "record" and item.capturedAt == record.capturedAt and item.hash == record.hash
                 and item.provider == sender and item.recipient == recipient and session.requested[item.key] and not session.dataSeen[item.key] then
+                if waitForReceivedValidationOperation(sync, session, item, payload, rawSender, channel, responseDeadline) then
+                    return "preparing"
+                end
                 acceptPeerMessage(sync, sender)
                 local localRecord, localErr = GGM.GetProfessionSyncRecord(sync.db, record.guid, professionID)
                 if not localRecord and localErr ~= "profession-sync-record-missing" then return "ignored" end
@@ -1035,8 +1355,11 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
                     end
                     local changedDuringTransfer = (localRecord and (not expected or localRecord.hash ~= expected.hash
                         or localRecord.capturedAt ~= expected.capturedAt)) or (not localRecord and expected ~= nil)
+                    local validation = session.validationOperations and session.validationOperations[item.key]
+                    if session.validationOperations then session.validationOperations[item.key] = nil end
                     local saved, err = GGM.MergeProfessionSyncRecord(sync.db, sync.members[record.guid], record,
-                        { guildMembershipVerified = true })
+                        { guildMembershipVerified = true,
+                            indexValidationOperation = validation and validation.token or nil })
                     if not saved then failed(sync, err); return "ignored" end
                     if changedDuringTransfer then
                         session.truncated = true; session.nextCursor = session.startGUID; acknowledgement = "defer"
@@ -1066,6 +1389,9 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
             if item.guid == bits[2] and item.hash == bits[3]:lower() and item.capturedAt == capturedAt
                 and item.action == "fresh" and item.provider == sender and item.recipient == recipient
                 and recipient == sync.selfKey and session.requested[item.key] and not session.dataSeen[item.key] then
+                if waitForReceivedValidationOperation(sync, session, item, payload, rawSender, channel, responseDeadline) then
+                    return "preparing"
+                end
                 acceptPeerMessage(sync, sender)
                 local localRecord, localErr = GGM.GetProfessionSyncRecord(sync.db, item.guid, professionID)
                 local acknowledgement = "stored"
@@ -1090,8 +1416,11 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
                     }
                     if not GGM.ValidateProfessionCapture(updated)
                         or GGM.HashProfessionRecipes(professionID, updated.recipes) ~= item.hash then return "ignored" end
+                    local validation = session.validationOperations and session.validationOperations[item.key]
+                    if session.validationOperations then session.validationOperations[item.key] = nil end
                     local saved, err = GGM.SaveProfessionSnapshot(sync.db, sync.members[item.guid], updated,
-                        { guildMembershipVerified = true })
+                        { guildMembershipVerified = true,
+                            indexValidationOperation = validation and validation.token or nil })
                     if not saved then failed(sync, err); return "ignored" end
                     scheduleCatalogRefresh(sync)
                 end
@@ -1230,8 +1559,28 @@ local function startProfessionComparison(sync, professionID, reason, preferredPe
     if reason == "selection" and sync.selectedOnce[professionID] then return false, "profession-sync-already-compared" end
     if sync.active or (sync.manualOperation and sync.manualOperation ~= operation) then return false, "profession-sync-busy" end
     if (sync.cooldowns[professionID] or -COOLDOWN) + COOLDOWN > now(sync) then return false, "profession-sync-cooldown" end
-    local digest, err = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
-    if not digest then return false, err end
+    local prepared = preparedProfession(sync, professionID)
+    if not prepared then
+        local accepted, prepErr = prepareProfession(sync, professionID, operation or sync, function()
+            if operation and (operation.finished or operation.cancelled or sync.manualOperation ~= operation) then return end
+            local started, startErr = startProfessionComparison(sync, professionID, reason, preferredPeer, operation)
+            if not started and type(GGM.StartCPUJob) == "function" then
+                if operation and sync.manualOperation == operation and not operation.finished then
+                    if operation.currentPeer then operation.uncertainPeers[operation.currentPeer] = true end
+                    operation.currentPeer = nil
+                    timer(sync, math.min(0.5, math.max(0, operation.deadline - now(sync))), function()
+                        continueManualOperation(sync, operation)
+                    end)
+                else
+                    notify(sync, professionID, "Catch-up needed")
+                end
+            end
+            return started, startErr
+        end, operation and operation.deadline)
+        if not accepted then return false, prepErr end
+        return true
+    end
+    local digest = prepared.digest
     local id = nextID(sync)
     local professionCursors = sync.cursor[professionID]
     local startGUID = preferredPeer and type(professionCursors) == "table" and professionCursors[preferredPeer]
@@ -1541,9 +1890,16 @@ end
 
 function GGM.PublishProfessionSyncSave(sync, professionID, beforeHash)
     if not safe(sync) then return false end
-    local digest = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
-    if not digest or digest == beforeHash then return false end
     if sync.pendingSaves[professionID] then return true end
+    local prepared = preparedProfession(sync, professionID)
+    if not prepared then
+        local accepted = prepareProfession(sync, professionID, sync, function()
+            if safe(sync) then GGM.PublishProfessionSyncSave(sync, professionID, beforeHash) end
+        end)
+        return accepted == true
+    end
+    local digest = prepared.digest
+    if not digest or digest == beforeHash then return false end
     local remaining = (sync.saveCooldowns[professionID] or -COOLDOWN) + COOLDOWN - now(sync)
     if remaining > 0 then
         -- One save-created job holds the latest local state. The timer only
@@ -1554,8 +1910,12 @@ function GGM.PublishProfessionSyncSave(sync, professionID, beforeHash)
             if sync.pendingSaves[professionID] ~= pending then return end
             sync.pendingSaves[professionID] = nil
             if not safe(sync) then notify(sync, professionID, "Catch-up needed"); return end
-            local latest = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
-            if latest and latest ~= sync.lastAnnouncedDigests[professionID] then announceSave(sync, professionID, latest) end
+            local latest = preparedProfession(sync, professionID)
+            local function publish(rows, digest)
+                if safe(sync) and digest ~= sync.lastAnnouncedDigests[professionID] then announceSave(sync, professionID, digest) end
+            end
+            if latest then publish(latest.rows, latest.digest)
+            else prepareProfession(sync, professionID, sync, publish) end
         end) then
             sync.pendingSaves[professionID] = nil
             return false

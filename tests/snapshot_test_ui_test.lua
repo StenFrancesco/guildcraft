@@ -3518,3 +3518,66 @@ T.test("switching profession cancels an obsolete pending search", function()
     timers[1]()
     T.assertEqual(filters, afterSelection, "the previous profession's search must be cancelled")
 end)
+T.test('PR5 catalog preparation yields and cancels hidden or replaced selections', function()
+    local G, api, calls = loadUI(), makeBrowserAPI(), {}
+    G.CPUManualDriver = true
+    T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    installProfessionCatalogStub(G, function(id)
+        for i=1,1000 do G.CPUCheckpoint() end
+        return professionCatalog('ready',{{recipeID=id,name='Result '..id}})
+    end, calls)
+    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    local frame=G.guildGearBrowserFrame
+    T.assertNil(frame.professionCatalog, 'catalog should publish only when complete')
+    G.RunCPUFrame(); T.assertNil(frame.professionCatalog)
+    frame:Hide(); G.RunCPUFrame()
+    T.assertEqual(G.GetCPUJobCount(),0)
+    G.ShowGuildGearBrowserWindow(api,frame.db)
+    G.SelectProfession(frame,'Blacksmithing')
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(frame.professionCatalog.recipes[1].recipeID,164)
+    T.assertEqual(G.GetCPUJobCount(),0)
+end)
+T.test('PR5 recipe search slices and publishes only the latest complete query',function()
+    local G, api, recipes=loadUI(),makeBrowserAPI(),{}
+    for i=1,4096 do recipes[i]={recipeID=i,name='Recipe '..i} end
+    installProfessionCatalogStub(G,function() return professionCatalog('ready',recipes) end,{})
+    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    local frame=G.guildGearBrowserFrame
+    G.CPUManualDriver=true; T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    local original=frame.filteredProfessionRecipes
+    frame.professionSearchBox:SetText('Recipe 4'); G.RunCPUFrame()
+    T.assertTrue(frame.filteredProfessionRecipes==original)
+    frame.professionSearchBox:SetText('Recipe 4096')
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(#frame.filteredProfessionRecipes,1)
+    T.assertEqual(frame.filteredProfessionRecipes[1].recipeID,4096)
+    T.assertEqual(G.GetCPUJobCount(),0)
+end)
+T.test('PR5 character search yields and retains the latest selection and complete list',function()
+    local G,api,entries=loadUI(),makeBrowserAPI(),{}
+    local frame=showBrowser(G,api,makeDB(G,{makeRecord(G)}))
+    for i=1,4096 do entries[i]={key='Char'..i..'-Realm',name='Char'..i,realm='Realm'} end
+    frame.entries=entries
+    G.SelectGuildGearBrowserTab(frame,'Character')
+    G.CPUManualDriver=true; T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    local original=frame.filteredEntries
+    frame.searchBox:SetText('Char4'); G.RunCPUFrame()
+    T.assertTrue(frame.filteredEntries==original)
+    frame.searchBox:SetText('Char4096')
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(#frame.filteredEntries,1); T.assertEqual(frame.selectedEntry.key,'Char4096-Realm')
+    T.assertEqual(G.GetCPUJobCount(),0)
+end)
+T.test('changing profession clears recycled rows until the new catalog completes',function()
+    local G,api=loadUI(),makeBrowserAPI()
+    installProfessionCatalogStub(G,function(id) return professionCatalog('ready',{{recipeID=id,name='Recipe '..id}}) end,{})
+    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    local frame=G.guildGearBrowserFrame
+    T.assertNotNil(frame.professionRecipeRows[1].recipe)
+    G.CPUManualDriver=true;T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    G.SelectProfession(frame,'Blacksmithing')
+    for _,row in ipairs(frame.professionRecipeRows) do T.assertNil(row.recipe) end
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(frame.professionRecipeRows[1].recipe.recipeID,164)
+end)

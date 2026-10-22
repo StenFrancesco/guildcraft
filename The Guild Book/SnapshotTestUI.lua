@@ -1,5 +1,12 @@
 local _, GGM = ...
 local REQUEST_ERRORS
+local function cpuCheckpoint()
+    if GGM.CPUCheckpoint then GGM.CPUCheckpoint() end
+end
+local function cpuSort(rows, less)
+    if GGM.CPUSort then return GGM.CPUSort(rows, less) end
+    return table.sort(rows, less)
+end
 
 local function gearUnavailableMessage(db)
     local reason = type(db) == "table" and db.gearUnavailableReason or nil
@@ -67,6 +74,7 @@ function GGM.BuildGuildGearBrowserEntries(db)
     end
 
     for key in pairs(db.characters) do
+        cpuCheckpoint()
         local record = GGM.GetCharacterRecord(db, key)
         if record and hasValidBrowserIdentity(record, key) then
             table.insert(entries, {
@@ -80,7 +88,7 @@ function GGM.BuildGuildGearBrowserEntries(db)
         end
     end
 
-    table.sort(entries, function(left, right)
+    cpuSort(entries, function(left, right)
         local leftName, rightName = left.searchName, right.searchName
         if leftName ~= rightName then return leftName < rightName end
         local leftRealm, rightRealm = left.searchRealm, right.searchRealm
@@ -95,13 +103,14 @@ function GGM.FilterGuildGearBrowserEntries(entries, query)
     local filtered = {}
     if type(entries) ~= "table" then return filtered end
     if query == nil or query == "" then
-        for _, entry in ipairs(entries) do table.insert(filtered, entry) end
+        for _, entry in ipairs(entries) do cpuCheckpoint(); table.insert(filtered, entry) end
         return filtered
     end
     if type(query) ~= "string" then return filtered end
 
     local needle = string.lower(query)
     for _, entry in ipairs(entries) do
+        cpuCheckpoint()
         if type(entry) == "table" then
             local name = entry.searchName or (type(entry.name) == "string" and string.lower(entry.name) or "")
             local realm = entry.searchRealm or (type(entry.realm) == "string" and string.lower(entry.realm) or "")
@@ -117,6 +126,7 @@ function GGM.FilterGuildGearBrowserOwnership(entries, db, view)
     local filtered = {}
     if type(entries) ~= "table" then return filtered end
     for _, entry in ipairs(entries) do
+        cpuCheckpoint()
         if type(entry) == "table" and type(entry.key) == "string" then
             local isMine = type(GGM.IsLocalCharacter) == "function"
                 and GGM.IsLocalCharacter(db, entry.key) == true
@@ -844,10 +854,10 @@ function GGM.FilterProfessionRecipeBrowserEntries(entries, query)
     if type(entries) ~= "table" then return filtered end
     local needle = type(query) == "string" and string.lower(query) or ""
     if needle == "" then
-        for _, entry in ipairs(entries) do table.insert(filtered, entry) end
+        for _, entry in ipairs(entries) do cpuCheckpoint(); table.insert(filtered, entry) end
         return filtered
     end
-    for _, entry in ipairs(entries) do
+    for _, entry in ipairs(entries) do cpuCheckpoint();
         if type(entry) == "table" and type(entry.name) == "string"
             and string.find(entry.searchName or string.lower(entry.name), needle, 1, true) then
             table.insert(filtered, entry)
@@ -974,6 +984,38 @@ browserVisible = function(frame)
     return type(frame.IsShown) == "function" and frame:IsShown()
 end
 
+-- Queue a read with a bounded lifetime tied to this visible view and input revision.
+-- Callbacks receive complete models; no partial list or catalog escapes a job.
+local function browserRead(frame, key, tab, build, complete, cancelled)
+    if not GGM.StartCPUJob then complete(build()); return true end
+    frame.cpuOwners = frame.cpuOwners or {}
+    frame.cpuOwners[key] = frame.cpuOwners[key] or {}
+    local owner = frame.cpuOwners[key]
+    local db, selected = frame.db, frame.selectedProfession
+    local input = GGM.CaptureCPUInput(db)
+    local authoritative = GGM.db == db
+    local membership = GGM.professionRosterMembershipCurrent
+    local generation = (frame[key .. "Generation"] or 0) + 1
+    frame[key .. "Generation"] = generation
+    local function current()
+        return browserVisible(frame) and frame.activeTab == tab and frame.db == db
+            and frame[key .. "Generation"] == generation
+            and (tab ~= "Professions" or frame.selectedProfession == selected)
+            and (not authoritative or GGM.db == db) and GGM.IsCPUInputCurrent(db, input)
+            and GGM.professionRosterMembershipCurrent == membership
+    end
+    local job = GGM.StartCPUJob(owner, build, complete, {
+        api = frame.api, current = current,
+        onCancel = function() if cancelled then cancelled() end end,
+    })
+    if not job and cancelled then cancelled() end
+    return job ~= nil
+end
+local function cancelBrowserReads(frame)
+    if not GGM.CancelCPUJob or not frame.cpuOwners then return end
+    for _, owner in pairs(frame.cpuOwners) do GGM.CancelCPUJob(owner) end
+end
+
 local function flushBrowserRefresh(frame)
     if not browserVisible(frame) then return false end
     if frame.activeTab == "Professions" then return flushProfessionCatalog(frame) end
@@ -1015,7 +1057,15 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionHeroArtwork:SetVertexColor(1, 1, 1, 1)
     end
     for _, button in ipairs(frame.professionButtons) do professionButtonColor(button, button.key == selectedKey) end
-    if changed then frame.professionCatalog = nil end
+    if changed then
+        frame.professionCatalog = nil
+        frame.filteredProfessionRecipes = {}
+        if frame.cpuOwners and GGM.CancelCPUJob then
+            GGM.CancelCPUJob(frame.cpuOwners.catalogBuild)
+            GGM.CancelCPUJob(frame.cpuOwners.recipeFilter)
+        end
+        renderProfessionRows(frame)
+    end
     if changed and frame.professionSearchBox then frame.professionSearchBox:SetText("") end
     frame.professionDirty = true
     if flushProfessionCatalog then flushProfessionCatalog(frame) end
@@ -1420,11 +1470,21 @@ local function createProfessionsPage(api, frame)
     GGM.SelectProfession(frame, "Alchemy")
 end
 
-updateProfessionRecipeBrowser = function(frame)
+updateProfessionRecipeBrowser = function(frame, prepared)
     frame.recipeSearchGeneration = (frame.recipeSearchGeneration or 0) + 1
     local catalog = frame.professionCatalog or { state = "unavailable", recipes = {}, message = nil }
     local recipes = type(catalog.recipes) == "table" and catalog.recipes or {}
-    local filtered = GGM.FilterProfessionRecipeBrowserEntries(recipes, frame.professionSearchBox:GetText() or "")
+    local query = frame.professionSearchBox:GetText() or ""
+    if not prepared and GGM.StartCPUJob then
+        local generation = frame.recipeSearchGeneration
+        return browserRead(frame, "recipeFilter", "Professions", function()
+            return GGM.FilterProfessionRecipeBrowserEntries(recipes, query)
+        end, function(filtered)
+            if frame.professionCatalog == catalog and frame.recipeSearchGeneration == generation
+                and frame.professionSearchBox:GetText() == query then updateProfessionRecipeBrowser(frame, filtered) end
+        end, function() frame.professionDirty = true end)
+    end
+    local filtered = prepared or GGM.FilterProfessionRecipeBrowserEntries(recipes, query)
     frame.filteredProfessionRecipes = filtered
     if frame.professionRecipeHeading then
         if (catalog.state == "ready" or catalog.state == "incomplete") and #recipes > 0 then
@@ -1533,18 +1593,28 @@ flushProfessionCatalog = function(frame)
     end
     if not profession then return false end
     frame.professionDirty = nil
+    if GGM.StartCPUJob and not frame.professionCatalog then
+        frame.professionCount:SetText("Preparing…")
+        frame.professionStatus:SetText("Preparing saved recipes…")
+        frame.professionStatus:Show()
+    end
     local scroll = frame.professionRecipeScroll:GetVerticalScroll()
-    frame.professionCatalog = GGM.BuildProfessionRecipeCatalog(
-        frame.db, profession.professionID, profession.key, frame.api)
-    updateProfessionRecipeBrowser(frame)
-    frame.professionRecipeScroll:SetVerticalScroll(scroll)
-    return true
+    return browserRead(frame, "catalogBuild", "Professions", function()
+        local catalog = GGM.BuildProfessionRecipeCatalog(frame.db, profession.professionID, profession.key, frame.api)
+        return catalog
+    end, function(catalog)
+        frame.professionCatalog = catalog
+        frame.professionDirty = nil
+        updateProfessionRecipeBrowser(frame)
+        frame.professionRecipeScroll:SetVerticalScroll(scroll)
+    end, function() frame.professionDirty = true end)
 end
 
 function GGM.RefreshVisibleProfessionCatalog()
     local frame = GGM.guildGearBrowserFrame
     if not frame then return false end
     frame.professionDirty = true
+    if frame.cpuOwners and GGM.CancelCPUJob then GGM.CancelCPUJob(frame.cpuOwners.catalogBuild) end
     if frame.activeTab ~= "Professions" then return false end
     return queueBrowserRefresh(frame)
 end
@@ -1573,6 +1643,7 @@ end
 function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if selectedKey ~= "Character" and selectedKey ~= "Professions" and selectedKey ~= "Bank" then return false end
     if selectedKey ~= "Professions" and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
+    if frame.activeTab ~= selectedKey then cancelBrowserReads(frame) end
     frame.activeTab = selectedKey
     if frame.TitleText then frame.TitleText:SetText("The Guild Book") end
 
@@ -1635,10 +1706,21 @@ local function updateSearchHint(frame)
     if text == "" and not frame.searchBox.hasFocus then frame.searchHint:Show() else frame.searchHint:Hide() end
 end
 
-updateBrowserList = function(frame, api)
+updateBrowserList = function(frame, api, prepared)
     frame.characterSearchGeneration = (frame.characterSearchGeneration or 0) + 1
-    frame.activeEntries = GGM.FilterGuildGearBrowserOwnership(frame.entries, frame.db, frame.browserView)
-    frame.filteredEntries = GGM.FilterGuildGearBrowserEntries(frame.activeEntries, frame.searchBox:GetText() or "")
+    if not prepared and GGM.StartCPUJob and browserVisible(frame) and frame.activeTab == "Character" then
+        local entries, db, view, query = frame.entries, frame.db, frame.browserView, frame.searchBox:GetText() or ""
+        local generation = frame.characterSearchGeneration
+        return browserRead(frame, "characterFilter", "Character", function()
+            local active = GGM.FilterGuildGearBrowserOwnership(entries, db, view)
+            return { active = active, filtered = GGM.FilterGuildGearBrowserEntries(active, query) }
+        end, function(result)
+            if frame.entries == entries and frame.browserView == view and frame.characterSearchGeneration == generation
+                and frame.searchBox:GetText() == query then updateBrowserList(frame, api, result) end
+        end, function() frame.charactersDirty = true end)
+    end
+    frame.activeEntries = prepared and prepared.active or GGM.FilterGuildGearBrowserOwnership(frame.entries, frame.db, frame.browserView)
+    frame.filteredEntries = prepared and prepared.filtered or GGM.FilterGuildGearBrowserEntries(frame.activeEntries, frame.searchBox:GetText() or "")
 
     local selectedStillVisible = false
     for _, entry in ipairs(frame.filteredEntries) do
@@ -1970,6 +2052,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame:Hide()
     frame.api = api
     frame:SetScript("OnHide", function(self)
+        cancelBrowserReads(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
         if self.craftingContextSkillLineID and self.craftingContextOpenedByGuildBook then
             local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
@@ -2290,11 +2373,19 @@ end
 refreshCharacterBrowser = function(frame)
     if not browserVisible(frame) or frame.activeTab ~= "Character" or not frame.db then return false end
     local scroll = frame.listScroll:GetVerticalScroll()
-    frame.entries = GGM.BuildGuildGearBrowserEntries(frame.db)
     frame.charactersDirty = nil
-    updateBrowserList(frame, frame.api)
-    frame.listScroll:SetVerticalScroll(scroll)
-    return true
+    local db, view, query = frame.db, frame.browserView, frame.searchBox:GetText() or ""
+    return browserRead(frame, "characterBuild", "Character", function()
+        local entries = GGM.BuildGuildGearBrowserEntries(db)
+        local active = GGM.FilterGuildGearBrowserOwnership(entries, db, view)
+        return { entries = entries, active = active, filtered = GGM.FilterGuildGearBrowserEntries(active, query) }
+    end, function(result)
+        if frame.browserView ~= view or frame.searchBox:GetText() ~= query then frame.charactersDirty = true; return end
+        frame.entries = result.entries
+        frame.charactersDirty = nil
+        updateBrowserList(frame, frame.api, result)
+        frame.listScroll:SetVerticalScroll(scroll)
+    end, function() frame.charactersDirty = true end)
 end
 
 function GGM.ShowGuildGearBrowserWindow(api, db)
@@ -2315,6 +2406,10 @@ function GGM.RefreshVisibleGuildGearBrowser()
     local frame = GGM.guildGearBrowserFrame
     if not frame then return false end
     frame.charactersDirty = true
+    if frame.cpuOwners and GGM.CancelCPUJob then
+        GGM.CancelCPUJob(frame.cpuOwners.characterBuild)
+        GGM.CancelCPUJob(frame.cpuOwners.characterFilter)
+    end
     if type(GGM.db) == "table" then
         if frame.db ~= GGM.db then frame.professionDirty = true end
         frame.db = GGM.db

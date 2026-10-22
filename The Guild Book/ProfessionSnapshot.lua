@@ -17,6 +17,7 @@ local function denseRecipeArrayLength(recipes)
     local highestIndex = 0
 
     for key in pairs(recipes) do
+        if GGM.CPUCheckpoint then GGM.CPUCheckpoint() end
         if not positiveInteger(key) or key > GGM.PROFESSION_MAX_RECIPES then
             return nil
         end
@@ -75,6 +76,7 @@ function GGM.ValidateProfessionCapture(snapshot)
 
     local previousID = 0
     for index = 1, recipeCount do
+        if GGM.CPUCheckpoint then GGM.CPUCheckpoint() end
         local recipe = snapshot.recipes[index]
         if type(recipe) ~= "table" or not positiveInteger(recipe.recipeID) then
             return false, "profession-recipe-id-invalid"
@@ -119,6 +121,7 @@ function GGM.CaptureLinkedProfessionSnapshot(api, source)
 
     local recipes = {}
     for _, recipeID in ipairs(recipeIDs) do
+        if GGM.CPUCheckpoint then GGM.CPUCheckpoint() end
         if not positiveInteger(recipeID) then
             return nil, "profession-recipe-id-invalid"
         end
@@ -150,7 +153,8 @@ function GGM.CaptureLinkedProfessionSnapshot(api, source)
         end
     end
 
-    table.sort(recipes, function(left, right) return left.recipeID < right.recipeID end)
+    local sort = GGM.CPUSort or table.sort
+    sort(recipes, function(left, right) return left.recipeID < right.recipeID end)
 
     local capturedAt = 0
     if type(api.GetServerTime) == "function" then

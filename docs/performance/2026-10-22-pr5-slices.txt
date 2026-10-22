@@ -1,0 +1,26 @@
+Lua 5.1; CPU ms using os.clock (~1 ms resolution); normal GC; setup/forced GC excluded; combined digest+catalog
+sample 1
+10x500 combined: frames=25 total=21.000ms max=1.000ms >1ms=0 >2ms=0; filter frames=1 max=0.000ms; sync fullValidation=2.000ms save=5.000ms preparedCommit=1.000ms; roster frames=3 max=1.000ms
+50x1000 combined: frames=152 total=147.000ms max=2.000ms >1ms=1 >2ms=0; filter frames=2 max=1.000ms; sync fullValidation=18.000ms save=39.000ms preparedCommit=1.000ms; roster frames=24 max=2.000ms
+100x2000 combined: frames=592 total=577.000ms max=4.000ms >1ms=7 >2ms=2; filter frames=2 max=1.000ms; sync fullValidation=73.000ms save=154.000ms preparedCommit=2.000ms; roster frames=94 max=2.000ms
+250x4096 combined: frames=3132 total=3021.000ms max=5.000ms >1ms=25 >2ms=4; filter frames=3 max=1.000ms; sync fullValidation=413.000ms save=807.000ms preparedCommit=8.000ms; roster frames=489 max=2.000ms
+sample 2
+10x500 combined: frames=21 total=19.000ms max=1.000ms >1ms=0 >2ms=0; filter frames=2 max=1.000ms; sync fullValidation=2.000ms save=5.000ms preparedCommit=1.000ms; roster frames=3 max=1.000ms
+50x1000 combined: frames=153 total=147.000ms max=2.000ms >1ms=1 >2ms=0; filter frames=2 max=1.000ms; sync fullValidation=18.000ms save=67.000ms preparedCommit=1.000ms; roster frames=25 max=2.000ms
+100x2000 combined: frames=610 total=593.000ms max=4.000ms >1ms=9 >2ms=3; filter frames=2 max=1.000ms; sync fullValidation=75.000ms save=154.000ms preparedCommit=2.000ms; roster frames=114 max=2.000ms
+250x4096 combined: frames=3176 total=3077.000ms max=5.000ms >1ms=27 >2ms=6; filter frames=3 max=1.000ms; sync fullValidation=410.000ms save=786.000ms preparedCommit=10.000ms; roster frames=493 max=2.000ms
+sample 3
+10x500 combined: frames=23 total=20.000ms max=1.000ms >1ms=0 >2ms=0; filter frames=1 max=0.000ms; sync fullValidation=2.000ms save=5.000ms preparedCommit=1.000ms; roster frames=3 max=1.000ms
+50x1000 combined: frames=153 total=147.000ms max=2.000ms >1ms=2 >2ms=0; filter frames=1 max=0.000ms; sync fullValidation=18.000ms save=39.000ms preparedCommit=2.000ms; roster frames=24 max=1.000ms
+100x2000 combined: frames=605 total=591.000ms max=2.000ms >1ms=2 >2ms=0; filter frames=2 max=1.000ms; sync fullValidation=83.000ms save=154.000ms preparedCommit=2.000ms; roster frames=94 max=2.000ms
+250x4096 combined: frames=3138 total=3081.000ms max=4.000ms >1ms=24 >2ms=1; filter frames=2 max=1.000ms; sync fullValidation=413.000ms save=790.000ms preparedCommit=8.000ms; roster frames=485 max=4.000ms
+sample 4
+10x500 combined: frames=23 total=21.000ms max=2.000ms >1ms=1 >2ms=0; filter frames=1 max=0.000ms; sync fullValidation=2.000ms save=5.000ms preparedCommit=0.000ms; roster frames=4 max=1.000ms
+50x1000 combined: frames=155 total=149.000ms max=2.000ms >1ms=1 >2ms=0; filter frames=1 max=0.000ms; sync fullValidation=27.000ms save=39.000ms preparedCommit=1.000ms; roster frames=24 max=2.000ms
+100x2000 combined: frames=617 total=609.000ms max=5.000ms >1ms=6 >2ms=1; filter frames=1 max=0.000ms; sync fullValidation=75.000ms save=150.000ms preparedCommit=3.000ms; roster frames=95 max=1.000ms
+250x4096 combined: frames=3130 total=3000.000ms max=4.000ms >1ms=22 >2ms=3; filter frames=2 max=1.000ms; sync fullValidation=394.000ms save=790.000ms preparedCommit=6.000ms; roster frames=502 max=4.000ms
+sample 5
+10x500 combined: frames=24 total=20.000ms max=1.000ms >1ms=0 >2ms=0; filter frames=1 max=0.000ms; sync fullValidation=2.000ms save=5.000ms preparedCommit=0.000ms; roster frames=4 max=2.000ms
+50x1000 combined: frames=152 total=147.000ms max=2.000ms >1ms=2 >2ms=0; filter frames=2 max=1.000ms; sync fullValidation=18.000ms save=38.000ms preparedCommit=3.000ms; roster frames=24 max=1.000ms
+100x2000 combined: frames=610 total=610.000ms max=4.000ms >1ms=10 >2ms=5; filter frames=2 max=1.000ms; sync fullValidation=89.000ms save=152.000ms preparedCommit=3.000ms; roster frames=93 max=1.000ms
+250x4096 combined: frames=3135 total=3038.000ms max=4.000ms >1ms=28 >2ms=7; filter frames=3 max=1.000ms; sync fullValidation=415.000ms save=793.000ms preparedCommit=6.000ms; roster frames=487 max=4.000ms

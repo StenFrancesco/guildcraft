@@ -1,5 +1,13 @@
 local _, GGM = ...
 
+local function checkpoint()
+    if GGM.CPUCheckpoint then GGM.CPUCheckpoint() end
+end
+local function sort(rows, less)
+    if GGM.CPUSort then return GGM.CPUSort(rows, less) end
+    return table.sort(rows, less)
+end
+
 function GGM.IsProfessionSyncInteger(value, minimum, maximum)
     return type(value) == "number" and value >= minimum and value <= maximum and value == math.floor(value)
 end
@@ -9,6 +17,7 @@ local function hashText(text)
     -- This is a versioned equality hint, never an authentication mechanism.
     local left, right = 5381, 17
     for index = 1, #text do
+        if index % 32 == 1 then checkpoint() end
         local byte = text:byte(index)
         left = (left * 33 + byte) % 2147483647
         right = (right * 65599 + byte) % 2147483647
@@ -28,7 +37,10 @@ end
 -- The cache is weakly keyed by database. Writers invalidate it after mutations;
 -- signatures also catch direct SavedVariables edits made between reads.
 function GGM.InvalidateProfessionSyncCache(db)
-    if type(db) == "table" then syncCacheByDatabase[db] = nil end
+    if type(db) == "table" then
+        syncCacheByDatabase[db] = nil
+        if GGM.InvalidateCPURevision then GGM.InvalidateCPURevision(db) end
+    end
 end
 
 local function cacheSignatures(db)
@@ -41,10 +53,12 @@ local function cacheSignatures(db)
     metadata[#metadata + 1] = signatureField(db.professionIndexRepairNeeded)
     if type(db.localCharacterGUIDs) == "table" then
         for guid, owned in pairs(db.localCharacterGUIDs) do
+            checkpoint()
             metadata[#metadata + 1] = signatureField(guid) .. signatureField(owned)
         end
     end
     for localID, character in pairs(db.professionCharacters) do
+        checkpoint()
         if type(character) ~= "table" then return nil, nil end
         identities[#identities + 1] = signatureField(localID) .. signatureField(character.guid) .. signatureField(character.key)
         metadata[#metadata + 1] = signatureField(localID) .. signatureField(character.active)
@@ -60,6 +74,7 @@ local function cacheSignatures(db)
         if type(snapshots) == "table" then
             identities[#identities + 1] = signatureField(snapshots)
             for professionID, snapshot in pairs(snapshots) do
+                checkpoint()
                 metadata[#metadata + 1] = signatureField(localID) .. signatureField(professionID)
                     .. signatureField(snapshot)
                 if type(snapshot) == "table" then
@@ -73,10 +88,11 @@ local function cacheSignatures(db)
         end
     end
     for professionID, recipes in pairs(db.professionRecipeIndex) do
+        checkpoint()
         identities[#identities + 1] = signatureField(professionID) .. signatureField(recipes)
     end
-    table.sort(identities)
-    table.sort(metadata)
+    sort(identities)
+    sort(metadata)
     return table.concat(identities, ";"), table.concat(metadata, ";")
 end
 
@@ -108,11 +124,13 @@ function GGM.HashProfessionRecipes(professionID, recipes)
     end
     local count = 0
     for key in pairs(recipes) do
+        checkpoint()
         if not GGM.IsProfessionSyncInteger(key, 1, GGM.PROFESSION_MAX_RECIPES) then return nil, "profession-sync-membership-invalid" end
         count = count + 1
     end
     local parts, previous = { "P1:", tostring(professionID), ":" }, 0
     for index = 1, count do
+        checkpoint()
         local row = recipes[index]
         local id = type(row) == "table" and row.recipeID or nil
         if not GGM.IsProfessionSyncInteger(id, 1, 2147483647) or id <= previous then
@@ -142,15 +160,17 @@ function GGM.GetProfessionSyncRecord(db, guid, professionID)
     local index = db.professionRecipeIndex[professionID]
     if index ~= nil and type(index) ~= "table" then return nil, "profession-sync-index-invalid" end
     for recipeID, entry in pairs(index or {}) do
+        checkpoint()
         if type(entry) ~= "table" or type(entry.crafters) ~= "table" then return nil, "profession-sync-index-invalid" end
         for _, crafterID in ipairs(entry.crafters) do
+            checkpoint()
             if crafterID == localID then
                 recipes[#recipes + 1] = { recipeID = recipeID, name = entry.name, outputIcon = entry.outputIcon }
                 break
             end
         end
     end
-    table.sort(recipes, function(a, b) return a.recipeID < b.recipeID end)
+    sort(recipes, function(a, b) return a.recipeID < b.recipeID end)
     local capture = {
         guid = guid, professionID = professionID, professionName = snapshot.professionName,
         capturedAt = snapshot.capturedAt, source = snapshot.source, status = "cached", complete = true, recipes = recipes,
@@ -238,6 +258,7 @@ function GGM.GetProfessionSyncManifest(db, professionID)
     if cachedRows then
         local rows = {}
         for index, row in ipairs(cachedRows.rows) do
+            checkpoint()
             rows[index] = { guid = row.guid, hash = row.hash, capturedAt = row.capturedAt }
         end
         return rows, nil
@@ -245,6 +266,7 @@ function GGM.GetProfessionSyncManifest(db, professionID)
 
     local rows, captures = {}, {}
     for localID, character in pairs(db.professionCharacters) do
+        checkpoint()
         if character.active == true then
             local record, recordErr = GGM.GetProfessionRecord(db, character.key)
             if not record then return nil, recordErr end
@@ -258,14 +280,23 @@ function GGM.GetProfessionSyncManifest(db, professionID)
     end
     -- Distribute each indexed membership once. Re-scanning every recipe's
     -- entire crafter list separately for every guild character is quadratic.
-    for recipeID, entry in pairs(db.professionRecipeIndex[professionID] or {}) do
+    local indexedRecipes, recipeIDs = db.professionRecipeIndex[professionID] or {}, {}
+    for recipeID in pairs(indexedRecipes) do checkpoint(); recipeIDs[#recipeIDs + 1] = recipeID end
+    sort(recipeIDs)
+    for _, recipeID in ipairs(recipeIDs) do
+        checkpoint()
+        local entry = indexedRecipes[recipeID]
+        -- Read-only temporary descriptors are shared by all captures in this build.
+        local recipe = { recipeID = recipeID, name = entry.name, outputIcon = entry.outputIcon }
         for _, localID in ipairs(entry.crafters) do
+            checkpoint()
             local capture = captures[localID]
-            if capture then capture.recipes[#capture.recipes + 1] = { recipeID = recipeID, name = entry.name, outputIcon = entry.outputIcon } end
+            if capture then capture.recipes[#capture.recipes + 1] = recipe end
         end
     end
     for localID, capture in pairs(captures) do
-        table.sort(capture.recipes, function(a, b) return a.recipeID < b.recipeID end)
+        checkpoint()
+        -- Memberships were distributed in ascending recipe-ID order once for all characters.
         local complete, captureErr = GGM.ValidateProfessionCapture(capture)
         if not complete then return nil, captureErr end
         local character = db.professionCharacters[localID]
@@ -280,8 +311,9 @@ function GGM.GetProfessionSyncManifest(db, professionID)
         end
         rows[#rows + 1] = { guid = capture.guid, hash = contentHash, capturedAt = capture.capturedAt }
     end
-    table.sort(rows, function(a, b) return a.guid < b.guid end)
+    sort(rows, function(a, b) return a.guid < b.guid end)
     for guid in pairs(cache.contentHashes) do
+        checkpoint()
         if not db.localCharacterIDByGUID[guid] then cache.contentHashes[guid] = nil end
     end
     local digest, digestErr, count = GGM.GetProfessionSyncManifestDigest(professionID, rows)
@@ -299,6 +331,7 @@ function GGM.GetProfessionSyncDigest(db, professionID, members)
     if not members then return manifest.digest, nil, manifest.count end
     local signatureParts, count = {}, 0
     for _, row in ipairs(rows) do
+        checkpoint()
         local included = not not members[row.guid]
         signatureParts[#signatureParts + 1] = signatureField(row.guid) .. (included and "1" or "0")
         if included then count = count + 1 end
@@ -309,6 +342,7 @@ function GGM.GetProfessionSyncDigest(db, professionID, members)
     end
     local includedRows = {}
     for _, row in ipairs(rows) do
+        checkpoint()
         if members[row.guid] then
             includedRows[#includedRows + 1] = row
         end
@@ -326,6 +360,7 @@ function GGM.GetProfessionSyncManifestDigest(professionID, rows)
     local parts = { "D2:", tostring(professionID), ":" }
     local count = 0
     for _, row in ipairs(rows) do
+        checkpoint()
         if type(row) ~= "table" or not GGM.IsProfessionGUID(row.guid)
             or type(row.hash) ~= "string" or not row.hash:match("^%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x$")
             or type(row.capturedAt) ~= "number" or row.capturedAt < 0

@@ -298,6 +298,29 @@ See [the PR2 measurements](docs/performance/2026-10-22-profession-sync-cache.md)
 for methodology and limits. Standalone CPU results do not establish in-game FPS
 improvements.
 
+## CPU preparation and validation
+
+Cold profession catalogs, list searches, synchronization calculations, local
+snapshot preparation and roster validation run through one event-driven background
+queue. Completed results replace the prior view together; changing profession
+clears the previous profession's clickable rows while the new view prepares.
+Closing a view or changing relevant data, guild/session or database cancels old
+work. The queue stops its update handler when no work remains.
+
+Ordinary saves can reuse full index validation prepared for one exact database
+revision and identity. That permission is single-use and checked again before
+membership changes. Load/recovery validation and malformed-record checks remain;
+renames, repairs and stale or replaced inputs use the full validation path.
+Presence-only roster changes update availability without rebuilding unchanged
+profession catalogs.
+
+The shared preparation deadline targets spare frame time, but measured GC and
+stress-case atomic work can exceed the initial 1 ms background / 2 ms interactive
+targets. Gear, Bank, codecs and public synchronous APIs retain their existing
+contracts. See [PR5 measurements and remaining limits](docs/performance/2026-10-22-pr5-cpu-work.md)
+for raw probes, fixed-deadline behavior and checks. In-game frame-time and memory
+measurements across all three addons remain outstanding.
+
 ## Open pull requests
 
 Status checked 14 October 2026. GitHub currently marks all three open PRs as drafts, so none is marked ready for merge.
