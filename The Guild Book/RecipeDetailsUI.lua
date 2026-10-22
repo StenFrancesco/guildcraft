@@ -6,6 +6,8 @@ local WHISPER_COOLDOWN_SECONDS = 2
 local createCrafterDropdown
 local refreshCrafterWhisperState
 local shown
+local updateTrackingControls
+local renderMaterials
 
 local function createUIPanelButton(api, parent, label, width, height)
     local button = api.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -541,7 +543,7 @@ createCrafterDropdown = function(details, forceScrollable)
     end)
 end
 
-local function renderMaterials(details, model)
+renderMaterials = function(details, model)
     details.materialModel = model
     local message = model.message or (#model.materials == 0 and "No crafting materials required." or "")
     details.materialStatus:SetText(message)
@@ -590,6 +592,15 @@ local function renderMaterials(details, model)
     for index = rowIndex + 1, #details.materialRows do details.materialRows[index]:Hide() end
     details.materialContent:SetHeight(math.max(1, y))
     details.materialScroll:SetVerticalScroll(0)
+    if updateTrackingControls then updateTrackingControls(details) end
+end
+
+updateTrackingControls = function(details)
+    if not details.trackMaterialsButton then return end
+    local amount = parseAmount(details.api, details.amountInput:GetText())
+    local snapshot = GGM.CreateMaterialTrackingSnapshot(details.api, details.recipeID,
+        details.currentRecipeName, amount, details.materialModel)
+    details.trackMaterialsButton:SetEnabled(snapshot ~= nil)
 end
 
 local function createWhisperControls(details)
@@ -609,6 +620,7 @@ local function createWhisperControls(details)
     details.amountInput:SetScript("OnTextChanged", function()
         refreshCrafterWhisperState(details, nil, false)
         updateCraftControls(details)
+        updateTrackingControls(details)
     end)
 
     local function makeAmountButton(label, offset, delta)
@@ -661,8 +673,13 @@ local function createWhisperControls(details)
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CRAFT_BEGIN")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CLOSE")
+    details.rosterEventFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
     details.rosterEventFrame:SetScript("OnEvent", function(_, event)
         if not shown(details) then return end
+        if event == "PLAYER_REGEN_ENABLED" or event == "TRADE_SKILL_LIST_UPDATE"
+            or event == "GET_ITEM_INFO_RECEIVED" then
+            renderMaterials(details, GGM.BuildRecipeMaterialDetails(api, details.recipeID))
+        end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.browser.craftingContextSkillLineID = nil
@@ -763,7 +780,7 @@ local function createWindow(browser, recipe)
     details.materialPanel:SetPoint("TOPLEFT", details, "TOPLEFT", 32, -164)
     details.materialPanel:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -32, 262)
     details.materialPanel.background:SetColorTexture(0.93, 0.78, 0.51, 0.18)
-    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 46, -180, 424)
+    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 46, -180, 270)
     details.materialHeading:SetText("CRAFTING MATERIALS")
     details.materialStatus = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 46, -208, 424)
     details.materialStatus:SetHeight(32)
@@ -785,6 +802,15 @@ local function createWindow(browser, recipe)
     details.cachedStatus:SetText("Recipe knowledge is cached.")
     applyTextTheme(details.cachedStatus, "muted")
     createWhisperControls(details)
+    details.trackMaterialsButton = createUIPanelButton(api, details, "Track materials", 144, 26)
+    details.trackMaterialsButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -46, -172)
+    details.trackMaterialsButton:SetScript("OnClick", function()
+        local amount = parseAmount(api, details.amountInput:GetText())
+        -- Read again at the user's click rather than trusting a stale schematic.
+        local model = GGM.BuildRecipeMaterialDetails(api, details.recipeID)
+        renderMaterials(details, model)
+        GGM.TrackRecipeMaterials(api, browser.db, details.recipeID, details.currentRecipeName, amount, model)
+    end)
     createCrafterDropdown(details)
     setActionMode(details, browser.professionLibraryMode == "Own")
     api.UISpecialFrames = api.UISpecialFrames or {}

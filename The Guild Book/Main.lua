@@ -130,6 +130,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
         GGM.professionPlayerLoggedIn = true
+        if type(GGM.RestoreMaterialTracker) == "function" then
+            GGM.RestoreMaterialTracker(_G, GGM.db)
+        end
         if GGM.professionSync and type(GGM.LoginProfessionSync) == "function" then
             if GGM.LoginProfessionSync(GGM.professionSync) then GGM.professionLoginSyncIssued = true end
         end

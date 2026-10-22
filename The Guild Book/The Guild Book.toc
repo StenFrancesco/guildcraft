@@ -27,6 +27,8 @@ ProfessionAutomaticSync.lua
 SavedDatabases.lua
 SavedCharacterModel.lua
 RecipeDetails.lua
+MaterialTracker.lua
+MaterialTrackerUI.lua
 RecipeDetailsUI.lua
 BankView.lua
 BankUI.lua

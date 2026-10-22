@@ -14,6 +14,8 @@ local function loadUI()
     T.loadAddonFile("The Guild Book gear/Storage.lua", GGM)
     T.loadAddonFile("The Guild Book/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTracker.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTrackerUI.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetailsUI.lua", GGM)
     local bankView = loadfile("The Guild Book/BankView.lua")
     if bankView then bankView("The Guild Book", GGM) end
@@ -1009,6 +1011,107 @@ T.test("changing profession library mode closes open recipe details", function()
     browser.professionLibraryToggle.allRadio.scripts.OnClick(browser.professionLibraryToggle.allRadio)
     T.assertEqual(browser.professionLibraryMode, "All")
     T.assertFalse(details:IsShown())
+end)
+
+T.test("recipe track button uses Amount and tracker survives closing the browser with live counts", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local count = 1
+    api.C_Item = { GetItemCount = function(id) return id == 1 and count or 0 end }
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    details.amountInput:SetText("3")
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    T.assertNotNil(tracker)
+    T.assertTrue(tracker.parent == api.UIParent)
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 1 / 9")
+    T.assertEqual(tracker.snapshot.amount, 3)
+    browser:Hide()
+    T.assertTrue(tracker:IsShown())
+    count = 9
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 9 / 9")
+    T.assertEqual(tracker.rows[1].label.textColor[2], 1)
+    count = 0
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 0 / 9")
+    T.assertNotNil(GGM.LoadMaterialTracking(api, browser.db))
+    tracker.untrackButton.scripts.OnClick()
+    T.assertFalse(tracker:IsShown())
+    T.assertNil(GGM.LoadMaterialTracking(api, browser.db))
+end)
+
+T.test("tracker restores without browser and saves its position independently for each character", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    tracker.GetLeft = function() return 800 end
+    tracker.GetTop = function() return 700 end
+    tracker.scripts.OnDragStop(tracker)
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    tracker = fresh.materialTrackerFrame
+    T.assertTrue(tracker:IsShown())
+    T.assertEqual(tracker.point.x, 800)
+    T.assertEqual(tracker.point.y, 700)
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: ? / 3")
+    T.assertNil(fresh.guildGearBrowserFrame)
+    api.UnitGUID = function() return "Player-2-DEF" end
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertFalse(tracker:IsShown())
+end)
+
+T.test("tracker scrolls long lists and hides surplus rows when a shorter recipe replaces them", function()
+    local GGM, api, browser = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local model = { state = "ready", materials = {} }
+    for index = 1, 20 do
+        model.materials[index] = { quantity = 1, choices = { { itemID = index, name = "Material " .. index } } }
+    end
+    T.assertTrue(GGM.TrackRecipeMaterials(api, browser.db, 123, "Long recipe", 1, model))
+    local tracker = GGM.materialTrackerFrame
+    T.assertEqual(#tracker.rows, 20)
+    T.assertTrue(tracker.content.height > tracker.height)
+    T.assertTrue(tracker.scroll.scrollChild == tracker.content)
+    model.materials = { model.materials[1] }
+    T.assertTrue(GGM.TrackRecipeMaterials(api, browser.db, 124, "Short recipe", 1, model))
+    T.assertTrue(GGM.materialTrackerFrame == tracker)
+    T.assertTrue(tracker.rows[1]:IsShown())
+    T.assertFalse(tracker.rows[20]:IsShown())
+    T.assertEqual(tracker.scroll.verticalScroll, 0)
+end)
+
+T.test("recipe tracking rejects invalid Amount unavailable materials and refreshes once data is ready", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    details.amountInput:SetText("0")
+    T.assertFalse(details.trackMaterialsButton.enabled)
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertNil(GGM.materialTrackerFrame)
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertFalse(details.trackMaterialsButton.enabled)
+    GGM.BuildRecipeMaterialDetails = function() return { state = "ready", materials = {
+        { quantity = 2, choices = { { itemID = 4, name = "Silver" } } },
+    } } end
+    details.rosterEventFrame.scripts.OnEvent(nil, "PLAYER_REGEN_ENABLED")
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertEqual(GGM.materialTrackerFrame.snapshot.recipeID, 22)
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertEqual(GGM.materialTrackerFrame.snapshot.recipeID, 11)
+    T.assertEqual(#GGM.materialTrackerFrame.rows, 1)
 end)
 
 local function configureCrafterWhisperAPI(GGM, api, rows)
