@@ -462,14 +462,14 @@ local function captureInventory(controller)
         return false, err
     end
 
+    local identity, identityErr = getPlayerIdentity(api)
+    if not identity then return failed(identityErr) end
+    controller.lastInventoryIdentity = identity
     local outOfCombat, combatErr = combatState(api)
     if outOfCombat ~= true then
         controller.inventoryPending = true
         return failed(combatErr)
     end
-    local identity, identityErr = getPlayerIdentity(api)
-    if not identity then return failed(identityErr) end
-    controller.lastInventoryIdentity = identity
 
     -- The total includes the reagent bag on clients that support it. On legacy
     -- clients container 5 can be a bank bag, so only use their normal bag range.

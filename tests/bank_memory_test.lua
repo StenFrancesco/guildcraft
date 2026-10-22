@@ -120,6 +120,27 @@ local function inventoryFixture()
     return api, database, newController(memory, api, database)
 end
 
+T.test("initial combat-blocked inventory capture marks the saved character inventory incomplete", function()
+    local api, db, initialController = inventoryFixture()
+    send(initialController, "PLAYER_LOGIN")
+    local record = db.characters["Alice-Silvermoon"]
+    local inventory = assert(record.inventory)
+    local capturedAt = inventory.capturedAt
+    local bags = inventory.bags
+
+    local reloadedController = newController(loadModule(), api, db)
+    api.combat = true
+    api.now = api.now + 10
+    local ok, err = send(reloadedController, "PLAYER_LOGIN")
+
+    T.assertFalse(ok)
+    T.assertEqual(err, "combat-state-not-explicitly-false")
+    T.assertEqual(inventory.status, "incomplete")
+    T.assertEqual(inventory.capturedAt, capturedAt)
+    T.assertEqual(inventory.bags, bags)
+    T.assertEqual(inventory.bags[0].slots[1].count, 3)
+end)
+
 T.test("inventory login saves backpack and equipped bags independently of bank tabs", function()
     local api, db, controller = inventoryFixture()
     send(controller, "PLAYER_LOGIN")

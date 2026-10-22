@@ -66,6 +66,32 @@ T.test("bank entries union and deduplicate valid GGM and companion characters", 
     T.assertNil(entries[3].record)
 end)
 
+T.test("inventory-only companion records do not change bank coverage", function()
+    local key = "Alice-Silvermoon"
+    local ggmRecord = { identity = { key = key, name = "Alice", realm = "Silvermoon" } }
+    local inventoryOnly = {
+        identity = ggmRecord.identity,
+        status = "incomplete",
+        tabs = {},
+        inventory = { capturedAt = 1700000000, slots = {} },
+    }
+    local companionDB = {
+        schemaVersion = 1,
+        characters = { [key] = inventoryOnly },
+        guilds = {},
+    }
+    local entries = GGM.BuildBankEntries({ schemaVersion = GGM.SCHEMA_VERSION, characters = {
+        [key] = ggmRecord,
+    } }, companionDB, nil)
+
+    T.assertEqual(#entries, 2)
+    T.assertNil(entries[2].record)
+    T.assertEqual(entries[2].status, "no-data")
+
+    entries = GGM.BuildBankEntries({ schemaVersion = GGM.SCHEMA_VERSION, characters = {} }, companionDB, nil)
+    T.assertEqual(#entries, 1, "inventory-only records must not create bank characters")
+end)
+
 T.test("bank detail validates tabs and distinguishes cached empty slots from failed tabs", function()
     local companionDB, member = bankDB()
     local entries = GGM.BuildBankEntries({ schemaVersion = GGM.SCHEMA_VERSION, characters = {} }, companionDB, nil)
