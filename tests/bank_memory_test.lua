@@ -109,6 +109,107 @@ local function send(controller, event, ...)
     return controller:HandleEvent(event, ...)
 end
 
+local function inventoryFixture()
+    local memory, api = loadModule(), makeAPI()
+    api.NUM_BAG_SLOTS = 4
+    api.personalSlots[0] = {
+        [1] = { itemID = 2001, stackCount = 3, hyperlink = "item:2001", iconFileID = 99 },
+    }
+    api.personalSlots[1] = { [2] = { itemID = 2002, stackCount = 7 } }
+    local database = assert(memory.InitializeDatabase(nil))
+    return api, database, newController(memory, api, database)
+end
+
+T.test("inventory login saves backpack and equipped bags independently of bank tabs", function()
+    local api, db, controller = inventoryFixture()
+    send(controller, "PLAYER_LOGIN")
+    local record = assert(db.characters["Alice-Silvermoon"])
+    local inventory = assert(record.inventory, "missing carried inventory")
+    T.assertEqual(inventory.status, "cached")
+    T.assertEqual(inventory.capturedAt, api.now)
+    T.assertEqual(inventory.bags[0].slots[1].itemID, 2001)
+    T.assertEqual(inventory.bags[0].slots[1].count, 3)
+    T.assertEqual(inventory.bags[0].slots[1].itemLink, "item:2001")
+    T.assertEqual(inventory.bags[0].slots[1].icon, 99)
+    T.assertNil(inventory.bags[0].slots[2])
+    T.assertEqual(inventory.bags[1].slots[2].count, 7)
+    T.assertEqual(inventory.bags[4].numSlots, 0)
+    T.assertNil(inventory.bags[5]) -- legacy bank container must never be carried inventory
+    T.assertNil(next(record.tabs))
+    T.assertNil(api.calls.canUseBank)
+end)
+
+T.test("inventory refresh clears removed items and bags while preserving bank and offline character data", function()
+    local api, db, controller = inventoryFixture()
+    send(controller, "BANKFRAME_OPENED")
+    send(controller, "BANKFRAME_CLOSED")
+    local record = db.characters["Alice-Silvermoon"]
+    local bank, bankTime = record.tabs[5], record.capturedAt
+    send(controller, "PLAYER_LOGIN")
+    api.personalSlots[0] = {}
+    api.personalSlots[1] = nil
+    api.now = api.now + 10
+    send(controller, "BAG_UPDATE_DELAYED")
+    T.assertEqual(record.inventory.bags[0].numSlots, 2)
+    T.assertNil(next(record.inventory.bags[0].slots))
+    T.assertEqual(record.inventory.bags[1].numSlots, 0)
+    T.assertEqual(record.inventory.capturedAt, api.now)
+    T.assertEqual(record.tabs[5], bank)
+    T.assertEqual(record.capturedAt, bankTime)
+    T.assertEqual(record.status, "cached")
+    local aliceInventory = record.inventory
+    api.UnitFullName = function() return "Bob", "Silvermoon" end
+    send(controller, "PLAYER_ENTERING_WORLD")
+    T.assertNotNil(db.characters["Bob-Silvermoon"].inventory)
+    T.assertEqual(record.inventory, aliceInventory)
+    T.assertEqual(assert(loadModule().InitializeDatabase(db)), db)
+end)
+
+T.test("inventory includes modern reagent bag when the client declares equipped bag range", function()
+    local api, db, controller = inventoryFixture()
+    api.NUM_TOTAL_EQUIPPED_BAG_SLOTS = 5
+    send(controller, "PLAYER_LOGIN")
+    T.assertEqual(db.characters["Alice-Silvermoon"].inventory.bags[5].slots[1].itemID, 1001)
+end)
+
+T.test("inventory preserves last known contents on failed protected and transient empty backpack reads", function()
+    for _, failure in ipairs({ "secret", "throw", "zero", "checker" }) do
+        local api, db, controller = inventoryFixture()
+        send(controller, "PLAYER_LOGIN")
+        local inventory = assert(db.characters["Alice-Silvermoon"].inventory)
+        if failure == "secret" then
+            api.personalSlots[1][2].stackCount = { isSecret = true }
+        elseif failure == "throw" then
+            api.C_Container.GetContainerItemInfo = function() error("unavailable") end
+        elseif failure == "zero" then
+            api.personalSlots[0] = nil
+        else
+            api.issecretvalue = nil
+        end
+        api.now = api.now + 10
+        send(controller, "BAG_UPDATE_DELAYED")
+        T.assertEqual(db.characters["Alice-Silvermoon"].inventory, inventory)
+        T.assertEqual(inventory.status, "incomplete")
+        T.assertEqual(inventory.capturedAt, 1700000000)
+        T.assertEqual(inventory.bags[0].slots[1].count, 3)
+    end
+end)
+
+T.test("inventory defers combat reads and retries after combat with the bank closed", function()
+    local api, db, controller = inventoryFixture()
+    send(controller, "PLAYER_LOGIN")
+    local reads = api.calls.personalItemInfo
+    api.combat = true
+    api.personalSlots[0][1].stackCount = 8
+    send(controller, "BAG_UPDATE_DELAYED")
+    T.assertEqual(api.calls.personalItemInfo, reads)
+    T.assertEqual(db.characters["Alice-Silvermoon"].inventory.status, "incomplete")
+    api.combat = false
+    send(controller, "PLAYER_REGEN_ENABLED")
+    T.assertEqual(db.characters["Alice-Silvermoon"].inventory.bags[0].slots[1].count, 8)
+    T.assertEqual(db.characters["Alice-Silvermoon"].inventory.status, "cached")
+end)
+
 T.test("bank memory initializes version one and leaves unsupported saved schemas untouched", function()
     local memory = loadModule()
     T.assertTrue(type(memory.InitializeDatabase) == "function")
@@ -501,7 +602,7 @@ T.test("main controller registers bank lifecycle and contents update events", fu
 
     T.assertNotNil(handler)
     for _, event in ipairs({
-        "ADDON_LOADED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
+        "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
         "PLAYERBANKSLOTS_CHANGED",
         "BANK_TABS_CHANGED", "BANK_TAB_SETTINGS_UPDATED",
         "GUILDBANKFRAME_OPENED", "GUILDBANKFRAME_CLOSED",
