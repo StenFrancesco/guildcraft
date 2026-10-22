@@ -1641,6 +1641,31 @@ T.test("large crafter lists switch native dropdown to a scrollable menu on refre
     T.assertEqual(details.selectedCrafterKey, details.crafters[20].key)
 end)
 
+T.test("taller equipment window preserves the navigation artwork scale on every tab", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    for _, tab in ipairs({ "Character", "Professions", "Bank" }) do
+        GGM.SelectGuildGearBrowserTab(frame, tab)
+        local top, bottom = frame.navigationBackdropTop, frame.navigationBackdropBottom
+        T.assertTrue(top ~= nil and bottom ~= nil, "shared navigation needs its own unstretched artwork")
+        T.assertEqual(top.texture, GGM.UIJournalTextures.window)
+        T.assertEqual(top.width, GGM.UIStyleTokens.railWidth)
+        T.assertTrue(top.height >= 332, "all three painted navigation rows must retain their original scale")
+        T.assertEqual(top.point.y, 0)
+        T.assertEqual(top.texCoord[1], 0)
+        T.assertEqual(top.texCoord[3], 0)
+        T.assertTrue(math.abs(top.width / top.texCoord[2] - 1400) < 0.001,
+            "navigation artwork must retain its original horizontal scale")
+        T.assertTrue(math.abs(top.height / top.texCoord[4] - 630) < 0.001,
+            "navigation artwork must retain its original vertical scale")
+        T.assertEqual(bottom.texCoord[3], top.texCoord[4])
+        T.assertEqual(bottom.texCoord[4], 1)
+        T.assertEqual(bottom.points.TOPLEFT.y, -top.height)
+        T.assertEqual(bottom.points.BOTTOMLEFT.y, 0)
+        T.assertTrue(bottom.points.BOTTOMLEFT.relativeTo == frame)
+    end
+end)
+
 T.test("journal window uses the reference canvas size, custom backdrop, and screen-fit scale", function()
     local GGM = loadUI()
     local api = makeBrowserAPI()

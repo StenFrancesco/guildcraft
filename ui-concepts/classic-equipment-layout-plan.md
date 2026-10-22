@@ -19,3 +19,11 @@ Approved by the user on 2026-10-22. Base: b78a47a5bc2d42c3c9ba8bbc0719f13d83b63e
 - Off-game previews inspected: complete, long names, incomplete equipment and no search results. Native icons/fonts are substitutes in this renderer; game FontStrings bound long names to 32px. The existing renderer fixture adapter was adjusted in memory only.
 - No new addon media, capture, storage or communication changes. Live in-game rendering remains to be checked.
 - Independent review by gpt-6-luna; no outstanding actionable findings.
+
+## Navigation alignment correction
+
+The first test package stretched the whole shared backdrop from 630px to 694px while navigation controls retained their original positions. The painted navigation buttons therefore drifted away from the icons and labels on every tab.
+
+The shared navigation now reuses two crops of journal-window.blp. The top 366px retains the original 1400x630 artwork scale, covering the brand and all three navigation buttons; only the lower decorative illustration extends to the taller frame. No media file or profession/bank implementation changed.
+
+Regression reproduced with a new cross-tab artwork-scale test (815 passed, 1 failed before the fix); final suite: 816 passed, 0 failed. Inspected Characters, Professions and Bank previews with the temporary fixture adapter. Live WoW verification is still required.

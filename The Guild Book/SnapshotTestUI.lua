@@ -1865,6 +1865,24 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.background:SetVertexColor(1, 1, 1, 1)
     frame.background:SetAlpha(1)
 
+    -- The journal texture contains painted navigation buttons laid out for a
+    -- 1400x630 canvas. Keep that section at its original scale as the taller
+    -- equipment page grows; only the illustration below the buttons stretches.
+    local originalHeight, navigationBottom = 630, 366
+    local railUV = UI.railWidth / UI.windowWidth
+    local splitUV = navigationBottom / originalHeight
+    frame.navigationBackdropTop = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
+    frame.navigationBackdropTop:SetTexture(JOURNAL_TEXTURES.window)
+    frame.navigationBackdropTop:SetSize(UI.railWidth, navigationBottom)
+    frame.navigationBackdropTop:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    frame.navigationBackdropTop:SetTexCoord(0, railUV, 0, splitUV)
+    frame.navigationBackdropBottom = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
+    frame.navigationBackdropBottom:SetTexture(JOURNAL_TEXTURES.window)
+    frame.navigationBackdropBottom:SetWidth(UI.railWidth)
+    frame.navigationBackdropBottom:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -navigationBottom)
+    frame.navigationBackdropBottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    frame.navigationBackdropBottom:SetTexCoord(0, railUV, splitUV, 1)
+
     frame.navigationRail = api.CreateFrame("Frame", nil, frame)
     frame.navigationRail:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -28)
     frame.navigationRail:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 22)
