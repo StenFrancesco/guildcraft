@@ -749,7 +749,9 @@ local function renderBrowserDetail(frame, entry, api)
             if not slot.empty and not slot.unavailable then button.glow:Show() else button.glow:Hide() end
         end
         button.label:SetText(slot.displayName)
-        button.label:SetHeight(slot.itemID and 32 or 14)
+        local labelHeight = slot.itemID and 32 or 14
+        if slot.itemID and button.paperDollGroup == "bottom" then labelHeight = 44 end
+        button.label:SetHeight(labelHeight)
         button.pendingItemString = slot.itemID and slot.displayName == "Item " .. tostring(slot.itemID) and slot.itemString or nil
         setText(button.status, slot.statusText)
         button.empty = slot.empty

@@ -923,14 +923,20 @@ end)
 
 T.test("character portrait and weapon labels have separate space above the footer", function()
     local GGM = loadUI()
-    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local api = makeBrowserAPI()
+    api.GetItemInfo = function() return "The Untamed Blade" end
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
     local portraitBottom = -frame.modelStage.point.y + frame.modelStage.height
     local footerTop = frame.gearPanel.height - frame.detailFooter.point.y - frame.detailFooter.height
     for _, button in ipairs(frame.slotButtons) do
         if button.paperDollGroup == "bottom" then
             local top = -button.point.y - button.height / 2
-            local labelsBottom = -button.point.y + button.height / 2 + 5 + 16 + 1 + 14
+            local labelsBottom = -button.point.y + button.height / 2 + 5
+                + button.label.height + 1 + 14
             T.assertTrue(top >= portraitBottom + 8, "weapons overlap the saved portrait")
+            T.assertTrue(button.label.height >= 42,
+                "three-line weapon names need enough height to remain readable")
+            T.assertEqual(button.label.text, "The Untamed Blade")
             T.assertTrue(labelsBottom <= footerTop - 6, "weapon labels overlap the footer")
         end
     end
@@ -3190,7 +3196,7 @@ T.test("equipped gear labels show item names from modern and legacy item APIs", 
         local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
         for _, button in ipairs(frame.slotButtons) do
             T.assertEqual(button.label.text, name)
-            T.assertEqual(button.label.height, 32)
+            T.assertEqual(button.label.height, button.paperDollGroup == "bottom" and 44 or 32)
         end
     end
 end)
