@@ -32,4 +32,5 @@ BankView.lua
 BankUI.lua
 SnapshotTestUI.lua
 ProfessionLinkSave.lua
+MinimapLauncher.lua
 Main.lua

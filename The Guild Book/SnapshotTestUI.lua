@@ -2324,6 +2324,12 @@ function GGM.RegisterSnapshotTestSlashCommand(api)
     api.SlashCmdList = api.SlashCmdList or {}
     api.SLASH_GUILDGEARMEMORY1 = "/ggm"
     api.SlashCmdList.GUILDGEARMEMORY = function(message)
+        if type(message) == "string" and message:match("^%s*options%s*$") then
+            if type(GGM.ShowGuildBookOptions) == "function" then
+                GGM.ShowGuildBookOptions(api, GGM.db)
+            end
+            return
+        end
         if type(message) == "string" and message:match("^%s*status%s*$") then
             printAddonStatus(api)
             return
