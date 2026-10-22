@@ -1550,6 +1550,60 @@ T.test("details refresh preserves eligible crafter without querying materials an
     T.assertNil(details.selectedCrafterKey)
 end)
 
+T.test("item data loaded during combat preserves materials and retries after combat", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local buildCount = 0
+    GGM.BuildRecipeMaterialDetails = function()
+        buildCount = buildCount + 1
+        if buildCount == 2 then
+            return { state = "unavailable", materials = {}, message = "Materials unavailable." }
+        end
+        return { state = "ready", materials = {
+            { name = "Metal", quantity = 3, optional = false, choices = { { itemID = 44, name = "Copper" } } },
+        }, pendingItemIDs = { [44] = true } }
+    end
+    api.InCombatLockdown = function() return false end
+    api.issecretvalue = function() return false end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    local originalModel = details.materialModel
+    local originalPending = details.pendingMaterialItemIDs
+
+    api.InCombatLockdown = function() return true end
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "ITEM_DATA_LOAD_RESULT", 44, true)
+    T.assertEqual(details.materialModel, originalModel, "unavailable combat result must retain visible materials")
+    T.assertEqual(details.pendingMaterialItemIDs, originalPending, "unavailable combat result must retain pending item IDs")
+    T.assertEqual(buildCount, 2)
+
+    api.InCombatLockdown = function() return false end
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertEqual(buildCount, 3, "regen should retry the materials model")
+    T.assertEqual(details.materialModel.state, "ready")
+    T.assertEqual(details.pendingMaterialItemIDs[44], true)
+end)
+
+T.test("item metadata refresh preserves the material list scroll offset", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    GGM.BuildRecipeMaterialDetails = function()
+        return { state = "ready", materials = {
+            { name = "Metal", quantity = 3, optional = false, choices = {
+                { itemID = 44, name = "Copper", icon = 10 },
+            } },
+        }, pendingItemIDs = { [44] = true } }
+    end
+    api.issecretvalue = function() return false end
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.materialScroll:SetVerticalScroll(37)
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(details.materialScroll:GetVerticalScroll(), 0, "opening the recipe should start at the top")
+    details.materialScroll:SetVerticalScroll(37)
+
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "ITEM_DATA_LOAD_RESULT", 44, true)
+
+    T.assertEqual(details.materialScroll:GetVerticalScroll(), 37)
+end)
+
 T.test("recipe details close with navigation main-window hide and the close button", function()
     local GGM, _, browser, recipes = recipeDetailsFixture()
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])

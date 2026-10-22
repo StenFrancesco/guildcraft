@@ -541,7 +541,8 @@ createCrafterDropdown = function(details, forceScrollable)
     end)
 end
 
-local function renderMaterials(details, model)
+local function renderMaterials(details, model, preserveScroll)
+    local scrollOffset = preserveScroll and details.materialScroll:GetVerticalScroll() or 0
     details.materialModel = model
     details.pendingMaterialItemIDs = model.pendingItemIDs or {}
     local message = model.message or (#model.materials == 0 and "No crafting materials required." or "")
@@ -590,7 +591,7 @@ local function renderMaterials(details, model)
     end
     for index = rowIndex + 1, #details.materialRows do details.materialRows[index]:Hide() end
     details.materialContent:SetHeight(math.max(1, y))
-    details.materialScroll:SetVerticalScroll(0)
+    details.materialScroll:SetVerticalScroll(scrollOffset)
 end
 
 local function createWhisperControls(details)
@@ -669,9 +670,23 @@ local function createWhisperControls(details)
             local itemID, success = ...
             if isPublic(details.api, itemID) and isPublic(details.api, success)
                 and success == true and details.pendingMaterialItemIDs[itemID] then
-                renderMaterials(details, GGM.BuildRecipeMaterialDetails(details.api, details.recipeID))
+                local model = GGM.BuildRecipeMaterialDetails(details.api, details.recipeID)
+                local combatOK, inCombat = false, nil
+                if model.state == "unavailable" and type(details.api.InCombatLockdown) == "function" then
+                    combatOK, inCombat = pcall(details.api.InCombatLockdown)
+                end
+                if model.state == "unavailable" and combatOK
+                    and isPublic(details.api, inCombat) and inCombat == true then
+                    details.retryMaterialsAfterCombat = true
+                else
+                    renderMaterials(details, model, true)
+                end
             end
             return
+        end
+        if event == "PLAYER_REGEN_ENABLED" and details.retryMaterialsAfterCombat then
+            details.retryMaterialsAfterCombat = nil
+            renderMaterials(details, GGM.BuildRecipeMaterialDetails(details.api, details.recipeID), true)
         end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
