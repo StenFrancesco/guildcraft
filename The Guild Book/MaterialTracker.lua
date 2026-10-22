@@ -75,6 +75,7 @@ function GGM.ValidateMaterialTrackingSnapshot(api, value)
     local saved = GGM.CreateMaterialTrackingSnapshot(api, value.recipeID, value.name, value.amount,
         { state = "ready", materials = value.materials })
     if not saved then return nil end
+    saved.showAltMaterials = public(api, value.showAltMaterials) and value.showAltMaterials == true
     local position = value.position
     if public(api, position) and type(position) == "table" then
         local x, y = position.x, position.y

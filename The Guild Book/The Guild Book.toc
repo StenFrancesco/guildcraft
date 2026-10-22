@@ -28,6 +28,7 @@ SavedDatabases.lua
 SavedCharacterModel.lua
 RecipeDetails.lua
 MaterialTracker.lua
+MaterialTrackerBanks.lua
 MaterialTrackerUI.lua
 RecipeDetailsUI.lua
 BankView.lua

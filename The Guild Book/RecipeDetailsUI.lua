@@ -543,8 +543,38 @@ createCrafterDropdown = function(details, forceScrollable)
     end)
 end
 
-renderMaterials = function(details, model)
+local function materialBankNotes(details, model)
+    local itemIDs = {}
+    for _, group in ipairs(model.materials) do
+        for _, choice in ipairs(group.choices) do
+            if choice.itemID then itemIDs[choice.itemID] = true end
+        end
+    end
+    if not next(itemIDs) then return {} end
+    local locations = GGM.BuildMaterialBankItemLocations(details.api, itemIDs,
+        rawget(details.api, "TheGuildBookBankDB"))
+    local currentKey = GGM.GetMaterialBankPlayerKey(details.api)
+    local notes = {}
+    for itemID, banks in pairs(locations) do
+        local lines = {}
+        for _, bank in ipairs(banks) do
+            if bank.count and bank.count > 0 then
+                local count = (bank.partial and "at least " or "") .. bank.count
+                local observation = bank.partial and "last-known; incomplete" or "last-known"
+                local line = bank.key == currentKey and ("Your bank: " .. count)
+                    or (bank.key .. ": " .. count .. " in personal bank")
+                lines[#lines + 1] = line .. " (" .. observation .. ")"
+            end
+        end
+        notes[itemID] = table.concat(lines, "\n")
+    end
+    return notes
+end
+
+renderMaterials = function(details, model, preserveScroll)
+    local scrollPosition = preserveScroll and details.materialScroll:GetVerticalScroll() or 0
     details.materialModel = model
+    local bankNotes = materialBankNotes(details, model)
     local message = model.message or (#model.materials == 0 and "No crafting materials required." or "")
     details.materialStatus:SetText(message)
     if message == "" then details.materialStatus:Hide() else details.materialStatus:Show() end
@@ -553,7 +583,7 @@ renderMaterials = function(details, model)
     details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -70, 274)
     if #model.materials == 0 then details.materialScroll:Hide() else details.materialScroll:Show() end
     local rowIndex, y = 0, 0
-    local function addRow(label, icon, heading)
+    local function addRow(label, icon, heading, itemID)
         rowIndex = rowIndex + 1
         local row = details.materialRows[rowIndex]
         if not row then
@@ -563,6 +593,8 @@ renderMaterials = function(details, model)
             row.icon:SetSize(24, 24)
             row.icon:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -4)
             row.label = text(row, "GameFontHighlightSmall", "TOPLEFT", row, "TOPLEFT", 40, -8, MATERIAL_WIDTH - 48)
+            row.bankNote = text(row, "GameFontDisableSmall", "TOPLEFT", row, "TOPLEFT", 40, -28, MATERIAL_WIDTH - 48)
+            applyTextTheme(row.bankNote, "muted")
             details.materialRows[rowIndex] = row
         end
         row:ClearAllPoints()
@@ -572,6 +604,14 @@ renderMaterials = function(details, model)
         row.label:SetWidth(heading and MATERIAL_WIDTH - 8 or MATERIAL_WIDTH - 48)
         row.label:SetText(label)
         local rowHeight = math.max(32, row.label:GetStringHeight() + 16)
+        local note = itemID and bankNotes[itemID] or ""
+        row.bankNote:SetText(note or "")
+        if note and note ~= "" then
+            row.bankNote:ClearAllPoints()
+            row.bankNote:SetPoint("TOPLEFT", row, "TOPLEFT", 40, -rowHeight + 4)
+            rowHeight = rowHeight + row.bankNote:GetStringHeight() + 4
+            row.bankNote:Show()
+        else row.bankNote:Hide() end
         row:SetHeight(rowHeight)
         applyTextTheme(row.label, heading and "text" or "textSoft")
         if heading then row.icon:Hide() else row.icon:SetTexture(icon or UNKNOWN_ICON); row.icon:Show() end
@@ -581,18 +621,29 @@ renderMaterials = function(details, model)
     for _, group in ipairs(model.materials) do
         if #group.choices == 1 then
             local choice = group.choices[1]
-            addRow(choice.name .. "  ×" .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false)
+            addRow(choice.name .. "  ×" .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false, choice.itemID)
         else
             local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " ×" .. group.quantity
             if #group.choices > 1 then label = label .. " (choose one)" end
             addRow(label, nil, true)
-            for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+            for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false, choice.itemID) end
         end
     end
     for index = rowIndex + 1, #details.materialRows do details.materialRows[index]:Hide() end
     details.materialContent:SetHeight(math.max(1, y))
-    details.materialScroll:SetVerticalScroll(0)
+    if preserveScroll and type(details.materialScroll.GetVerticalScrollRange) == "function" then
+        scrollPosition = math.min(scrollPosition, math.max(0, details.materialScroll:GetVerticalScrollRange()))
+    end
+    details.materialScroll:SetVerticalScroll(scrollPosition)
     if updateTrackingControls then updateTrackingControls(details) end
+end
+
+function GGM.RefreshRecipeMaterialBankNotes()
+    local browser = GGM.guildGearBrowserFrame
+    local details = browser and browser.recipeDetailsFrame
+    if not shown(details) or not details.materialModel then return false end
+    renderMaterials(details, details.materialModel, true)
+    return true
 end
 
 updateTrackingControls = function(details)

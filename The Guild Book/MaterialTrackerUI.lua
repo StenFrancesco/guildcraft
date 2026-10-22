@@ -17,12 +17,37 @@ local function text(parent, template, width)
     return label
 end
 
+local function bankLocationText(api, location)
+    local currentKey = GGM.GetMaterialBankPlayerKey(api)
+    local name = location.key == currentKey and "Your bank" or (location.key .. " - Bank")
+    local count = location.count == nil and "?" or tostring(location.count)
+    local seen = "capture time unknown"
+    if location.capturedAt and type(api.date) == "function" then
+        local ok, value = pcall(api.date, "%Y-%m-%d %H:%M", location.capturedAt)
+        if ok and type(value) == "string" then seen = "last seen " .. value end
+    end
+    if location.partial then seen = seen .. "; incomplete" end
+    return "  " .. name .. ": " .. count .. " (" .. seen .. ")"
+end
+
 local function refresh(frame)
     if not frame.snapshot then frame:Hide(); return end
     frame.recipeName:SetText(frame.snapshot.name .. "  ×" .. frame.snapshot.amount)
     local titleHeight = math.max(18, frame.recipeName:GetStringHeight())
     local y = 0
     local model = GGM.BuildMaterialTrackingRows(frame.api, frame.snapshot)
+    local bankRows, bankState
+    frame.altMaterialsToggle:SetChecked(frame.snapshot.showAltMaterials == true)
+    if frame.snapshot.showAltMaterials then
+        bankRows, bankState = GGM.BuildMaterialBankLocations(frame.api, frame.snapshot,
+            rawget(frame.api, "TheGuildBookBankDB"))
+    end
+    local status = bankState == "unavailable" and "Personal bank data unavailable."
+        or bankState == "empty" and "Personal banks not captured yet."
+        or bankState == "partial" and "Some personal bank data is unreadable."
+        or ""
+    frame.bankStatus:SetText(status)
+    local statusHeight = status ~= "" and (frame.bankStatus:GetStringHeight() + 4) or 0
     for index, material in ipairs(model) do
         local row = frame.rows[index]
         if not row then
@@ -30,6 +55,8 @@ local function refresh(frame)
             row:SetWidth(280)
             row.label = text(row, "GameFontHighlightSmall", 276)
             row.label:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -3)
+            row.bankDetails = text(row, "GameFontDisableSmall", 276)
+            row.bankDetails:SetTextColor(0.7, 0.7, 0.7)
             frame.rows[index] = row
         end
         row:ClearAllPoints()
@@ -39,6 +66,17 @@ local function refresh(frame)
         if material.complete then row.label:SetTextColor(0.3, 1, 0.3)
         else row.label:SetTextColor(0.94, 0.9, 0.8) end
         local height = math.max(24, row.label:GetStringHeight() + 10)
+        local lines = {}
+        for _, location in ipairs(bankRows and bankRows[index] or {}) do
+            lines[#lines + 1] = bankLocationText(frame.api, location)
+        end
+        row.bankDetails:SetText(table.concat(lines, "\n"))
+        if #lines > 0 then
+            row.bankDetails:ClearAllPoints()
+            row.bankDetails:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -height)
+            height = height + row.bankDetails:GetStringHeight() + 6
+            row.bankDetails:Show()
+        else row.bankDetails:Hide() end
         row:SetHeight(height)
         row:Show()
         y = y + height
@@ -46,9 +84,13 @@ local function refresh(frame)
     for index = #model + 1, #frame.rows do frame.rows[index]:Hide() end
     frame.content:SetHeight(math.max(1, y))
     frame.scroll:ClearAllPoints()
-    frame.scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -48 - titleHeight)
+    frame.altMaterialsToggle:ClearAllPoints()
+    frame.altMaterialsToggle:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -45 - titleHeight)
+    frame.bankStatus:ClearAllPoints()
+    frame.bankStatus:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -73 - titleHeight)
+    frame.scroll:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -76 - titleHeight - statusHeight)
     frame.scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 33)
-    frame:SetHeight(81 + titleHeight + math.min(260, y))
+    frame:SetHeight(109 + titleHeight + statusHeight + math.min(260, y))
     frame:Show()
 end
 
@@ -72,7 +114,21 @@ local function createFrame(api)
     frame.recipeName:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -42)
     frame.footer = text(frame, "GameFontDisableSmall", 292)
     frame.footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 14, 12)
-    frame.footer:SetText("Bags only · Drag to move · Optional reagents excluded")
+    frame.footer:SetText("Bags determine completion · Drag to move")
+    frame.altMaterialsToggle = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    frame.altMaterialsToggle:SetSize(26, 26)
+    frame.altMaterialsToggle.label = text(frame.altMaterialsToggle, "GameFontHighlightSmall", 242)
+    frame.altMaterialsToggle.label:SetPoint("LEFT", frame.altMaterialsToggle, "RIGHT", 2, 0)
+    frame.altMaterialsToggle.label:SetText("Show alt materials")
+    frame.bankStatus = text(frame, "GameFontDisableSmall", 280)
+    frame.altMaterialsToggle:SetScript("OnClick", function(self)
+        if not frame.snapshot then return end
+        local candidate = GGM.ValidateMaterialTrackingSnapshot(api, frame.snapshot)
+        if not candidate then return end
+        candidate.showAltMaterials = self:GetChecked() == true
+        if GGM.SaveMaterialTracking(api, frame.db, candidate) then frame.snapshot = candidate end
+        refresh(frame)
+    end)
     frame.scroll = api.CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
     frame.content = api.CreateFrame("Frame", nil, frame.scroll)
     frame.content:SetSize(280, 1)
@@ -92,6 +148,7 @@ local function createFrame(api)
         local candidate = GGM.ValidateMaterialTrackingSnapshot(api, {
             recipeID = self.snapshot.recipeID, name = self.snapshot.name, amount = self.snapshot.amount,
             materials = self.snapshot.materials, position = position,
+            showAltMaterials = self.snapshot.showAltMaterials,
         })
         if candidate and candidate.position then
             self.snapshot = candidate
@@ -132,8 +189,16 @@ function GGM.TrackRecipeMaterials(api, db, recipeID, name, amount, model)
     if not saved then return false end
     local previous = GGM.LoadMaterialTracking(api, db)
     saved.position = previous and previous.position
+    saved.showAltMaterials = previous and previous.showAltMaterials or false
     if not GGM.SaveMaterialTracking(api, db, saved) then return false end
     showSnapshot(api, db, saved)
+    return true
+end
+
+function GGM.RefreshMaterialTracker()
+    local frame = GGM.materialTrackerFrame
+    if not frame or not frame.snapshot then return false end
+    refresh(frame)
     return true
 end
 
