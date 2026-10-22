@@ -43,12 +43,12 @@ function GGM.InvalidateProfessionSyncCache(db)
     end
 end
 
-local function cacheSignatures(db)
+local function cacheSignatures(db, membershipFingerprint)
     local identities, metadata = {
         signatureField(db.professions), signatureField(db.professionRecipeIndex),
         signatureField(db.professionCharacters), signatureField(db.localCharacterIDByGUID),
         signatureField(db.localCharacterGUIDs), signatureField(db.professionIndexRepairCandidates),
-        signatureField(db.professionRecipeIndexVersion),
+        signatureField(db.professionRecipeIndexVersion), signatureField(membershipFingerprint),
     }, {}
     metadata[#metadata + 1] = signatureField(db.professionIndexRepairNeeded)
     if type(db.localCharacterGUIDs) == "table" then
@@ -87,17 +87,13 @@ local function cacheSignatures(db)
             end
         end
     end
-    for professionID, recipes in pairs(db.professionRecipeIndex) do
-        checkpoint()
-        identities[#identities + 1] = signatureField(professionID) .. signatureField(recipes)
-    end
     sort(identities)
     sort(metadata)
     return table.concat(identities, ";"), table.concat(metadata, ";")
 end
 
-local function getSyncCache(db)
-    local identitySignature, metadataSignature = cacheSignatures(db)
+local function getSyncCache(db, identitySignature, metadataSignature)
+    if identitySignature == nil then identitySignature, metadataSignature = cacheSignatures(db) end
     if not identitySignature then return nil end
     local cache = syncCacheByDatabase[db]
     if not cache then
@@ -250,9 +246,10 @@ end
 function GGM.GetProfessionSyncManifest(db, professionID)
     if not GGM.IsProfessionSyncInteger(professionID, 1, 1000000) then return nil, "profession-sync-id-invalid" end
     -- Warm reads still validate the full index; caching only skips rebuilding captures and hashes.
-    local valid, err = GGM.EnsureProfessionIndex(db, true)
+    local valid, err, membershipFingerprint = GGM.EnsureProfessionIndex(db, true, nil, nil, true)
     if not valid then return nil, err end
-    local cache = getSyncCache(db)
+    local identitySignature, metadataSignature = cacheSignatures(db, membershipFingerprint)
+    local cache = getSyncCache(db, identitySignature, metadataSignature)
     if not cache then return nil, "profession-index-invalid" end
     local cachedRows = cache.manifests[professionID]
     if cachedRows then

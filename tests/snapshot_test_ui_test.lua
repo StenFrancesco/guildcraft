@@ -3569,6 +3569,29 @@ T.test('PR5 character search yields and retains the latest selection and complet
     T.assertEqual(#frame.filteredEntries,1); T.assertEqual(frame.selectedEntry.key,'Char4096-Realm')
     T.assertEqual(G.GetCPUJobCount(),0)
 end)
+T.test('PR5 character build restarts when the search changes while queued',function()
+    local G,api,timers=loadUI(),makeBrowserAPI(),{}
+    local frame=showBrowser(G,api,makeDB(G,{makeRecord(G),makeRecord(G)}))
+    G.CPUManualDriver=true; T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    api.C_Timer={After=function(_,callback) timers[#timers+1]=callback end}
+
+    frame.charactersDirty=true
+    G.SelectGuildGearBrowserTab(frame,'Character')
+    T.assertEqual(G.GetCPUJobCount(),1)
+    frame.searchBox:SetText('Alice')
+    T.assertEqual(#timers,1,'search debounce should be waiting while build runs')
+
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(G.GetCPUJobCount(),0)
+    T.assertEqual(#timers,2,'stale build should queue a replacement refresh')
+
+    timers[2]()
+    T.assertEqual(G.GetCPUJobCount(),1)
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(G.GetCPUJobCount(),0)
+    T.assertEqual(#frame.filteredEntries,1)
+    T.assertEqual(frame.filteredEntries[1].name,'Alice')
+end)
 T.test('changing profession clears recycled rows until the new catalog completes',function()
     local G,api=loadUI(),makeBrowserAPI()
     installProfessionCatalogStub(G,function(id) return professionCatalog('ready',{{recipeID=id,name='Recipe '..id}}) end,{})

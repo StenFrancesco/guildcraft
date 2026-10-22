@@ -662,7 +662,16 @@ local function registryConsistent(db)
     return true
 end
 
-local function crafterListConsistent(db, crafters)
+local function addMembershipFingerprint(fingerprint, position, localID)
+    local leftModulus, rightModulus = 2147483647, 2147483629
+    fingerprint.left = (fingerprint.left * 33 + position % leftModulus) % leftModulus
+    fingerprint.left = (fingerprint.left * 33 + localID % leftModulus) % leftModulus
+    fingerprint.right = (fingerprint.right * 65599 + position % rightModulus) % rightModulus
+    fingerprint.right = (fingerprint.right * 65599 + localID % rightModulus) % rightModulus
+    fingerprint.count = fingerprint.count + 1
+end
+
+local function crafterListConsistent(db, crafters, fingerprint)
     if type(crafters) ~= "table" or next(crafters) == nil then return false end
 
     local count = 0
@@ -684,13 +693,14 @@ local function crafterListConsistent(db, crafters)
             or db.localCharacterIDByGUID[entry.guid] ~= localID then
             return false
         end
+        if fingerprint then addMembershipFingerprint(fingerprint, position, localID) end
         previousID = localID
     end
 
     return true
 end
 
-recipeIndexConsistent = function(db)
+recipeIndexConsistent = function(db, includeMembershipFingerprint)
     if type(db) ~= "table"
         or type(db.professionRecipeIndex) ~= "table"
         or type(db.professionCharacters) ~= "table"
@@ -698,6 +708,7 @@ recipeIndexConsistent = function(db)
         return false
     end
 
+    local fingerprint = includeMembershipFingerprint and { recipes = {} } or nil
     for professionID, recipes in pairs(db.professionRecipeIndex) do
         cpuCheckpoint()
         if not positiveInteger(professionID) or type(recipes) ~= "table" then return false end
@@ -707,11 +718,43 @@ recipeIndexConsistent = function(db)
                 or type(recipe) ~= "table"
                 or not nonEmptyString(recipe.name)
                 or #recipe.name > GGM.PROFESSION_MAX_NAME_BYTES
-                or (recipe.outputIcon ~= nil and not positiveInteger(recipe.outputIcon))
-                or not crafterListConsistent(db, recipe.crafters) then
+                or (recipe.outputIcon ~= nil and not positiveInteger(recipe.outputIcon)) then
                 return false
             end
+            local recipeFingerprint = fingerprint and {
+                professionID = professionID, recipeID = recipeID,
+                left = (5381 * 33 + professionID % 2147483647) % 2147483647,
+                right = (17 * 65599 + professionID % 2147483629) % 2147483629,
+                count = 0,
+            } or nil
+            if recipeFingerprint then
+                recipeFingerprint.left = (recipeFingerprint.left * 33 + recipeID % 2147483647) % 2147483647
+                recipeFingerprint.right = (recipeFingerprint.right * 65599 + recipeID % 2147483629) % 2147483629
+            end
+            if not crafterListConsistent(db, recipe.crafters, recipeFingerprint) then
+                return false
+            end
+            if recipeFingerprint then fingerprint.recipes[#fingerprint.recipes + 1] = recipeFingerprint end
         end
+    end
+    if fingerprint then
+        cpuSort(fingerprint.recipes, function(a, b)
+            if a.professionID ~= b.professionID then return a.professionID < b.professionID end
+            return a.recipeID < b.recipeID
+        end)
+        local left, right = 5381, 17
+        for _, recipe in ipairs(fingerprint.recipes) do
+            cpuCheckpoint()
+            left = (left * 33 + recipe.professionID % 2147483647) % 2147483647
+            left = (left * 33 + recipe.recipeID % 2147483647) % 2147483647
+            left = (left * 33 + recipe.left) % 2147483647
+            left = (left * 33 + recipe.count) % 2147483647
+            right = (right * 65599 + recipe.professionID % 2147483629) % 2147483629
+            right = (right * 65599 + recipe.recipeID % 2147483629) % 2147483629
+            right = (right * 65599 + recipe.right) % 2147483629
+            right = (right * 65599 + recipe.count) % 2147483629
+        end
+        return true, "M1:" .. left .. ":" .. right .. ":" .. #fingerprint.recipes
     end
     return true
 end
@@ -1241,7 +1284,7 @@ function GGM.ReconcileProfessionGuildRoster(api, db, validationToken)
     return true, nil, rosterIdentityChanged
 end
 
-function GGM.EnsureProfessionIndex(db, validateFully, expectedSchemaVersion, preserveRepairNeeded)
+function GGM.EnsureProfessionIndex(db, validateFully, expectedSchemaVersion, preserveRepairNeeded, includeMembershipFingerprint)
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-professions-invalid"
     end
@@ -1261,13 +1304,16 @@ function GGM.EnsureProfessionIndex(db, validateFully, expectedSchemaVersion, pre
     end
     local readOnly = preserveRepairNeeded == true
         or (GGM.IsCPUWorkActive and GGM.IsCPUWorkActive())
-    if validateFully == true
-        and (not registryConsistent(db)
-            or not registryMatchesCanonical(db, readOnly)
-            or not recipeIndexConsistent(db)) then
-        return false, "profession-index-invalid"
+    local membershipFingerprint
+    if validateFully == true then
+        if not registryConsistent(db) or not registryMatchesCanonical(db, readOnly) then
+            return false, "profession-index-invalid"
+        end
+        local indexValid
+        indexValid, membershipFingerprint = recipeIndexConsistent(db, includeMembershipFingerprint == true)
+        if not indexValid then return false, "profession-index-invalid" end
     end
-    return true, nil
+    return true, nil, membershipFingerprint
 end
 
 local function validationOperationIdentityIsSafe(db, identity)

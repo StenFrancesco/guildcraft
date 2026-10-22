@@ -2380,7 +2380,11 @@ refreshCharacterBrowser = function(frame)
         local active = GGM.FilterGuildGearBrowserOwnership(entries, db, view)
         return { entries = entries, active = active, filtered = GGM.FilterGuildGearBrowserEntries(active, query) }
     end, function(result)
-        if frame.browserView ~= view or frame.searchBox:GetText() ~= query then frame.charactersDirty = true; return end
+        if frame.browserView ~= view or frame.searchBox:GetText() ~= query then
+            frame.charactersDirty = true
+            queueBrowserRefresh(frame)
+            return
+        end
         frame.entries = result.entries
         frame.charactersDirty = nil
         updateBrowserList(frame, frame.api, result)

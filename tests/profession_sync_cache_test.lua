@@ -78,6 +78,22 @@ T.test("cached synchronization detects replaced index tables and direct snapshot
     db.professionRecipeIndex[164][12].outputIcon=nil; parity(G,U,db)
     snapshot.capturedAt=-1; parity(G,U,db)
 end)
+T.test("cached synchronization detects in-place recipe membership edits",function()
+    local G,U = load(),load(true)
+    local db,alice,bob=assert(G.InitializeDatabase(nil)),identity("Alice"),identity("Bob")
+    save(G,db,alice,{3,8}); save(G,db,bob,{9}); parity(G,U,db)
+    local before=assert(G.GetProfessionSyncManifest(db,164))
+    local beforeByGUID={}
+    for _,row in ipairs(before) do beforeByGUID[row.guid]=row.hash end
+    local entry=db.professionRecipeIndex[164][3]
+    entry.crafters[1]=db.localCharacterIDByGUID[bob.guid]
+    parity(G,U,db)
+    local after=assert(G.GetProfessionSyncManifest(db,164))
+    local afterByGUID={}
+    for _,row in ipairs(after) do afterByGUID[row.guid]=row.hash end
+    T.assertTrue(beforeByGUID[alice.guid]~=afterByGUID[alice.guid])
+    T.assertTrue(beforeByGUID[bob.guid]~=afterByGUID[bob.guid])
+end)
 T.test("cached manifest results cannot be poisoned by a caller",function()
     local G,U = load(),load(true)
     local db=assert(G.InitializeDatabase(nil)); save(G,db,identity("Alice"),{3,8})
