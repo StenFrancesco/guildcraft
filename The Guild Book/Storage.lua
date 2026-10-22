@@ -83,6 +83,8 @@ function GGM.InitializeDatabase(existing)
         return nil, "unsupported-schema-version:" .. tostring(existing.schemaVersion)
     end
 
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(existing) end
+
     if not validLocalCharacterGUIDs(existing.localCharacterGUIDs) then
         return nil, "database-local-character-guids-invalid"
     end
@@ -150,6 +152,8 @@ function GGM.GetProfessionRecord(db, characterKey)
 end
 
 function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
+    -- Saving can touch the registry before a later validation fails, so drop warm sync data first.
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-invalid"
     end

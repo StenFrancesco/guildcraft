@@ -265,6 +265,20 @@ lua tests/run.lua
 
 In this workspace, the bundled runtime can be used with `./tools/lua/lua.exe tests/run.lua`.
 
+Profession synchronization caches content hashes, manifest rows and aggregate
+digests in runtime state outside SavedVariables. Controlled profession saves,
+registry/roster reconciliation, repairs and purges invalidate that state; metadata
+and database/index table changes are also checked before reuse. Full index
+validation remains on manifest reads. P5 serialization, compression and transport
+behavior are unchanged.
+
+Run `lua tests/check_toc_syntax.lua` to compile all TOC-listed Lua sources and
+`lua tests/bench_profession_sync_cache.lua` for reproducible cold/warm calculation,
+codec and end-to-end sync probes against the frozen uncached implementation.
+See [the PR2 measurements](docs/performance/2026-10-22-profession-sync-cache.md)
+for methodology and limits. Standalone CPU results do not establish in-game FPS
+improvements.
+
 ## Open pull requests
 
 Status checked 14 October 2026. GitHub currently marks all three open PRs as drafts, so none is marked ready for merge.

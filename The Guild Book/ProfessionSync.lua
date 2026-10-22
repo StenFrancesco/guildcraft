@@ -833,9 +833,9 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
             local pid = tonumber(bits[1])
             sync.peers[sender] = sync.peers[sender] or {}; sync.peers[sender][pid] = bits[2]
             sync.heard[pid] = { digest = bits[2], at = now(sync) }
-            local digest = GGM.GetProfessionSyncDigest(sync.db, pid, sync.members)
-            if bits[3] == "save" and digest and digest ~= bits[2] then
-                scheduleComparison(sync, pid, "save", sender)
+            if bits[3] == "save" then
+                local digest = GGM.GetProfessionSyncDigest(sync.db, pid, sync.members)
+                if digest and digest ~= bits[2] then scheduleComparison(sync, pid, "save", sender) end
             end
         end
         return "announced"
@@ -874,7 +874,7 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
         sync.peerCooldowns[cooldownKey] = now(sync)
         if cannotRespond then return "observing" end
         local rows = manifest(sync, professionID)
-        local digest = GGM.GetProfessionSyncDigest(sync.db, professionID, sync.members)
+        local digest = GGM.GetProfessionSyncManifestDigest(professionID, rows)
         if not rows or not digest then return "observing" end
         local session = createSession(sync, sender, id, professionID, bits[1], bits[2], bits[3], preferredPeer)
         if not session then return "observing" end

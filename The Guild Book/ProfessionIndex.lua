@@ -58,6 +58,8 @@ local function highestReservedID(professionCharacters, localCharacterIDByGUID, r
 end
 
 function GGM.InitializeProfessionIndexState(db)
+    -- Registry and roster mutators invalidate before changes so partial repairs cannot leave warm rows.
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-professions-invalid"
     end
@@ -177,6 +179,7 @@ local function normalizeNextLocalCharacterID(db)
 end
 
 function GGM.EnsureProfessionCharacter(db, identity)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if type(db) ~= "table"
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
@@ -224,6 +227,7 @@ function GGM.EnsureProfessionCharacter(db, identity)
 end
 
 function GGM.RekeyProfessionCharacter(db, localID, identity, validateOnly)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     local entry = type(db) == "table"
         and type(db.professionCharacters) == "table"
         and db.professionCharacters[localID] or nil
@@ -299,6 +303,7 @@ local canonicalGUIDRecords
 local storedRepairCandidateIsValid
 
 function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVerified)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if type(identity) ~= "table" or not GGM.IsProfessionGUID(identity.guid) then
         return nil, "profession-identity-guid-invalid"
     end
@@ -432,6 +437,7 @@ function GGM.PrepareProfessionCharacterForSave(db, identity, guildMembershipVeri
 end
 
 function GGM.SetProfessionCharacterActive(db, localID, active)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if type(db) ~= "table" or type(db.professionCharacters) ~= "table" then
         return false, "profession-character-state-invalid"
     end
@@ -549,6 +555,7 @@ local function removeCrafterFromAllProfessions(index, localID)
 end
 
 local function purgeProfessionCharacter(db, localID)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     local entry = db.professionCharacters[localID]
     if type(entry) ~= "table" then return end
     if hasUnresolvedLegacyLocalMarker(db, entry.key, entry.guid) then return end
@@ -564,6 +571,7 @@ local function purgeProfessionCharacter(db, localID)
 end
 
 function GGM.ReconcileProfessionRecipeMembership(db, localID, capture)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if not positiveInteger(localID) then
         return false, "profession-character-id-invalid"
     end
@@ -869,6 +877,7 @@ local function rebuildRegistryFromCanonical(db, oldRegistryConsistent)
 end
 
 function GGM.ReconcileProfessionRegistry(db)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if type(db) ~= "table" or type(db.professions) ~= "table"
         or type(db.professionCharacters) ~= "table"
         or type(db.localCharacterIDByGUID) ~= "table"
@@ -911,6 +920,7 @@ local function hasUnexpectedCanonicalRecordForGUID(db, guid, sourceKey, destinat
 end
 
 function GGM.ReconcileProfessionGuildRoster(api, db)
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     GGM.professionRosterMembershipCurrent = false
     if type(api) ~= "table"
         or type(api.IsInGuild) ~= "function"
