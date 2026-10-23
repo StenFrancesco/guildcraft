@@ -625,6 +625,18 @@ local function showBrowser(GGM, api, db)
     return GGM.guildGearBrowserFrame
 end
 
+local function showAllProfessionsBrowser(GGM, api, db)
+    local frame = GGM.CreateGuildGearBrowserWindow(api)
+    frame.professionLibraryMode = "All"
+    GGM.guildGearBrowserFrame = frame
+    GGM.ShowGuildGearBrowserWindow(api, db)
+    return frame
+end
+
+local function selectAllProfessions(frame)
+    frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
+end
+
 T.test("browser opens Professions first, orders navigation, and remembers the session tab", function()
     local GGM = loadUI()
     local api, db = makeBrowserAPI(), makeDB(GGM)
@@ -1002,6 +1014,15 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+local function exposeOwnProfession(GGM, browser, key)
+    local button
+    for _, entry in ipairs(browser.professionButtons) do
+        if entry.key == key then button = entry; break end
+    end
+    T.assertNotNil(button, "owned profession button should exist")
+    GGM.FilterProfessionLibraryEntries = function() return { button } end
+end
+
 T.test("changing profession library mode closes open recipe details", function()
     local GGM, _, browser, recipes = recipeDetailsFixture()
     local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
@@ -1175,6 +1196,7 @@ end)
 T.test("own Create All accepts counts above the manual amount limit", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, browser, "Blacksmithing")
     local opened, hidden = 0, 0
     api.C_TradeSkillUI = {
         GetTradeSkillLine = function() return 164, "Blacksmithing" end,
@@ -1227,6 +1249,7 @@ end)
 T.test("own create remains available when Blizzard exposes craftability but not a maximum", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, browser, "Blacksmithing")
     api.C_TradeSkillUI = {
         GetTradeSkillLine = function() return 164, "Blacksmithing" end,
         GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
@@ -1316,6 +1339,7 @@ T.test("closing the guild book only closes a profession context it opened", func
 
     frame:Show()
     frame.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, frame, "Alchemy")
     GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(openedSkillLineID, frame.selectedProfessionID)
     T.assertEqual(frame.craftingContextSkillLineID, frame.selectedProfessionID)
@@ -1338,6 +1362,7 @@ end)
 T.test("selecting an own profession opens and immediately hides Blizzard's profession window", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, browser, "Blacksmithing")
     local openedSkillLine
     api.C_TradeSkillUI = {
         GetTradeSkillLine = function() return 164, "Blacksmithing" end,
@@ -1361,6 +1386,7 @@ end)
 T.test("clicking an own recipe row does not open Blizzard's profession window", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, browser, "Blacksmithing")
     local opened = 0
     api.C_TradeSkillUI = {
         GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing", 164 end,
@@ -1382,6 +1408,7 @@ end)
 T.test("craft click falls back to the selected profession when recipe skill-line data is secret", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, browser, "Blacksmithing")
     local openedSkillLine
     api.C_TradeSkillUI = {
         GetTradeSkillLineForRecipe = function() return {} end,
@@ -1405,6 +1432,7 @@ end)
 T.test("craft click opens the selected profession without recipe skill-line discovery", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, browser, "Blacksmithing")
     local openedSkillLine
     api.C_TradeSkillUI = {
         OpenTradeSkill = function(skillLineID) openedSkillLine = skillLineID; return true end,
@@ -3338,6 +3366,7 @@ T.test("PR1 hidden profession events build nothing and opening consumes latest d
     end, calls)
     local db = makeDB(G)
     local frame = G.CreateGuildGearBrowserWindow(api)
+    frame.professionLibraryMode = "All"
     G.guildGearBrowserFrame, frame.db = frame, db
     for i = 1, 5 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
     T.assertEqual(#calls, 0, "an initialized hidden browser must build no catalog")
@@ -3350,12 +3379,14 @@ T.test("PR1 hidden profession events build nothing and opening consumes latest d
     revision = 2
     for i = 1, 5 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
     T.assertEqual(#calls, before, "hidden events must build zero catalogs")
+    selectAllProfessions(frame)
     G.ShowGuildGearBrowserWindow(api, db)
     T.assertEqual(#calls, before + 1, "reopening dirty data must build once")
     T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Revision 2")
     T.assertEqual(frame.professionSearchBox:GetText(), "Revision")
     T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
     frame:Hide()
+    selectAllProfessions(frame)
     G.ShowGuildGearBrowserWindow(api, db)
     T.assertEqual(#calls, before + 1, "clean reopening must reuse the catalog")
 end)
@@ -3391,7 +3422,7 @@ T.test("PR1 visible invalidations coalesce and callbacks retain hidden dirty dat
     local G, api, calls, timers = loadUI(), makeBrowserAPI(), {}, {}
     api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
     installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
-    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    showAllProfessionsBrowser(G, api, makeDB(G))
     local frame, before = G.guildGearBrowserFrame, #calls
     for i = 1, 5 do G.RefreshVisibleProfessionCatalog() end
     T.assertEqual(#calls, before)
@@ -3402,6 +3433,7 @@ T.test("PR1 visible invalidations coalesce and callbacks retain hidden dirty dat
     frame:Hide()
     timers[2]()
     T.assertEqual(#calls, before + 1, "queued callback must check actual visibility")
+    selectAllProfessions(frame)
     G.ShowGuildGearBrowserWindow(api, frame.db)
     T.assertEqual(#calls, before + 2)
     G.RefreshVisibleProfessionCatalog()
@@ -3458,7 +3490,7 @@ T.test("PR1 paired catalog and library invalidations share one catalog build", f
     local G, api, calls, timers = loadUI(), makeBrowserAPI(), {}, {}
     api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
     installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
-    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    showAllProfessionsBrowser(G, api, makeDB(G))
     local before = #calls
     G.RefreshVisibleProfessionCatalog()
     G.RefreshVisibleProfessionLibrary()
@@ -3525,7 +3557,7 @@ T.test("large recipe lists recycle a bounded viewport pool and keep the last rec
     for i = 1, 4096 do recipes[i] = { recipeID = i, name = string.format("Recipe %04d", i), knownBy = {} } end
     installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
     local api = makeBrowserAPI()
-    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    showAllProfessionsBrowser(GGM, api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
     local frame = GGM.guildGearBrowserFrame
     frame.professionRecipeScroll:SetHeight(230)
     frame.professionRecipeScroll.scripts.OnSizeChanged(frame.professionRecipeScroll)
@@ -3599,7 +3631,7 @@ T.test("search debounces edits and hidden callbacks do no rendering", function()
     local GGM, api = loadUI(), makeBrowserAPI()
     local recipes = { { recipeID = 1, name = "Alpha" }, { recipeID = 2, name = "Beta" } }
     installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
-    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    showAllProfessionsBrowser(GGM, api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
     local frame = GGM.guildGearBrowserFrame
     local timers = {}
     api.C_Timer = { After = function(seconds, callback)
@@ -3622,6 +3654,8 @@ end)
 T.test("character search applies only the latest edit and pending profession search refreshes after reopening", function()
     local GGM, api, timers = loadUI(), makeBrowserAPI(), {}
     local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
+    local alchemyButton = frame.professionButtons[1]
+    GGM.FilterProfessionLibraryEntries = function() return { alchemyButton } end
     api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
     frame.searchBox:SetText("missing")
     frame.searchBox:SetText("Alice")
@@ -3665,12 +3699,13 @@ T.test('PR5 catalog preparation yields and cancels hidden or replaced selections
         for i=1,1000 do G.CPUCheckpoint() end
         return professionCatalog('ready',{{recipeID=id,name='Result '..id}})
     end, calls)
-    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    showAllProfessionsBrowser(G,api,makeDB(G))
     local frame=G.guildGearBrowserFrame
     T.assertNil(frame.professionCatalog, 'catalog should publish only when complete')
     G.RunCPUFrame(); T.assertNil(frame.professionCatalog)
     frame:Hide(); G.RunCPUFrame()
     T.assertEqual(G.GetCPUJobCount(),0)
+    selectAllProfessions(frame)
     G.ShowGuildGearBrowserWindow(api,frame.db)
     G.SelectProfession(frame,'Blacksmithing')
     for i=1,100 do G.RunCPUFrame() end
@@ -3681,7 +3716,7 @@ T.test('PR5 recipe search slices and publishes only the latest complete query',f
     local G, api, recipes=loadUI(),makeBrowserAPI(),{}
     for i=1,4096 do recipes[i]={recipeID=i,name='Recipe '..i} end
     installProfessionCatalogStub(G,function() return professionCatalog('ready',recipes) end,{})
-    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    showAllProfessionsBrowser(G,api,makeDB(G))
     local frame=G.guildGearBrowserFrame
     G.CPUManualDriver=true; T.loadAddonFile('The Guild Book/CPUWork.lua',G)
     local original=frame.filteredProfessionRecipes
@@ -3734,7 +3769,7 @@ end)
 T.test('changing profession clears recycled rows until the new catalog completes',function()
     local G,api=loadUI(),makeBrowserAPI()
     installProfessionCatalogStub(G,function(id) return professionCatalog('ready',{{recipeID=id,name='Recipe '..id}}) end,{})
-    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    showAllProfessionsBrowser(G,api,makeDB(G))
     local frame=G.guildGearBrowserFrame
     T.assertNotNil(frame.professionRecipeRows[1].recipe)
     G.CPUManualDriver=true;T.loadAddonFile('The Guild Book/CPUWork.lua',G)
