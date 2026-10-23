@@ -939,6 +939,8 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     details.professionName:SetText(browser.selectedProfession or "Profession")
     updateCrafters(details, canonical, preserveSelection)
     renderMaterials(details, GGM.BuildRecipeMaterialDetails(browser.api, canonical.recipeID))
+    if GGM.ApplyBrowserWindowSettings then GGM.ApplyBrowserWindowSettings(browser, browser.db) end
+    if GGM.PositionRecipeDetailsWindow then GGM.PositionRecipeDetailsWindow(browser, details) end
     details:Show()
     if details.SetFrameStrata then details:SetFrameStrata("TOOLTIP") end
     if details.Raise then details:Raise() end

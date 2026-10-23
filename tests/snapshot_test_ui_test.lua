@@ -14,6 +14,7 @@ local function loadUI()
     T.loadAddonFile("The Guild Book gear/Storage.lua", GGM)
     T.loadAddonFile("The Guild Book/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/WindowSettings.lua", GGM)
     T.loadAddonFile("The Guild Book/MaterialTracker.lua", GGM)
     T.loadAddonFile("The Guild Book/MaterialTrackerBanks.lua", GGM)
     T.loadAddonFile("The Guild Book/MaterialTrackerUI.lua", GGM)
@@ -444,6 +445,13 @@ local function newControl()
     function control:GetWidth() return self.width or 0 end
     function control:GetHeight() return self.height or 0 end
     function control:SetScale(value) self.scale = value end
+    function control:GetScale() return self.scale or 1 end
+    function control:GetEffectiveScale()
+        return self:GetScale() * (self.parent and self.parent:GetEffectiveScale() or 1)
+    end
+    function control:GetLeft() return self.left end
+    function control:GetRight() return self.left and (self.left + self:GetWidth()) or nil end
+    function control:GetTop() return self.top end
     function control:SetFont(path, size, flags) self.font = { path = path, size = size, flags = flags } end
     function control:SetShadowColor(...) self.shadowColor = { ... } end
     function control:SetShadowOffset(...) self.shadowOffset = { ... } end
@@ -3717,6 +3725,63 @@ T.test("item-name refresh follows the selected character without replacing empty
     T.assertNil(head.itemLink)
 end)
 
+T.test("browser opening applies saved appearance and respects the window drag lock", function()
+    local G, api, browser, _, _, db = recipeDetailsFixture()
+    db.uiSettings = {window={scale=0.85,opacity=0.65,locked=true}}
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(browser.scale, 0.85)
+    T.assertEqual(browser.alpha, 0.65)
+    browser.scripts.OnDragStart(browser)
+    T.assertFalse(browser.moving == true)
+    db.uiSettings.window.locked = false
+    browser.scripts.OnDragStart(browser)
+    T.assertTrue(browser.moving)
+    browser.scripts.OnDragStop(browser)
+    T.assertFalse(browser.moving)
+end)
+
+T.test("recipe opens align independently and background refresh preserves dragged position", function()
+    local G, api, browser, recipes, _, db = recipeDetailsFixture()
+    api.UIParent:SetSize(2560, 1440)
+    browser.left, browser.top = 100, 1300
+    db.uiSettings = {window={scale=1,opacity=0.7,autoAlignRecipe=true}}
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(details.scale, 1)
+    T.assertEqual(details.alpha, 0.7)
+    T.assertEqual(details.point.relativeTo, api.UIParent)
+    T.assertEqual(details.point.x, 1508)
+    T.assertEqual(details.point.y, 1300)
+    details.scripts.OnDragStart(details)
+    T.assertTrue(details.moving)
+    details.scripts.OnDragStop(details)
+    details:ClearAllPoints()
+    details:SetPoint("CENTER", api.UIParent, "CENTER", 0, 0)
+    G.RefreshRecipeDetailsWindow(browser)
+    T.assertEqual(details.point.point, "CENTER")
+    browser.left = 50
+    T.assertEqual(details.point.point, "CENTER", "main window movement cannot attach recipe details")
+    G.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(details.point.x, 1458)
+    db.uiSettings.window.autoAlignRecipe = false
+    details:SetPoint("CENTER", api.UIParent, "CENTER", 0, 0)
+    G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(details.point.point, "CENTER")
+end)
+T.test("recipe opening and main reopening preserve separately saved sizes", function()
+    local G, api, browser, recipes, _, db = recipeDetailsFixture()
+    db.uiSettings = {window={scale=0.8,recipeScale=1.2}}
+    G.ShowGuildGearBrowserWindow(api, db)
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(browser.scale, 0.8)
+    T.assertEqual(details.scale, 1.2)
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(browser.scale, 0.8)
+    T.assertEqual(details.scale, 1.2)
+    db.uiSettings.window.recipeScale = 0.9
+    G.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertEqual(browser.scale, 0.8)
+    T.assertEqual(details.scale, 0.9)
+end)
 
 T.test("PR1 hidden profession events build nothing and opening consumes latest data once", function()
     local G, api = loadUI(), makeBrowserAPI()

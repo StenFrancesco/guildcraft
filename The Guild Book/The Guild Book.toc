@@ -28,6 +28,7 @@ ProfessionAutomaticSync.lua
 SavedDatabases.lua
 SavedCharacterModel.lua
 RecipeDetails.lua
+WindowSettings.lua
 MaterialTracker.lua
 MaterialTrackerBanks.lua
 MaterialTrackerUI.lua
@@ -36,5 +37,6 @@ BankView.lua
 BankUI.lua
 SnapshotTestUI.lua
 ProfessionLinkSave.lua
+MinimapLauncher.lua
 ProfessionRosterWork.lua
 Main.lua

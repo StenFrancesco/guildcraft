@@ -37,6 +37,8 @@ local suites = {
     "tests.profession_index_test",
     "tests.profession_link_save_test",
     "tests.profession_auto_save_test",
+    "tests.window_settings_test",
+    "tests.minimap_launcher_test",
     "tests.main_test",
     "tests.inspect_gear_test",
     "tests.saved_character_model_test",

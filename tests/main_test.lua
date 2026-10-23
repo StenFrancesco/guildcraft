@@ -667,6 +667,29 @@ T.test("unsupported schema five SavedVariables remain untouched for manual reset
         T.assertNil(GGM.db)
     end)
 end)
+
+T.test("main initializes minimap only after successful own-addon database startup", function()
+    local onEvent, initialized = nil, 0
+    local frame = { RegisterEvent = function() end, SetScript = function(_, _, fn) onEvent = fn end }
+    withGlobals({ CreateFrame = function() return frame end, TheGuildBookDB = NIL }, function()
+        local G = {}
+        stubSnapshotUI(G)
+        G.InitializeDatabase = function() return { professions = {} } end
+        G.InitializeMinimapLauncher = function(api, db)
+            T.assertEqual(api, _G)
+            T.assertEqual(db, G.db)
+            T.assertEqual(db, TheGuildBookDB)
+            initialized = initialized + 1
+        end
+        T.loadAddonFile("The Guild Book/Main.lua", G)
+        T.assertEqual(initialized, 0)
+        onEvent(frame, "ADDON_LOADED", "Other addon")
+        T.assertEqual(initialized, 0)
+        onEvent(frame, "ADDON_LOADED", "The Guild Book")
+        T.assertEqual(initialized, 1)
+    end)
+end)
+
 T.test('presence-only roster updates refresh sync presence without invalidating the catalog',function()
     local onEvent, catalogRefreshes, rosterRefreshes= nil,0,0
     local frame={RegisterEvent=function() end,SetScript=function(_,_,handler) onEvent=handler end}

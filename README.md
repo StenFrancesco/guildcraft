@@ -28,6 +28,32 @@ Interface/AddOns/
 
 Enable the three addons in the game's AddOns list, then open the browser with `/ggm`. The addon databases are stored separately under `WTF/Account/<account>/SavedVariables` when you log out or reload; the addon folders do not go there.
 
+The minimap book icon also opens the browser with a left-click. Right-click the
+icon and choose **Options** for a small settings window: **Show minimap icon**,
+**Lock icon position**, and **Reset icon position**. Drag the unlocked icon with
+the left mouse button to move it around the minimap. Visibility, locking, and
+position are saved across reloads for the account. Reset restores the lower-left
+position without changing visibility or locking. Use `/ggm options` to reopen
+settings when the icon is hidden. Escape closes the menu and settings window.
+
+The options window offers separate **Main window size** and **Recipe details
+size** sliders (75-125%), plus a shared **Opacity** slider (60-100%). Changes
+apply immediately and are saved across reloads. Both sizes default to 100%.
+Existing shared size preferences are used as the starting value for each;
+afterward the sizes are saved independently. Each window's actual size is
+capped separately to fit the screen. **Lock window position** prevents dragging
+the main window. **Center window** restores its center position, and **Reset
+appearance** restores both sizes and opacity to 100% without changing the
+other settings.
+
+**Auto-align recipe details** is enabled by default. Each time you open a recipe,
+its details line up with the top of the main browser, with a small gap on the
+right. If there is no room, they open on the left or stay within the screen.
+Both windows remain independently draggable after opening; background data
+refreshes do not reposition recipe details. Disable this option to retain the
+details window's last position within the session. Appearance and alignment
+preferences are account-wide; dragged window positions remain session-only.
+
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
 within the same session preserves the last selected tab.
