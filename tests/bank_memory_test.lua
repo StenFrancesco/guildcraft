@@ -22,6 +22,7 @@ local function makeAPI()
                 [1] = { itemID = 1001, hyperlink = "|Hitem:1001|h[Ore]|h", iconFileID = 123, stackCount = 20 },
             },
         },
+        personalNumSlotsOverride = nil,
         guildName = "Raid Team",
         guildRealm = "Silvermoon",
         guildTabCount = 2,
@@ -64,6 +65,7 @@ local function makeAPI()
     api.C_Container = {
         GetContainerNumSlots = function(containerID)
             api.calls.personalNumSlots = (api.calls.personalNumSlots or 0) + 1
+            if api.personalNumSlotsOverride then return api.personalNumSlotsOverride end
             return api.personalSlots[containerID] and 2 or 0
         end,
         GetContainerItemInfo = function(containerID, slotID)
@@ -106,7 +108,23 @@ end
 
 local function send(controller, event, ...)
     T.assertTrue(type(controller.HandleEvent) == "function")
+    local ok, err = controller:HandleEvent(event, ...)
+    -- Older tests model a full game update for each event. New batching
+    -- regressions below call HandleEvent directly and control the flush.
+    if type(controller.FlushPending) == "function" then
+        controller:FlushPending()
+    end
+    return ok, err
+end
+
+local function queue(controller, event, ...)
+    T.assertTrue(type(controller.HandleEvent) == "function")
     return controller:HandleEvent(event, ...)
+end
+
+local function flush(controller)
+    T.assertTrue(type(controller.FlushPending) == "function", "missing FlushPending")
+    return controller:FlushPending()
 end
 
 T.test("bank memory initializes version one and leaves unsupported saved schemas untouched", function()
@@ -473,6 +491,194 @@ T.test("closed bank events and late combat callbacks do not capture contents", f
     T.assertNil(api.calls.guildItemInfo)
 end)
 
+local function sixTabAPI()
+    local api = makeAPI()
+    api.personalTabs, api.personalSlots = {}, {}
+    api.personalNumSlotsOverride = 98
+    for id = 1, 6 do
+        api.personalTabs[id] = { ID = id, name = "Tab " .. id }
+        api.personalSlots[id] = { [1] = { itemID = 1000 + id, stackCount = 1 } }
+    end
+    return api
+end
+
+T.test("personal three-event six-tab probe captures one full batch and notification", function()
+    local memory, api = loadModule(), sixTabAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local changes = 0
+    local controller = newController(memory, api, database, function() changes = changes + 1 end)
+    queue(controller, "BANKFRAME_OPENED")
+    local readsBefore, changesBefore = api.calls.personalItemInfo, changes
+    local metadataBefore = api.calls.personalTabData
+    queue(controller, "PLAYERBANKSLOTS_CHANGED", 1)
+    queue(controller, "BAG_UPDATE", 1)
+    queue(controller, "BAG_UPDATE_DELAYED")
+    T.assertEqual(api.calls.personalItemInfo, readsBefore)
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo - readsBefore, 588)
+    T.assertEqual(api.calls.personalTabData - metadataBefore, 1)
+    T.assertEqual(changes - changesBefore, 1)
+end)
+
+T.test("known personal tab burst reads 98 slots and leaves other capture times untouched", function()
+    local memory, api = loadModule(), sixTabAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local changes = 0
+    local controller = newController(memory, api, database, function() changes = changes + 1 end)
+    queue(controller, "BANKFRAME_OPENED")
+    local record = database.characters["Alice-Silvermoon"]
+    local oldTab, oldTime = record.tabs[1], api.now
+    api.now = api.now + 20
+    local readsBefore, changesBefore = api.calls.personalItemInfo, changes
+    for _ = 1, 3 do queue(controller, "BAG_UPDATE", 5) end
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo - readsBefore, 98)
+    T.assertEqual(changes - changesBefore, 1)
+    T.assertTrue(record.tabs[1] == oldTab)
+    T.assertEqual(record.tabs[1].capturedAt, oldTime)
+    T.assertEqual(record.tabs[5].capturedAt, api.now)
+    T.assertEqual(record.status, "cached")
+end)
+
+T.test("multiple personal dirty IDs are deduplicated within a batch", function()
+    local memory, api = loadModule(), sixTabAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    queue(controller, "BANKFRAME_OPENED")
+    local readsBefore = api.calls.personalItemInfo
+    queue(controller, "BAG_UPDATE", 1)
+    queue(controller, "BAG_UPDATE", 5)
+    queue(controller, "BAG_UPDATE", 1)
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo - readsBefore, 196)
+end)
+
+T.test("ambiguous personal event dominates known updates in either order", function()
+    for _, ambiguousFirst in ipairs({ true, false }) do
+        local memory, api = loadModule(), sixTabAPI()
+        local database = assert(memory.InitializeDatabase(nil))
+        local controller = newController(memory, api, database)
+        queue(controller, "BANKFRAME_OPENED")
+        local readsBefore = api.calls.personalItemInfo
+        if ambiguousFirst then queue(controller, "BAG_UPDATE_DELAYED") end
+        queue(controller, "BAG_UPDATE", 1)
+        if not ambiguousFirst then queue(controller, "BAG_UPDATE_DELAYED") end
+        flush(controller)
+        T.assertEqual(api.calls.personalItemInfo - readsBefore, 588)
+    end
+end)
+
+T.test("closing or reopening personal bank cancels queued captures", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    queue(controller, "BANKFRAME_OPENED")
+    queue(controller, "BAG_UPDATE", 5)
+    queue(controller, "BANKFRAME_CLOSED")
+    local readsBefore = api.calls.personalItemInfo
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo, readsBefore)
+
+    queue(controller, "BANKFRAME_OPENED")
+    queue(controller, "BAG_UPDATE", 5)
+    queue(controller, "BANKFRAME_OPENED")
+    readsBefore = api.calls.personalItemInfo
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo, readsBefore)
+end)
+
+T.test("guild ready burst captures the ready current tab once with one notification", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local changes = 0
+    local controller = newController(memory, api, database, function() changes = changes + 1 end)
+    queue(controller, "GUILDBANKFRAME_OPENED")
+    local readsBefore = api.calls.guildItemInfo or 0
+    local changesBefore = changes
+    for _ = 1, 3 do queue(controller, "GUILDBANKBAGSLOTS_CHANGED") end
+    flush(controller)
+    T.assertEqual((api.calls.guildItemInfo or 0) - readsBefore, 98)
+    T.assertEqual(changes - changesBefore, 1)
+    local record = database.guilds["Raid Team-Silvermoon"]
+    T.assertEqual(record.tabs[1].status, "cached")
+    T.assertEqual(record.tabs[2].status, "incomplete")
+end)
+
+T.test("guild ready batch is discarded when selection changes before flush", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    queue(controller, "GUILDBANKFRAME_OPENED")
+    local itemReads = api.calls.guildItemInfo or 0
+    queue(controller, "GUILDBANKBAGSLOTS_CHANGED")
+    api.currentGuildTab = 2
+    flush(controller)
+    T.assertEqual(api.calls.guildItemInfo or 0, itemReads)
+    local record = database.guilds["Raid Team-Silvermoon"]
+    T.assertEqual(record.tabs[1].status, "incomplete")
+    T.assertEqual(record.tabs[2].status, "incomplete")
+end)
+
+T.test("CancelPending discards queued work and preserves the saved snapshot as incomplete", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    send(controller, "BANKFRAME_OPENED")
+    local record = database.characters["Alice-Silvermoon"]
+    local originalItem = record.tabs[5].slots[1].itemID
+    queue(controller, "BAG_UPDATE", 5)
+    T.assertTrue(type(controller.CancelPending) == "function", "missing CancelPending")
+    controller:CancelPending()
+    local reads = api.calls.personalItemInfo
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo, reads)
+    T.assertEqual(record.status, "incomplete")
+    T.assertEqual(record.tabs[5].status, "incomplete")
+    T.assertEqual(record.tabs[5].slots[1].itemID, originalItem)
+end)
+
+T.test("personal update entering combat before flush marks incomplete without reading", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    send(controller, "BANKFRAME_OPENED")
+    local record = database.characters["Alice-Silvermoon"]
+    local reads = api.calls.personalItemInfo
+    queue(controller, "BAG_UPDATE", 5)
+    api.combat = true
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo, reads)
+    T.assertEqual(record.status, "incomplete")
+    T.assertEqual(record.tabs[5].status, "incomplete")
+    api.combat = false
+    queue(controller, "PLAYER_REGEN_ENABLED")
+    flush(controller)
+    T.assertTrue(api.calls.personalItemInfo > reads)
+end)
+
+T.test("guild combat readiness requires a fresh ready event after regeneration", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    queue(controller, "GUILDBANKFRAME_OPENED")
+    api.combat = true
+    queue(controller, "GUILDBANKBAGSLOTS_CHANGED")
+    local readsBefore = api.calls.guildItemInfo or 0
+    api.combat = false
+    queue(controller, "PLAYER_REGEN_ENABLED")
+    flush(controller)
+    T.assertEqual(api.calls.guildItemInfo or 0, readsBefore)
+    queue(controller, "GUILDBANKBAGSLOTS_CHANGED")
+    flush(controller)
+    T.assertEqual((api.calls.guildItemInfo or 0) - readsBefore, 98)
+end)
+
 T.test("main controller registers bank lifecycle and contents update events", function()
     local memory = loadModule()
     local api = makeAPI()
@@ -515,4 +721,36 @@ T.test("main controller registers bank lifecycle and contents update events", fu
     T.assertEqual(api.TheGuildBookBankDB.schemaVersion, 1)
     T.assertEqual(api.DysbankMemoryAPI.schemaVersion, 1)
     T.assertTrue(type(api.DysbankMemoryAPI.GetDatabase) == "function")
+end)
+
+T.test("personal combat recovery shares a queued update batch", function()
+    local memory, api = loadModule(), sixTabAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local changes = 0
+    local controller = newController(memory, api, database, function() changes = changes + 1 end)
+    send(controller, "BANKFRAME_OPENED")
+    api.combat = true
+    queue(controller, "BAG_UPDATE", 5)
+    api.combat = false
+    local reads, previousChanges = api.calls.personalItemInfo, changes
+    queue(controller, "BAG_UPDATE", 5)
+    queue(controller, "PLAYER_REGEN_ENABLED")
+    T.assertEqual(api.calls.personalItemInfo, reads)
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo - reads, 588)
+    T.assertEqual(changes - previousChanges, 1)
+end)
+
+T.test("database replacement cancels reads and marks the old pending snapshot incomplete", function()
+    local memory, api = loadModule(), makeAPI()
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    send(controller, "BANKFRAME_OPENED")
+    queue(controller, "BAG_UPDATE", 5)
+    local reads = api.calls.personalItemInfo
+    controller.database = assert(memory.InitializeDatabase(nil))
+    flush(controller)
+    T.assertEqual(api.calls.personalItemInfo, reads)
+    T.assertEqual(database.characters["Alice-Silvermoon"].status, "incomplete")
+    T.assertNil(controller.database.characters["Alice-Silvermoon"])
 end)

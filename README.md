@@ -31,6 +31,14 @@ Enable the three addons in the game's AddOns list, then open the browser with `/
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
 within the same session preserves the last selected tab.
+
+Profession changes received while the browser is closed or another page is open
+are saved immediately and drawn once when Professions becomes visible. Repeated
+visible updates share one queued refresh. Gear changes refresh only the visible
+Characters list and selected equipment; they do not rebuild Professions or Bank.
+Refreshes retain searches, valid selections and scroll positions. Opening or
+selecting a character continues to show saved gear without requesting an update.
+
 The profession filters are ordered Own, then All. Own is selected by default,
 including when reopening the browser, and lists the current character's captured
 professions. All shows the full profession list. When Own has captured entries,
@@ -250,6 +258,25 @@ To create a local install ZIP containing all three addon folders, run
 `python ui-concepts/package-bank-polish.py` (requires Pillow). The output is
 `ui-concepts/The-Guild-Book-Addons.zip`.
 
+## Large catalog browsing
+
+Recipe and character lists reuse rows for the visible area plus four buffered
+rows. Scrolling rebinds those rows without rebuilding search results or details;
+search waits 125 ms after the latest edit. Full scroll ranges and selection by
+recipe ID or character key keep every result accessible.
+
+Profession catalog models and shared owner/date descriptors live only in runtime
+memory. Unchanged catalogs reuse their models and formatted dates. Changes to
+recipes, labels/icons, observation times, identities, ownership, membership,
+activity, repairs or database inputs are checked before reuse; unrelated profession
+updates retain the selected catalog. Full validation still runs on catalog reads.
+
+Run `lua tests/bench_catalog_browsing.lua` for a reproducible cold/warm CPU and
+date-format probe. An optional path to a baseline `ProfessionIndex.lua` allows the
+same fixture to measure the prior implementation. Results and limitations are in
+`tests/bench_catalog_browsing_results.txt`. In-game visual, scrolling, tooltip and
+frame-time checks remain necessary; standalone timings do not establish FPS gains.
+
 ## Development
 
 Run the regression suite with Lua 5.1:
@@ -259,6 +286,43 @@ lua tests/run.lua
 ```
 
 In this workspace, the bundled runtime can be used with `./tools/lua/lua.exe tests/run.lua`.
+
+Profession synchronization caches content hashes, manifest rows and aggregate
+digests in runtime state outside SavedVariables. Controlled profession saves,
+registry/roster reconciliation, repairs and purges invalidate that state; metadata
+and database/index table changes are also checked before reuse. Full index
+validation remains on manifest reads. P5 serialization, compression and transport
+behavior are unchanged.
+
+Run `lua tests/check_toc_syntax.lua` to compile all TOC-listed Lua sources and
+`lua tests/bench_profession_sync_cache.lua` for reproducible cold/warm calculation,
+codec and end-to-end sync probes against the frozen uncached implementation.
+See [the PR2 measurements](docs/performance/2026-10-22-profession-sync-cache.md)
+for methodology and limits. Standalone CPU results do not establish in-game FPS
+improvements.
+
+## CPU preparation and validation
+
+Cold profession catalogs, list searches, synchronization calculations, local
+snapshot preparation and roster validation run through one event-driven background
+queue. Completed results replace the prior view together; changing profession
+clears the previous profession's clickable rows while the new view prepares.
+Closing a view or changing relevant data, guild/session or database cancels old
+work. The queue stops its update handler when no work remains.
+
+Ordinary saves can reuse full index validation prepared for one exact database
+revision and identity. That permission is single-use and checked again before
+membership changes. Load/recovery validation and malformed-record checks remain;
+renames, repairs and stale or replaced inputs use the full validation path.
+Presence-only roster changes update availability without rebuilding unchanged
+profession catalogs.
+
+The shared preparation deadline targets spare frame time, but measured GC and
+stress-case atomic work can exceed the initial 1 ms background / 2 ms interactive
+targets. Gear, Bank, codecs and public synchronous APIs retain their existing
+contracts. See [PR5 measurements and remaining limits](docs/performance/2026-10-22-pr5-cpu-work.md)
+for raw probes, fixed-deadline behavior and checks. In-game frame-time and memory
+measurements across all three addons remain outstanding.
 
 ## Open pull requests
 

@@ -229,3 +229,37 @@ T.test("manual saves and button visibility reject unlinked foreign browsing too"
         T.assertNil(c.db.professions["Own-Realm"].snapshots[171])
     end
 end)
+T.test('queued profession save budgets preparation and keeps synchronous save results intact',function()
+    local G,c,s=fixture()
+    G.CPUManualDriver=true;T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    T.loadAddonFile('The Guild Book/ProfessionSyncData.lua',G)
+    c.api.C_TradeSkillUI.GetAllRecipeIDs=function() local ids={};for i=1,1000 do ids[i]=i end;return ids end
+    c.api.C_TradeSkillUI.GetRecipeInfo=function(id) return {recipeID=id,name='Recipe '..id,learned=true} end
+    T.assertTrue(G.QueueProfessionSave(c,true))
+    G.RunCPUFrame();T.assertEqual(s.saves,0)
+    for i=1,1000 do if G.GetCPUJobCount()==0 then break end;G.RunCPUFrame() end
+    T.assertEqual(s.saves,1);T.assertEqual(G.GetCPUJobCount(),0)
+    T.assertEqual(G.TryAutoSaveProfession(c),'unchanged')
+end)
+T.test('closing a profession cancels queued capture before saved data changes',function()
+    local G,c,s=fixture()
+    G.CPUManualDriver=true;T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    T.loadAddonFile('The Guild Book/ProfessionSyncData.lua',G)
+    T.assertTrue(G.QueueProfessionSave(c,true))
+    G.ClearProfessionSaveContext(c);G.RunCPUFrame()
+    T.assertEqual(s.saves,0);T.assertNil(next(c.db.professions));T.assertEqual(G.GetCPUJobCount(),0)
+end)
+T.test('queued guild saves resolve an owner after roster readiness recovers',function()
+    local G,c,s,open=fixture()
+    G.CPUManualDriver=true;T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    T.loadAddonFile('The Guild Book/ProfessionSyncData.lua',G)
+    G.professionRosterMembershipCurrent=false
+    c.api.GetNumGuildMembers=function() return 0 end
+    open('Player-1-MEMBER',true)
+    T.assertNil(c.activeIdentity)
+    c.api.GetNumGuildMembers=function() return 1 end
+    G.professionRosterMembershipCurrent=true
+    T.assertTrue(G.QueueProfessionSave(c,true))
+    for i=1,100 do if G.GetCPUJobCount()==0 then break end;G.RunCPUFrame() end
+    T.assertEqual(s.saves,1);T.assertNotNil(c.db.professions['Member-Realm'])
+end)
