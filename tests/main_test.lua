@@ -135,12 +135,20 @@ T.test("main profession sync waits for reconciled roster and routes addon messag
             T.assertEqual(prefix, "GC_PROF"); T.assertEqual(sender, "Alice-Realm")
             received = received + 1; return "ignored"
         end
+        local trackerRestores = 0
+        G.RestoreMaterialTracker = function(api, db)
+            T.assertTrue(api == _G)
+            T.assertTrue(db == G.db)
+            T.assertNil(G.guildGearBrowserFrame)
+            trackerRestores = trackerRestores + 1
+        end
         G.RecordLocalPlayerOwnership = function() return true end
         G.ReconcileProfessionGuildRoster = function() G.professionRosterMembershipCurrent = true; return true end
         T.loadAddonFile("The Guild Book/Main.lua", G)
         onEvent(frame, "ADDON_LOADED", "The Guild Book")
         T.assertNotNil(G.professionSync)
         onEvent(frame, "PLAYER_LOGIN")
+        T.assertEqual(trackerRestores, 1, "login restores tracking without opening the browser")
         T.assertEqual(logins, 1, "login schedules work while roster readiness gates actual traffic")
         onEvent(frame, "PLAYER_ENTERING_WORLD")
         onEvent(frame, "GUILD_ROSTER_UPDATE")

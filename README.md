@@ -57,6 +57,64 @@ Last Captured label with its date/time on the right, with separate space for eac
 
 If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers and the gear message protocol keep their existing names and formats.
 
+## Recipe material tracker
+
+Open a recipe in the Professions browser, set **Amount** to the number of crafts
+(1–999), and click **Track materials**. A movable material tracker stays on screen
+when the recipe window and `/ggm` browser are closed. Drag its background to move
+it; long material lists can be scrolled. Click **Track materials** again for the
+same recipe, or click **Untrack** on the tracker, to remove it. Removing tracking
+also clears the saved target, so it stays closed after a reload or login.
+
+Each row shows the current character's available materials against the amount
+required, for example `Linen Cloth: 1 / 5`. Completed rows turn green. Counts update
+as materials enter or leave your bags, including after collecting auction purchases
+from the mailbox. Bank, reagent bank, account bank, mailbox and other characters'
+items are excluded from this main count and its green completion indicator.
+Currency reagents use the character's current currency balance.
+Unavailable or protected counts display `?`.
+
+Enable **Show alt materials** in the tracker to see materials in your characters'
+saved personal banks, including **Your bank** for the current character. This
+reuses the personal bank snapshots already captured by **The Guild Book Bank**;
+guild banks are excluded. Each matching location shows the character, quantity
+and last capture time. These are last-known counts: log into an alt and visit its
+bank to refresh its snapshot. Incomplete captures show `?` or a partial quantity
+marked **incomplete**. Missing bank data is reported explicitly. This option does
+not capture alt bags or add shared account-bank support beyond the companion's
+existing personal bank records.
+
+Recipe details also show a small availability note directly beneath each item
+with known personal bank stock, for example **Altname-Realm: 20 in
+personal bank (last-known)**. These notes appear without tracking the recipe and
+include optional items. Each alternative lists its own item quantity. Partial
+captures say **at least** and **incomplete**; unknown or missing stock does not
+claim availability. Notes refresh when the Bank companion saves changed data.
+
+Bank quantities are informational and do not turn a material green. Alternatives
+are combined once per location within a material group; the same physical items
+can appear under different groups that accept them, so do not add those location
+lines together. The toggle is saved with your tracked recipe and retained when
+moving the tracker or replacing its recipe.
+
+The tracker includes required materials only. Interchangeable alternatives share
+a count, and inventory is allocated across material groups without counting the
+same items twice. Optional reagents are excluded. The craft quantity is a fixed
+shopping target; crafting does not automatically reduce it.
+
+One recipe is tracked per character. Clicking **Track materials** for a different
+recipe replaces the previous target using the current Amount. To change the amount
+for the tracked recipe, toggle it off, set Amount, then track it again.
+The recipe, quantity and tracker position
+are remembered across reloads and logins. Tracking requires readable recipe material
+data; starting tracking is disabled when those details or a valid quantity are
+unavailable. An already tracked recipe can still be toggled off.
+Tracking does not craft, buy items or send messages, and does not require either
+companion addon for bag tracking; the optional personal bank breakdown requires
+the Bank companion's saved data. Its per-character settings are stored locally in
+an additive
+`materialTracking` field of `TheGuildBookDB`; sharing protocols are unchanged.
+
 ## Data and synchronization
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.

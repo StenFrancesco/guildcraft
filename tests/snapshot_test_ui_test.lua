@@ -14,6 +14,9 @@ local function loadUI()
     T.loadAddonFile("The Guild Book gear/Storage.lua", GGM)
     T.loadAddonFile("The Guild Book/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTracker.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTrackerBanks.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTrackerUI.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetailsUI.lua", GGM)
     local bankView = loadfile("The Guild Book/BankView.lua")
     if bankView then bankView("The Guild Book", GGM) end
@@ -1002,6 +1005,96 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+T.test("recipe details show personal bank notes below individual materials without tracking", function()
+    local G, api, browser, recipes, reads = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitFullName = function() return "Alice", "Realm" end
+    local function bank(name, itemID, count, partial)
+        return { identity = { key = name .. "-Realm", name = name, realm = "Realm" },
+            status = partial and "incomplete" or "cached", capturedAt = 100,
+            tabs = { [1] = { id = 1, name = "Personal", numSlots = 1, status = "cached", capturedAt = 100,
+                slots = { { itemID = itemID, count = count } } } } }
+    end
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = {
+        ["Alice-Realm"] = bank("Alice", 1, 4), ["Bob-Realm"] = bank("Bob", 1, 20, true),
+        ["Carol-Realm"] = bank("Carol", 2, 7), ["Dave-Realm"] = bank("Dave", 3, 2),
+    }, guilds = { ["Guild-Realm"] = bank("Guild", 1, 999) } }
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNil(G.materialTrackerFrame)
+    T.assertNotNil(details.materialRows[2].bankNote)
+    T.assertFalse(details.materialRows[1].bankNote:IsShown(), "alternative heading has no item note")
+    local note = details.materialRows[2].bankNote.text
+    T.assertTrue(note:find("Your bank: 4", 1, true) ~= nil)
+    T.assertTrue(note:find("Bob-Realm: at least 20 in personal bank", 1, true) ~= nil)
+    T.assertNil(note:find("Available on", 1, true))
+    T.assertTrue(note:find("last-known; incomplete", 1, true) ~= nil)
+    T.assertNil(note:find("Carol", 1, true), "alternative items need their own quantities")
+    T.assertNil(note:find("Guild", 1, true))
+    T.assertTrue(details.materialRows[3].bankNote.text:find("Carol-Realm: 7", 1, true) ~= nil)
+    T.assertTrue(details.materialRows[4].bankNote.text:find("Dave-Realm: 2", 1, true) ~= nil,
+        "optional item notes do not depend on tracker required-only filtering")
+    T.assertTrue(-details.materialRows[3].point.y >= details.materialRows[1].height + details.materialRows[2].height)
+    local before = reads()
+    details.materialScroll:SetVerticalScroll(12)
+    api.TheGuildBookBankDB.characters["Bob-Realm"].tabs[1].slots[1].count = 9
+    _G.GuildGearMemoryBankChanged()
+    T.assertEqual(reads(), before, "bank changes reuse the current recipe model")
+    T.assertEqual(details.materialScroll.verticalScroll, 12)
+    T.assertTrue(details.materialRows[2].bankNote.text:find("at least 9", 1, true) ~= nil)
+    api.TheGuildBookBankDB = nil
+    details.materialScroll.GetVerticalScrollRange = function() return 0 end
+    _G.GuildGearMemoryBankChanged()
+    T.assertEqual(details.materialScroll.verticalScroll, 0, "clamp scrolling when removing bank notes shrinks the list")
+    T.assertFalse(details.materialRows[2].bankNote:IsShown())
+    T.assertEqual(details.materialRows[2].bankNote.text, "")
+    T.assertEqual(details.materialRows[2].height, 32)
+end)
+
+T.test("recipe material refresh events preserve the current scroll position", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    local materials = {}
+    for index = 1, 20 do
+        materials[index] = { quantity = 1, choices = {
+            { itemID = index, name = "Material " .. index },
+        } }
+    end
+    G.BuildRecipeMaterialDetails = function()
+        return { state = "ready", materials = materials }
+    end
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    for _, event in ipairs({ "GET_ITEM_INFO_RECEIVED", "TRADE_SKILL_LIST_UPDATE" }) do
+        details.materialScroll:SetVerticalScroll(87)
+        details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, event)
+        T.assertEqual(details.materialScroll.verticalScroll, 87,
+            event .. " should retain the material list scroll position")
+    end
+end)
+
+T.test("single recipe material bank note clears when rows are reused for currency or missing data", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    local choice = { itemID = 1, name = "Rough Stone" }
+    G.BuildRecipeMaterialDetails = function()
+        return { state = "ready", materials = { { name = choice.name, quantity = 1, choices = { choice } } } }
+    end
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = { ["Bob-Realm"] = {
+        identity = { key = "Bob-Realm", name = "Bob", realm = "Realm" }, status = "cached", capturedAt = 100,
+        tabs = { [1] = { id = 1, name = "Personal", numSlots = 1, status = "cached", capturedAt = 100,
+            slots = { { itemID = 1, count = 20 } } } },
+    } } }
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.materialRows[1].bankNote)
+    T.assertEqual(details.materialRows[1].bankNote.text, "Bob-Realm: 20 in personal bank (last-known)")
+    T.assertTrue(details.materialRows[1].height > 32)
+    choice = { currencyID = 1, name = "Currency" }
+    G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertFalse(details.materialRows[1].bankNote:IsShown())
+    T.assertEqual(details.materialRows[1].height, 32)
+    choice = { itemID = 900, name = "Missing item" }
+    G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertFalse(details.materialRows[1].bankNote:IsShown())
+end)
+
 T.test("changing profession library mode closes open recipe details", function()
     local GGM, _, browser, recipes = recipeDetailsFixture()
     local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
@@ -1016,6 +1109,220 @@ T.test("changing profession library mode closes open recipe details", function()
     browser.professionLibraryToggle.allRadio.scripts.OnClick(browser.professionLibraryToggle.allRadio)
     T.assertEqual(browser.professionLibraryMode, "All")
     T.assertFalse(details:IsShown())
+end)
+
+T.test("recipe track button uses Amount and tracker survives closing the browser with live counts", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local count = 1
+    api.C_Item = { GetItemCount = function(id) return id == 1 and count or 0 end }
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    details.amountInput:SetText("3")
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    T.assertNotNil(tracker)
+    T.assertTrue(tracker.parent == api.UIParent)
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 1 / 9")
+    T.assertEqual(tracker.snapshot.amount, 3)
+    browser:Hide()
+    T.assertTrue(tracker:IsShown())
+    count = 9
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 9 / 9")
+    T.assertEqual(tracker.rows[1].label.textColor[2], 1)
+    count = 0
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 0 / 9")
+    T.assertNotNil(GGM.LoadMaterialTracking(api, browser.db))
+    tracker.untrackButton.scripts.OnClick()
+    T.assertFalse(tracker:IsShown())
+    T.assertNil(GGM.LoadMaterialTracking(api, browser.db))
+end)
+
+T.test("tracker personal bank toggle renders locations and refreshes without completing bag requirements", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    api.C_Item = { GetItemCount = function() return 0 end }
+    api.UnitFullName = function() return "Alice", "Realm" end
+    api.date = function(_, timestamp) return "time:" .. timestamp end
+    local function bank(name, count)
+        return { identity = { key = name .. "-Realm", name = name, realm = "Realm" },
+            status = "cached", capturedAt = 100, tabs = { [1] = {
+                id = 1, name = "Bank", status = "cached", capturedAt = 100, numSlots = 1,
+                slots = { [1] = { itemID = 1, count = count } },
+            } } }
+    end
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = {
+        ["Alice-Realm"] = bank("Alice", 4), ["Bob-Realm"] = bank("Bob", 20),
+    }, guilds = { ["Guild-Realm"] = bank("Guild", 999) } }
+    G.ShowRecipeDetailsWindow(browser, recipes[1]).trackMaterialsButton.scripts.OnClick()
+    local tracker = G.materialTrackerFrame
+    T.assertNotNil(tracker.altMaterialsToggle)
+    T.assertFalse(tracker.altMaterialsToggle:GetChecked())
+    T.assertFalse(tracker.rows[1].bankDetails:IsShown())
+    tracker.altMaterialsToggle:SetChecked(true)
+    tracker.altMaterialsToggle.scripts.OnClick(tracker.altMaterialsToggle)
+    local lines = tracker.rows[1].bankDetails.text
+    T.assertTrue(lines:find("Your bank: 4", 1, true) ~= nil)
+    T.assertTrue(lines:find("Bob-Realm - Bank: 20", 1, true) ~= nil)
+    T.assertTrue(lines:find("last seen time:100", 1, true) ~= nil)
+    T.assertNil(lines:find("Guild", 1, true))
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 0 / 3")
+    T.assertTrue(tracker.rows[1].label.textColor[2] < 1)
+    T.assertTrue(G.LoadMaterialTracking(api, browser.db).showAltMaterials)
+    browser:Hide()
+    api.TheGuildBookBankDB.characters["Bob-Realm"].tabs[1].slots[1].count = 8
+    api.UnitFullName = function() return "Alice", nil end
+    api.GetRealmName = function() return "Realm" end
+    _G.GuildGearMemoryBankChanged()
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("Bob-Realm - Bank: 8", 1, true) ~= nil)
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("Your bank: 4", 1, true) ~= nil)
+    tracker.GetLeft, tracker.GetTop = function() return 800 end, function() return 700 end
+    tracker.scripts.OnDragStop(tracker)
+    T.assertTrue(G.LoadMaterialTracking(api, browser.db).showAltMaterials)
+    local model = { state = "ready", materials = { { quantity = 1, choices = { { itemID = 1, name = "Copper" } } } } }
+    G.TrackRecipeMaterials(api, browser.db, 124, "Replacement", 2, model)
+    T.assertTrue(tracker.altMaterialsToggle:GetChecked())
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertTrue(fresh.materialTrackerFrame.altMaterialsToggle:GetChecked())
+    tracker = fresh.materialTrackerFrame
+    tracker.altMaterialsToggle:SetChecked(false)
+    tracker.altMaterialsToggle.scripts.OnClick(tracker.altMaterialsToggle)
+    T.assertFalse(tracker.rows[1].bankDetails:IsShown())
+    T.assertFalse(fresh.LoadMaterialTracking(api, browser.db).showAltMaterials)
+end)
+
+T.test("tracker bank toggle handles missing companion and partial captures visibly", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    G.ShowRecipeDetailsWindow(browser, recipes[1]).trackMaterialsButton.scripts.OnClick()
+    local tracker = G.materialTrackerFrame
+    T.assertNotNil(tracker.altMaterialsToggle)
+    tracker.altMaterialsToggle:SetChecked(true)
+    tracker.altMaterialsToggle.scripts.OnClick(tracker.altMaterialsToggle)
+    T.assertEqual(tracker.bankStatus.text, "Personal bank data unavailable.")
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = {
+        ["Bob-Realm"] = { identity = { key = "Bob-Realm", name = "Bob", realm = "Realm" },
+            status = "incomplete", tabs = {} },
+    } }
+    G.RefreshMaterialTracker()
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("Bob-Realm - Bank: ?", 1, true) ~= nil)
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("incomplete", 1, true) ~= nil)
+    tracker.untrackButton.scripts.OnClick()
+    _G.GuildGearMemoryBankChanged()
+    T.assertFalse(tracker:IsShown())
+end)
+
+T.test("recipe tracking toggles off on a second click even when Amount or material data is unavailable", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    T.assertTrue(tracker:IsShown())
+    details.amountInput:SetText("0")
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    GGM.BuildRecipeMaterialDetails = function() error("untracking must not read the recipe schematic") end
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertFalse(tracker:IsShown())
+    T.assertNil(tracker.snapshot)
+    T.assertNil(GGM.LoadMaterialTracking(api, browser.db))
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertFalse(tracker:IsShown())
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertNil(fresh.materialTrackerFrame)
+end)
+
+T.test("recipe tracking can be enabled again after toggling off", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertFalse(GGM.materialTrackerFrame:IsShown())
+    details.amountInput:SetText("2")
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertTrue(GGM.materialTrackerFrame:IsShown())
+    T.assertEqual(GGM.LoadMaterialTracking(api, browser.db).amount, 2)
+end)
+
+T.test("tracker restores without browser and saves its position independently for each character", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    tracker.GetLeft = function() return 800 end
+    tracker.GetTop = function() return 700 end
+    tracker.scripts.OnDragStop(tracker)
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    tracker = fresh.materialTrackerFrame
+    T.assertTrue(tracker:IsShown())
+    T.assertEqual(tracker.point.x, 800)
+    T.assertEqual(tracker.point.y, 700)
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: ? / 3")
+    T.assertNil(fresh.guildGearBrowserFrame)
+    api.UnitGUID = function() return "Player-2-DEF" end
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertFalse(tracker:IsShown())
+end)
+
+T.test("tracker scrolls long lists and hides surplus rows when a shorter recipe replaces them", function()
+    local GGM, api, browser = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local model = { state = "ready", materials = {} }
+    for index = 1, 20 do
+        model.materials[index] = { quantity = 1, choices = { { itemID = index, name = "Material " .. index } } }
+    end
+    T.assertTrue(GGM.TrackRecipeMaterials(api, browser.db, 123, "Long recipe", 1, model))
+    local tracker = GGM.materialTrackerFrame
+    T.assertEqual(#tracker.rows, 20)
+    T.assertTrue(tracker.content.height > tracker.height)
+    T.assertTrue(tracker.scroll.scrollChild == tracker.content)
+    model.materials = { model.materials[1] }
+    T.assertTrue(GGM.TrackRecipeMaterials(api, browser.db, 124, "Short recipe", 1, model))
+    T.assertTrue(GGM.materialTrackerFrame == tracker)
+    T.assertTrue(tracker.rows[1]:IsShown())
+    T.assertFalse(tracker.rows[20]:IsShown())
+    T.assertEqual(tracker.scroll.verticalScroll, 0)
+end)
+
+T.test("recipe tracking rejects invalid Amount unavailable materials and refreshes once data is ready", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    details.amountInput:SetText("0")
+    T.assertFalse(details.trackMaterialsButton.enabled)
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertNil(GGM.materialTrackerFrame)
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertFalse(details.trackMaterialsButton.enabled)
+    GGM.BuildRecipeMaterialDetails = function() return { state = "ready", materials = {
+        { quantity = 2, choices = { { itemID = 4, name = "Silver" } } },
+    } } end
+    details.rosterEventFrame.scripts.OnEvent(nil, "PLAYER_REGEN_ENABLED")
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertEqual(GGM.materialTrackerFrame.snapshot.recipeID, 22)
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertEqual(GGM.materialTrackerFrame.snapshot.recipeID, 11)
+    T.assertEqual(#GGM.materialTrackerFrame.rows, 1)
 end)
 
 local function configureCrafterWhisperAPI(GGM, api, rows)
