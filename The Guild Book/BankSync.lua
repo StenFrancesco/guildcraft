@@ -85,6 +85,11 @@ local function setStatus(sync, value)
     if type(GGM.RefreshVisibleBankView) == "function" then pcall(GGM.RefreshVisibleBankView) end
 end
 
+local function setError(sync, err)
+    sync.error = err
+    if err then setStatus(sync, sync.status or "Waiting for guild bank access") end
+end
+
 local function clearWork(sync, clearManual)
     cancelTimer(sync, "captureTimer")
     cancelTimer(sync, "responseTimer")
@@ -149,7 +154,7 @@ end
 local function sendMessage(sync, kind, values, target, channel, done)
     if not sync.transport or not sync.sessionActive then return false, "bank-sync-session-unavailable" end
     local ok, err = GGM.SendBankSyncMessage(sync.transport, kind, values, target, channel, done)
-    if not ok then sync.error = err end
+    if not ok then setError(sync, err) end
     return ok, err
 end
 
@@ -161,7 +166,7 @@ local function publishManifest(sync)
         return false, "guild-session-changed"
     end
     local identity, identityErr = currentIdentity(sync)
-    if not identity then setStatus(sync, "Bank sync unavailable"); return false, identityErr end
+    if not identity then setError(sync, identityErr); setStatus(sync, "Bank sync unavailable"); return false, identityErr end
     local tabs = {}
     for _, tabID in ipairs(sortedTabIDs(ctx.viewableTabIDs)) do
         local snapshotOK, snapshot, snapshotErr = apiCall(sync.bankAPI.GetGuildBankSyncSnapshot, tabID, ctx.sessionToken)
@@ -172,7 +177,7 @@ local function publishManifest(sync)
         end
     end
     local pages, err = P.BuildManifest(identity.key, ctx.guildKey, ctx.sessionToken, tabs)
-    if not pages then sync.error = err; return false, err end
+    if not pages then setError(sync, err); return false, err end
     for _, raw in ipairs(pages) do
         local message = P.Decode(raw, "GUILD")
         if not message then return false, "bank-sync-manifest-encode-failed" end
@@ -223,6 +228,7 @@ local function nextCandidate(sync, peer)
 end
 
 local function finishPeer(sync)
+    sync.comparedAny = true
     if sync.selectedPeer then
         local peer = sync.peers[sync.selectedPeer]
         if peer then sync.processed[sync.selectedPeer] = peer.signature end
@@ -282,14 +288,14 @@ local function advanceAfterRequest(sync)
         local timeoutScheduled = schedule(sync, "responseTimer", RESPONSE_TIMEOUT, function()
             if sync.current == entry then
                 sync.pending[requestID] = nil
-                sync.error = "bank-sync-no-response"
+                setError(sync, "bank-sync-no-response")
                 advanceAfterRequest(sync)
             end
         end)
         if not timeoutScheduled then
             sync.pending[requestID] = nil
             sync.current = nil
-            sync.error = "bank-sync-timeout-unavailable"
+            setError(sync, "bank-sync-timeout-unavailable")
             setStatus(sync, "Guild sync timer unavailable")
             finishPeer(sync)
             return
@@ -320,7 +326,7 @@ drive = function(sync)
     elseif #sync.peerQueue == 0 or sync.peerIndex > #sync.peerQueue then
         local completedManual = sync.manualActive
         sync.manualActive = false
-        setStatus(sync, completedManual and "Compared available guild snapshots" or "Waiting for guild caches")
+        setStatus(sync, completedManual and sync.comparedAny and "Compared available guild snapshots" or "Waiting for guild caches")
         return
     end
     while sync.peerIndex <= #sync.peerQueue do
@@ -336,7 +342,7 @@ drive = function(sync)
     sync.peerQueue = {}
     sync.manualPending = false
     sync.manualActive = false
-    setStatus(sync, "Compared available guild snapshots")
+    setStatus(sync, sync.comparedAny and "Compared available guild snapshots" or "Waiting for guild caches")
 end
 
 local function handleManifest(sync, message, sender)
@@ -426,7 +432,7 @@ local function handleMessage(sync, message, sender, channel)
         if not snapshotOK or type(snapshot) ~= "table" or snapshot.id ~= tonumber(fields[6]) then return false, err or snapshot or "guild-tab-snapshot-unavailable" end
         local sent, sendErr = GGM.SendBankSyncSnapshot(sync.transport, sender,
             { fields[1], fields[2], fields[3], fields[4], fields[5], fields[6] }, snapshot,
-            function(success) if not success then sync.error = "bank-sync-snapshot-send-failed" end end)
+            function(success) if not success then setError(sync, "bank-sync-snapshot-send-failed") end end)
         return sent, sendErr
     end
     if message.type == "S" then
@@ -435,8 +441,12 @@ local function handleMessage(sync, message, sender, channel)
         local ok, merged, err = apiCall(sync.bankAPI.MergeGuildBankSyncSnapshot, entry.guildKey, entry.localToken, entry.tabID, fields[7])
         sync.pending[entry.requestID] = nil
         cancelTimer(sync, "responseTimer")
+        if ok and not err then
+            sync.error = nil
+        elseif not ok or err then
+            sync.error = err or "bank-sync-merge-failed"
+        end
         if ok and merged then setStatus(sync, "Guild tab updated") else setStatus(sync, "Guild tab already current") end
-        if not ok or err then sync.error = err or "bank-sync-merge-failed" end
         advanceAfterRequest(sync)
         return true, err
     end
@@ -453,9 +463,12 @@ function GGM.CreateBankSync(api)
     local sync = { api = api, bankAPI = supported and bankAPI or nil, available = supported,
         status = supported and "Waiting for guild bank access" or "Bank sync unavailable",
         peers = {}, peerCount = 0, processed = {}, pending = {}, peerQueue = {}, peerIndex = 1,
-        manualPending = false, manualActive = false, requestSequence = 0, generation = 0,
+        manualPending = false, manualActive = false, comparedAny = false, requestSequence = 0, generation = 0,
         sessionActive = false, assembler = P and P.NewManifestAssembler(function() return api.GetTime() end) }
-    if not supported then sync.error = "bank-companion-unavailable"; return sync, sync.error end
+    if not supported then
+        sync.error = type(bankAPI) == "table" and "bank-companion-unsupported" or "bank-companion-unavailable"
+        return sync, sync.error
+    end
     local transport, err = GGM.CreateBankSyncTransport(api, function(message, sender, channel)
         return handleMessage(sync, message, sender, channel)
     end)
@@ -497,14 +510,16 @@ end
 
 local function startSession(sync)
     local ctx, err = context(sync)
-    if not ctx then setStatus(sync, "Bank sync unavailable"); sync.error = err; return false, err end
+    if not ctx then setError(sync, err); setStatus(sync, "Bank sync unavailable"); return false, err end
     local identity, identityErr = currentIdentity(sync)
-    if not identity then sync.error = identityErr; return false, identityErr end
+    if not identity then setError(sync, identityErr); return false, identityErr end
     if sync.sessionActive and sync.sessionToken == ctx.sessionToken and sync.guildKey == ctx.guildKey then return true end
     if sync.sessionActive then GGM.CancelBankSync(sync, "guild-session-changed") end
     sync.generation = sync.generation + 1
+    sync.error = nil
     sync.sessionActive, sync.guildKey, sync.sessionToken, sync.senderKey = true, ctx.guildKey, ctx.sessionToken, identity.key
     sync.peers, sync.peerCount, sync.processed, sync.pending = {}, 0, {}, {}
+    sync.comparedAny = false
     sync.assembler = P.NewManifestAssembler(function() return sync.api.GetTime() end)
     local ok, identityErr = GGM.SetBankSyncTransportIdentity(sync.transport, identity.key, ctx.sessionToken)
     if not ok then GGM.CancelBankSync(sync, identityErr); return false, identityErr end
@@ -520,6 +535,7 @@ function GGM.HandleBankSyncAddonMessage(sync, prefix, message, distribution, sen
         return validateSnapshotResponse(sync, senderName, fields)
     end
     local state, err = GGM.ReceiveBankSyncFrame(sync.transport, prefix, message, distribution, sender, validate)
+    if err then setError(sync, err) end
     return state, err
 end
 
@@ -569,6 +585,8 @@ function GGM.RequestBankSyncFromButton(sync)
     if not sync.sessionActive then return false, "Open an accessible guild bank tab first" end
     if sync.manualPending or sync.manualActive then return true, nil end
     sync.processed = {}
+    sync.error = nil
+    sync.comparedAny = false
     sync.manualPending = sync.current ~= nil
     sync.manualActive = sync.current == nil
     publishManifest(sync)
@@ -583,5 +601,31 @@ end
 
 function GGM.GetBankSyncStatus(sync)
     if type(sync) ~= "table" then return "Bank sync unavailable" end
-    return sync.status or (sync.available and "Waiting for guild bank access" or "Bank sync unavailable")
+    if not sync.available then
+        if sync.error == "bank-companion-unavailable" then return "The Guild Book Bank companion is not loaded" end
+        if sync.error == "bank-companion-unsupported" then return "The Guild Book Bank companion is unsupported" end
+        return "Guild bank sync is unavailable"
+    end
+    if not sync.sessionActive then return "Open an accessible guild bank tab to start sync" end
+    if sync.current then
+        local queued = sync.manualPending and "Manual sync queued · finishing tab " or "Syncing guild tab "
+        return queued .. tostring(sync.current.tabID)
+    end
+    local err = sync.error
+    if err == "bank-sync-no-response" then return "No compatible responder replied before timeout" end
+    if err == "bank-sync-timeout-unavailable" then return "Sync timeout could not be scheduled" end
+    if type(err) == "string" then
+        local normalizedError = err:lower()
+        if normalizedError:find("timeout", 1, true) then return "Guild sync timed out waiting for a responder" end
+        if normalizedError:find("send", 1, true) or normalizedError:find("outbound", 1, true) then
+            return "Guild sync could not send a request"
+        end
+        if normalizedError:find("invalid", 1, true) or normalizedError:find("unbound", 1, true)
+            or normalizedError:find("mismatch", 1, true) or normalizedError:find("decode", 1, true)
+            or normalizedError:find("conflict", 1, true) then
+            return "Guild sync rejected invalid or unbound data"
+        end
+        return "Guild sync issue: " .. err
+    end
+    return sync.status or "Waiting for guild caches"
 end

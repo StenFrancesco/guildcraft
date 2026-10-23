@@ -432,6 +432,42 @@ local function renderSlots(page)
     end
 end
 
+local function refreshBankSyncControls(page)
+    local entry = page.selectedEntry
+    local showControls = entry and entry.kind == "guild"
+    if not page.bankSyncButton or not page.bankSyncStatus then return end
+    if not showControls then
+        page.bankSyncButton:Hide()
+        page.bankSyncStatus:Hide()
+        return
+    end
+
+    page.bankSyncButton:Show()
+    page.bankSyncStatus:Show()
+    local sync = GGM.bankSync
+    local status = type(GGM.GetBankSyncStatus) == "function"
+        and GGM.GetBankSyncStatus(sync) or "Bank sync unavailable"
+    local canSync = type(sync) == "table" and sync.available == true and sync.registered == true
+        and sync.sessionActive == true and type(sync.bankAPI) == "table"
+        and type(sync.bankAPI.GetGuildBankSyncContext) == "function"
+    if canSync then
+        local ok, context = pcall(sync.bankAPI.GetGuildBankSyncContext)
+        canSync = ok and type(context) == "table" and type(context.guildKey) == "string"
+            and context.guildKey == entry.guildKey and type(context.sessionToken) == "string"
+            and context.sessionToken == sync.sessionToken and type(context.viewableTabIDs) == "table"
+            and next(context.viewableTabIDs) ~= nil
+    end
+
+    setText(page.bankSyncStatus, status)
+    if canSync then
+        if type(page.bankSyncButton.Enable) == "function" then page.bankSyncButton:Enable() end
+        if type(GGM.SetFlatButtonState) == "function" then GGM.SetFlatButtonState(page.bankSyncButton, "idle") end
+    else
+        if type(page.bankSyncButton.Disable) == "function" then page.bankSyncButton:Disable() end
+        if type(GGM.SetFlatButtonState) == "function" then GGM.SetFlatButtonState(page.bankSyncButton, "disabled") end
+    end
+end
+
 local function updateDetail(page)
     local entry = page.selectedEntry
     page.heroIcon:SetTexture(entry and entry.kind == "guild" and GUILD_ICON or BANK_ICON)
@@ -453,6 +489,7 @@ local function updateDetail(page)
         if tooltip and type(tooltip.Hide) == "function" then tooltip:Hide() end
         renderTabs(page, entry)
         renderSlots(page)
+        refreshBankSyncControls(page)
         return
     end
 
@@ -483,6 +520,7 @@ local function updateDetail(page)
     end
     renderTabs(page, entry)
     renderSlots(page)
+    refreshBankSyncControls(page)
 end
 
 local function firstMatchingTabID(page, entry)
@@ -692,6 +730,28 @@ function GGM.CreateBankPage(api, frame)
     page.detailStatus:SetHeight(16)
     if page.detailStatus.SetWordWrap then page.detailStatus:SetWordWrap(false) end
     page.detailStatus:SetJustifyH("LEFT")
+    page.bankSyncButton = createButton(api, panel, "Sync bank", 132, 28, "secondary")
+    page.bankSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -28, -24)
+    page.bankSyncButton:SetScript("OnClick", function()
+        local accepted, err
+        if type(GGM.RequestBankSyncFromButton) == "function" then
+            accepted, err = GGM.RequestBankSyncFromButton(GGM.bankSync)
+        else
+            err = "Bank sync is unavailable."
+        end
+        if not accepted and err then
+            setText(page.bankSyncStatus, err)
+        end
+        refreshBankSyncControls(page)
+    end)
+    page.bankSyncStatus = label(panel, "", 11)
+    page.bankSyncStatus:SetPoint("TOPRIGHT", page.bankSyncButton, "BOTTOMRIGHT", 0, -3)
+    page.bankSyncStatus:SetWidth(178)
+    page.bankSyncStatus:SetHeight(30)
+    page.bankSyncStatus:SetJustifyH("RIGHT")
+    if page.bankSyncStatus.SetWordWrap then page.bankSyncStatus:SetWordWrap(true) end
+    page.bankSyncButton:Hide()
+    page.bankSyncStatus:Hide()
     page.tabStatus = label(panel, "", 11)
     page.tabStatus:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 34, 8)
     page.tabStatus:SetWidth(624)
