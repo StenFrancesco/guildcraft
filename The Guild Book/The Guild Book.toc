@@ -35,6 +35,7 @@ MaterialTrackerUI.lua
 RecipeDetailsUI.lua
 BankSyncProtocol.lua
 BankSyncTransport.lua
+BankSync.lua
 BankView.lua
 BankUI.lua
 SnapshotTestUI.lua
