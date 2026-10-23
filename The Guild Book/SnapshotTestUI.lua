@@ -2105,7 +2105,10 @@ function GGM.CreateGuildGearBrowserWindow(api)
         if settings and settings.locked then return end
         if self.StartMoving then self:StartMoving() end
     end)
-    frame:SetScript("OnDragStop", function(self) if self.StopMovingOrSizing then self:StopMovingOrSizing() end end)
+    frame:SetScript("OnDragStop", function(self)
+        if self.StopMovingOrSizing then self:StopMovingOrSizing() end
+        if GGM.SaveGuildBookWindowPosition then GGM.SaveGuildBookWindowPosition(self) end
+    end)
 
     frame.background = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
     frame.background:SetAllPoints(frame)

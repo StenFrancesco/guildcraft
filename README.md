@@ -42,7 +42,8 @@ apply immediately and are saved across reloads. Both sizes default to 100%.
 Existing shared size preferences are used as the starting value for each;
 afterward the sizes are saved independently. Each window's actual size is
 capped separately to fit the screen. **Lock window position** prevents dragging
-the main window. **Center window** restores its center position, and **Reset
+the main window. Its dragged position is saved across reloads. **Center window**
+restores its center position and clears the saved position, and **Reset
 appearance** restores both sizes and opacity to 100% without changing the
 other settings.
 
@@ -51,8 +52,9 @@ its details line up with the top of the main browser, with a small gap on the
 right. If there is no room, they open on the left or stay within the screen.
 Both windows remain independently draggable after opening; background data
 refreshes do not reposition recipe details. Disable this option to retain the
-details window's last position within the session. Appearance and alignment
-preferences are account-wide; dragged window positions remain session-only.
+details window's last position within the session. Appearance, alignment
+preferences, and the main window position are account-wide; recipe details window
+positions remain session-only.
 
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
