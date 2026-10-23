@@ -12,17 +12,19 @@ World of Warcraft/_retail_/Interface/AddOns/
 
 Enable both addons on characters whose banks you want to save. The folders contain multiple files; placing two individual files directly in Interface is not an addon installation. The Guild Book can still be used without the companion, but Bank explains that The Guild Book Bank is needed for capture.
 
-The Guild Book Bank stores account-wide `TheGuildBookBankDB` SavedVariables. Blizzard writes SavedVariables to disk on normal logout or UI reload. The Guild Book reads the already-loaded Lua table inside the game; there is no external file reader, service, executable, or network synchronization.
+The Guild Book Bank stores account-wide `TheGuildBookBankDB` SavedVariables. Blizzard writes SavedVariables to disk on normal logout or UI reload. The Guild Book reads the already-loaded Lua table inside the game; there is no external file reader or service. Guild-bank snapshots can synchronize between compatible online addon clients using throttled in-game addon messages; this does not grant access to data a client cannot currently view.
 
 ## Using the view
 
 Open The Guild Book and select Bank. Guild Bank is always first and resolves to the current character's guild. Character entries combine characters already known to The Guild Book with characters observed by The Guild Book Bank. A guild character's entry does not imply that you can remotely read their personal bank.
 
-Visit a banker on each of your characters to save that character's available personal bank. Open a guild bank and normally view the guild tabs you want to remember. The companion observes the normal data-ready events; it does not request or select other tabs itself. Different guilds and characters keep separate records. Warband/account banks are outside this feature.
+Visit a banker on each of your characters to save that character's available personal bank. Open a guild bank and normally view the guild tabs you want to remember. The companion observes the normal data-ready events; it does not request or select other tabs itself. Automatic guild-bank synchronization begins only after opening a guild bank establishes the tabs this client can currently view. Each endpoint must currently be able to view a tab before that tab can be compared or transferred; inaccessible tabs are never probed or transferred. Closing the guild bank ends active synchronization work. Different guilds and characters keep separate records. Warband/account banks are outside this feature.
+
+On the Bank page, **Sync bank** is shown only for the Guild Bank entry. It requires an active access-known guild-bank session with viewable tabs. Repeated clicks coalesce into the active or queued manual run. Compatible online clients exchange bounded guild manifests and direct, throttled tab snapshots. Only complete remote snapshots newer than the saved tab are merged; equal capture times keep the local snapshot. Missing or unsupported companion, unavailable access, no compatible responder, and timeout states are shown in the Bank page. Saved data remains last-known and available offline; the exchange preserves the existing SavedVariables format.
 
 Select an entry and saved tab to see item slots and stack counts. Hover saved items for their saved item-link tooltips. Snapshots always remain last-known/cached, even when recently captured. Tab timestamps describe when each tab was observed; guild tabs viewed at different times do not form one simultaneous complete snapshot.
 
-No data means there is no usable saved observation. Incomplete or unavailable means a tab could not be observed reliably; previous valid contents are retained when possible. Unobserved tabs are not presented as empty. Capturing stops while a bank is closed or its APIs are unavailable/restricted. Opening the journal never requests bank data or creates guild traffic.
+No data means there is no usable saved observation. Incomplete or unavailable means a tab could not be observed reliably; previous valid contents are retained when possible. Unobserved tabs are not presented as empty. Capturing stops while a bank is closed or its APIs are unavailable/restricted. Opening or browsing the journal alone does not read bank data or start guild traffic; synchronization starts from an access-known guild-bank session or the **Sync bank** action for that session.
 
 ## Policy and API review
 
@@ -39,7 +41,7 @@ API contracts were checked in Blizzard-authored generated documentation and UI c
 - [GuildBankDocumentation.lua](https://github.com/tomrus88/BlizzardInterfaceCode/blob/master/Interface/AddOns/Blizzard_APIDocumentationGenerated/GuildBankDocumentation.lua): guild open/close and contents update events; these readiness events carry no tab identifier.
 - [BankFrame.lua](https://github.com/tomrus88/BlizzardInterfaceCode/blob/master/Interface/AddOns/Blizzard_UIPanels_Game/Mainline/BankFrame.lua) and [Blizzard_GuildBankUI.lua](https://github.com/tomrus88/BlizzardInterfaceCode/blob/master/Interface/AddOns/Blizzard_GuildBankUI/Blizzard_GuildBankUI.lua): Blizzard's normal item-reading paths for available containers/current guild tabs.
 
-No bank queries, guild addon messages, polling, item movement, protected-action hooks, secret reconstruction, or external game-state acquisition are added. API failures preserve last-known data and expose uncertainty. Any future acquisition change must repeat the supplied AGENTS.md policy review.
+Bank data reads remain limited to the normal UI's currently viewable bank containers and tabs; the addon does not query inaccessible tabs, poll, move items, use protected-action hooks, reconstruct secret values, or acquire external game state. Guild-bank synchronization uses bounded, throttled addon messages only between compatible online clients after current tab viewability is established. API failures preserve last-known data and expose uncertainty. Any future acquisition change must repeat the supplied AGENTS.md policy review.
 
 ## Manual Retail validation
 
