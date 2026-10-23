@@ -247,7 +247,12 @@ end
 local function notifyChanged(controller, reason, tabID)
     if controller.batching then
         controller.batchChanged = true
-        if reason then controller.batchReason = reason end
+        local nextIsSessionTransition = reason == "guild-session-open" or reason == "guild-session-close"
+        local batchIsSessionTransition = controller.batchReason == "guild-session-open"
+            or controller.batchReason == "guild-session-close"
+        if reason and (nextIsSessionTransition or not batchIsSessionTransition) then
+            controller.batchReason = reason
+        end
         if tabID then controller.batchTabID = tabID end
         return
     end
@@ -1198,9 +1203,9 @@ local function mergeGuildSyncSnapshot(controller, guildKey, sessionToken, tabID,
     notifyChanged(controller, "remote-merge", tabID)
     return true, nil
 end
-    function BankMemory.CreateController(api, database, onChanged, requestFlush)
 
-if type(api) ~= "table" then
+function BankMemory.CreateController(api, database, onChanged, requestFlush)
+    if type(api) ~= "table" then
         return nil, "api-invalid"
     end
     if type(database) ~= "table" or database.schemaVersion ~= SCHEMA_VERSION
@@ -1282,8 +1287,8 @@ if type(api) ~= "table" then
             self.batchChanged = false
             notifyChanged(self)
         end
+    end
 
-        end
     function controller:GetGuildBankSyncContext()
         return guildSyncContext(self)
     end
