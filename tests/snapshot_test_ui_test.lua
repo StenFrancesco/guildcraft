@@ -1021,6 +1021,7 @@ end
 
 local function recipeDetailsFixture()
     local GGM, api = loadUI(), makeBrowserAPI()
+    api.C_SpellBook = { IsSpellKnown = function() return true end }
     local recipes = {
         { recipeID = 11, name = "Copper Bracers", outputIcon = 101, knownBy = {
             { key = "Bob-Realm", name = "Bob", realm = "Realm", savedDate = "2026-09-02" },
@@ -1589,6 +1590,416 @@ T.test("own Create All accepts counts above the manual amount limit", function()
     T.assertEqual(api.craftCall[2], 1200)
 end)
 
+T.test("Guild recipe details expose self-crafting from live learned data, not cached crafters", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    recipes[1].knownBy = { recipes[1].knownBy[1] }
+    local opened, crafted = 0, 0
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function(skillLineID)
+            T.assertEqual(skillLineID, 164)
+            opened = opened + 1
+            return true
+        end,
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = recipeID == 11, craftable = recipeID == 11 }
+        end,
+        GetCraftableCount = function() return 2 end,
+        CraftRecipe = function(recipeID, quantity)
+            T.assertEqual(recipeID, 11)
+            T.assertEqual(quantity, 1)
+            crafted = crafted + 1
+            return true
+        end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertEqual(opened, 1)
+    T.assertTrue(details.whisperButton:IsShown())
+    T.assertTrue(details.createButton:IsShown())
+    T.assertTrue(details.createAllButton:IsShown())
+    T.assertTrue(details.createButton.enabled)
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(crafted, 1)
+
+    GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertFalse(details.createButton:IsShown())
+    T.assertFalse(details.createAllButton:IsShown())
+end)
+
+T.test("Guild Engineering self-crafting uses the current base profession API", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local activeProfessionID = 202
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function(skillLineID)
+            T.assertEqual(skillLineID, 202)
+            return true
+        end,
+        GetBaseProfessionInfo = function() return { professionID = activeProfessionID } end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function() return 2 end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Engineering")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.whisperButton:IsShown())
+    T.assertTrue(details.createButton:IsShown())
+    T.assertTrue(details.createAllButton:IsShown())
+    T.assertTrue(details.createButton.enabled)
+    T.assertTrue(details.createAllButton.enabled)
+    activeProfessionID = 164
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertFalse(details.createButton:IsShown())
+    T.assertFalse(details.createAllButton:IsShown())
+end)
+
+T.test("Guild recipe details hide crafting when only the profession view knows the recipe", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local playerKnowsRecipe = false
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetBaseProfessionInfo = function() return { professionID = 202 } end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = false }
+        end,
+        GetCraftableCount = function() return 0 end,
+        CraftRecipe = function() error("must not craft an unlearned recipe") end,
+    }
+    api.C_SpellBook = { IsSpellKnown = function(recipeID)
+        T.assertEqual(recipeID, recipes[1].recipeID)
+        return playerKnowsRecipe
+    end }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Engineering")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.whisperButton:IsShown())
+    T.assertFalse(details.createButton:IsShown())
+    T.assertFalse(details.createAllButton:IsShown())
+    playerKnowsRecipe = true
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertTrue(details.createButton:IsShown())
+    T.assertTrue(details.createAllButton:IsShown())
+    playerKnowsRecipe = false
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertFalse(details.createButton:IsShown())
+    T.assertFalse(details.createAllButton:IsShown())
+end)
+
+T.test("Guild recipe details ignore cached self ownership when live learned data disagrees", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    recipes[1].knownBy[1].key = "Player-Realm"
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetRecipeInfo = function(recipeID) return { recipeID = recipeID, learned = false, craftable = false } end,
+        CraftRecipe = function() error("must not craft") end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.whisperButton:IsShown())
+    T.assertFalse(details.createButton:IsShown())
+    T.assertFalse(details.createAllButton:IsShown())
+end)
+
+T.test("Guild self-crafting places Whisper above both craft buttons and refreshes live state", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local learned, craftable, inCombat = true, true, false
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164, "Blacksmithing" end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = learned, craftable = craftable }
+        end,
+        GetCraftableCount = function() return craftable and 2 or 0 end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return inCombat end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.whisperButton.point.y > details.createButton.point.y)
+    T.assertTrue(details.createButton.point.y > details.createAllButton.point.y)
+    T.assertTrue(details.createAllButton.point.y >= 30, "Create All should clear the lower border")
+    T.assertTrue(details.createButton.point.y >= details.createAllButton.point.y + 32)
+    T.assertTrue(details.whisperButton.point.y >= details.createButton.point.y + 32)
+    T.assertTrue(details.crafterStatus.point.y >= details.whisperButton.point.y + 34)
+    T.assertTrue(details.createButton.enabled)
+
+    craftable = false
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertTrue(details.createButton:IsShown())
+    T.assertFalse(details.createButton.enabled)
+    learned, craftable = false, true
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertFalse(details.createButton:IsShown())
+    learned = true
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertTrue(details.createButton:IsShown())
+    inCombat = true
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "PLAYER_REGEN_DISABLED")
+    T.assertFalse(details.createButton.enabled)
+    inCombat = false
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertTrue(details.createButton.enabled)
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_CLOSE")
+    T.assertFalse(details.createButton:IsShown())
+end)
+
+T.test("Guild Create All count refreshes when a craft begins", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local count = 2
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = count > 0 }
+        end,
+        GetCraftableCount = function() return count end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertEqual(details.createAllButton.label.text, "Create All [2]")
+    count = 1
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_CRAFT_BEGIN")
+    T.assertEqual(details.createAllButton.label.text, "Create All [1]")
+end)
+
+T.test("Guild recipe refresh removes craft buttons when live knowledge changes", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local learned = true
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = learned, craftable = learned }
+        end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton:IsShown())
+    learned = false
+    GGM.RefreshRecipeDetailsWindow(browser)
+    T.assertFalse(details.createButton:IsShown())
+end)
+
+T.test("Guild crafting shows its disabled reason until the player attempts a whisper", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = false }
+        end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.craftStatus:IsShown())
+    T.assertFalse(details.whisperStatus:IsShown())
+    details.whisperButton.scripts.OnClick(details.whisperButton)
+    T.assertTrue(details.whisperStatus:IsShown())
+end)
+
+T.test("Guild craft click rejects a recipe removed from the current catalog", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local crafted = 0
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function() return 1 end,
+        CraftRecipe = function() crafted = crafted + 1; return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton.enabled)
+    browser.professionCatalog.recipes = { recipes[2] }
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(crafted, 0)
+end)
+
+T.test("Guild craft fails closed for the wrong live profession and protected craftability", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local activeSkillLineID, protected = 164, false
+    local crafted = 0
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return activeSkillLineID end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function() return 1 end,
+        CraftRecipe = function() crafted = crafted + 1; return true end,
+    }
+    api.issecretvalue = function(value) return protected and value == true end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton.enabled)
+    activeSkillLineID = 171
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(crafted, 0)
+    activeSkillLineID, protected = 164, true
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertFalse(details.createButton:IsShown())
+end)
+
+T.test("closing Guild recipe details releases only its own crafting context", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local closed = 0
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        CloseTradeSkill = function() closed = closed + 1 end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(browser.craftingContextSkillLineID, 164)
+    browser.recipeDetailsFrame:Hide()
+    T.assertEqual(closed, 1)
+    T.assertNil(browser.craftingContextSkillLineID)
+end)
+
+T.test("opening a Guild recipe during combat never opens a crafting profession", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local opened = 0
+    local inCombat = true
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() opened = opened + 1; return true end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return inCombat end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertEqual(opened, 0)
+    T.assertFalse(browser.recipeDetailsFrame.createButton:IsShown())
+    inCombat = false
+    browser.recipeDetailsFrame.rosterEventFrame.scripts.OnEvent(
+        browser.recipeDetailsFrame.rosterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertEqual(opened, 1)
+    T.assertTrue(browser.recipeDetailsFrame.createButton:IsShown())
+end)
+
+T.test("Guild recipe crafting rejects a protected profession-open result", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local protectedResult = {}
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return protectedResult end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        CraftRecipe = function() error("must not craft") end,
+    }
+    api.issecretvalue = function(value) return value == protectedResult end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNil(browser.craftingContextSkillLineID)
+    T.assertFalse(browser.recipeDetailsFrame.createButton:IsShown())
+end)
+
+T.test("Guild Create rejects unavailable craft counts while Own keeps its fallback", function()
+    for _, countCase in ipairs({ "missing", "throwing", "protected" }) do
+        local GGM, api, browser, recipes = recipeDetailsFixture()
+        local crafted = 0
+        api.C_TradeSkillUI = {
+            OpenTradeSkill = function() return true end,
+            GetTradeSkillLine = function() return 164 end,
+            GetRecipeInfo = function(recipeID)
+                return { recipeID = recipeID, learned = true, craftable = true }
+            end,
+            CraftRecipe = function() crafted = crafted + 1; return true end,
+        }
+        if countCase == "throwing" then
+            api.C_TradeSkillUI.GetCraftableCount = function() error("unavailable") end
+        elseif countCase == "protected" then
+            api.C_TradeSkillUI.GetCraftableCount = function() return 3 end
+        end
+        api.issecretvalue = function(value) return countCase == "protected" and value == 3 end
+        api.InCombatLockdown = function() return false end
+        GGM.SelectProfession(browser, "Blacksmithing")
+        GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+        local details = browser.recipeDetailsFrame
+        T.assertFalse(details.createButton.enabled, countCase)
+        details.createButton.scripts.OnClick(details.createButton)
+        T.assertEqual(crafted, 0, countCase)
+    end
+end)
+
+T.test("Guild Create rejects invalid amounts and reports a failed craft request", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local attempts = 0
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function() return 3 end,
+        CraftRecipe = function()
+            attempts = attempts + 1
+            return false
+        end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.amountInput:SetText("0")
+    T.assertFalse(details.createButton.enabled)
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(attempts, 0)
+
+    details.amountInput:SetText("1")
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(attempts, 1)
+    T.assertTrue(string.find(details.craftStatus.text, "could not be started", 1, true) ~= nil)
+end)
+
 T.test("own create remains available when Blizzard exposes craftability but not a maximum", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
@@ -1616,6 +2027,26 @@ T.test("own create remains available when Blizzard exposes craftability but not 
     T.assertFalse(details.createAllButton.enabled)
     details.createButton.scripts.OnClick(details.createButton)
     T.assertEqual(api.craftCall[2], 1)
+end)
+
+T.test("Own create still works when live recipe info omits learned", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    exposeOwnProfession(GGM, browser, "Blacksmithing")
+    local crafted = 0
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetRecipeInfo = function(recipeID) return { recipeID = recipeID, craftable = true } end,
+        CraftRecipe = function() crafted = crafted + 1; return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.createButton.enabled)
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(crafted, 1)
 end)
 
 T.test("profession panel hide temporarily suppresses and then restores Blizzard OnHide", function()
@@ -1724,6 +2155,31 @@ T.test("selecting an own profession opens and immediately hides Blizzard's profe
     GGM.SelectProfession(browser, "Blacksmithing")
     T.assertEqual(openedSkillLine, browser.selectedProfessionID)
     T.assertEqual(hidden, 1)
+end)
+
+T.test("opening an All recipe preserves an already visible Blizzard profession panel", function()
+    local GGM = loadUI()
+    local hidden, restyled = 0, 0
+    local professionFrame = {
+        IsShown = function() return true end,
+        Hide = function() hidden = hidden + 1 end,
+        SetFrameStrata = function() restyled = restyled + 1 end,
+        SetFrameLevel = function() restyled = restyled + 1 end,
+    }
+    local frame = {
+        professionLibraryMode = "All",
+        api = {
+            InCombatLockdown = function() return false end,
+            issecretvalue = function() return false end,
+            ProfessionsFrame = professionFrame,
+            C_TradeSkillUI = { OpenTradeSkill = function() return true end },
+        },
+    }
+
+    T.assertTrue(GGM.OpenSelectedProfessionContext(frame, 164, true))
+    T.assertEqual(hidden, 0, "an existing panel must stay visible")
+    T.assertEqual(restyled, 0, "an existing panel must keep its presentation")
+    T.assertFalse(frame.craftingContextOpenedByGuildBook)
 end)
 
 T.test("clicking an own recipe row does not open Blizzard's profession window", function()

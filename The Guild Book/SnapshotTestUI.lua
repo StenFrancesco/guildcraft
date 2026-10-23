@@ -905,8 +905,18 @@ function GGM.CloseBlizzardProfessionPanel(api, professionFrame)
     return closedContext or hiddenFrame
 end
 
-local function openSelectedProfessionContext(frame, skillLineID)
-    if frame.professionLibraryMode ~= "Own" then return false end
+local function openSelectedProfessionContext(frame, skillLineID, allowAll)
+    if frame.professionLibraryMode ~= "Own" and not allowAll then return false end
+    if allowAll then
+        if type(frame.api.InCombatLockdown) ~= "function"
+            or type(frame.api.issecretvalue) ~= "function"
+            or type(skillLineID) ~= "number" then return false end
+        local idOK, idSecret = pcall(frame.api.issecretvalue, skillLineID)
+        if not idOK or idSecret ~= false then return false end
+        local combatOK, inCombat = pcall(frame.api.InCombatLockdown)
+        local publicOK, secret = pcall(frame.api.issecretvalue, inCombat)
+        if not combatOK or not publicOK or secret ~= false or inCombat ~= false then return false end
+    end
     local trade = frame.api and frame.api.C_TradeSkillUI
     if type(trade) ~= "table" or type(trade.OpenTradeSkill) ~= "function" then return false end
     local professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame
@@ -916,10 +926,15 @@ local function openSelectedProfessionContext(frame, skillLineID)
         frameWasShown = not shownOK or wasShown == true
     end
     local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
-    if not openOK or opened == false then return false end
+    if not openOK then return false end
+    if allowAll then
+        local publicOK, secret = pcall(frame.api.issecretvalue, opened)
+        if not publicOK or secret ~= false then return false end
+    end
+    if opened == false then return false end
     frame.craftingContextSkillLineID = skillLineID
     frame.craftingContextOpenedByGuildBook = not frameWasShown
-    if professionFrame then
+    if professionFrame and not frameWasShown then
         if type(GGM.HideBlizzardProfessionPanel) == "function" then
             GGM.HideBlizzardProfessionPanel(frame.api, professionFrame)
         elseif type(professionFrame.Hide) == "function" then
@@ -934,6 +949,8 @@ local function openSelectedProfessionContext(frame, skillLineID)
     end
     return true
 end
+
+GGM.OpenSelectedProfessionContext = openSelectedProfessionContext
 
 -- Fixed-height virtual lists retain their full logical height while binding only
 -- enough buttons for the viewport and two buffered rows on either side.
