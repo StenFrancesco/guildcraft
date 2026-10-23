@@ -20,6 +20,7 @@ local events = {
     "GUILDBANKFRAME_CLOSED",
     "GUILDBANK_UPDATE_TABS",
     "GUILDBANKBAGSLOTS_CHANGED",
+    "PLAYER_GUILD_UPDATE",
     "PLAYER_REGEN_ENABLED",
 }
 
@@ -27,10 +28,10 @@ for _, event in ipairs(events) do
     frame:RegisterEvent(event)
 end
 
-local function notifyMainAddon()
+local function notifyMainAddon(reason, tabID)
     local callback = addon.GuildGearMemoryBankChanged
     if type(callback) == "function" then
-        pcall(callback)
+        pcall(callback, reason, tabID)
     end
 end
 
@@ -39,6 +40,15 @@ local function publishAPI()
         schemaVersion = 1,
         GetDatabase = function()
             return addon.TheGuildBookBankDB
+        end,
+        GetGuildBankSyncContext = function()
+            return controller:GetGuildBankSyncContext()
+        end,
+        GetGuildBankSyncSnapshot = function(tabID, sessionToken)
+            return controller:GetGuildBankSyncSnapshot(tabID, sessionToken)
+        end,
+        MergeGuildBankSyncSnapshot = function(guildKey, sessionToken, tabID, snapshot)
+            return controller:MergeGuildBankSyncSnapshot(guildKey, sessionToken, tabID, snapshot)
         end,
     }
 end
