@@ -82,6 +82,7 @@ end
 
 local function setStatus(sync, value)
     sync.status = value
+    if type(GGM.RefreshVisibleBankView) == "function" then pcall(GGM.RefreshVisibleBankView) end
 end
 
 local function clearWork(sync, clearManual)
@@ -255,6 +256,16 @@ local function advanceAfterRequest(sync)
     sync.current = nil
     sync.pending = {}
     cancelTimer(sync, "responseTimer")
+    if sync.manualPending then
+        -- The request just completed; give the queued manual comparison the
+        -- next slot while keeping this peer eligible in its manifest queue.
+        sync.manualPending = false
+        sync.manualActive = true
+        sync.selectedPeer = nil
+        buildPeerQueue(sync)
+        drive(sync)
+        return
+    end
     local tabID = nextCandidate(sync, peerKey)
     if tabID then
         local peer = sync.peers[peerKey]
