@@ -934,7 +934,7 @@ local function openSelectedProfessionContext(frame, skillLineID, allowAll)
     if opened == false then return false end
     frame.craftingContextSkillLineID = skillLineID
     frame.craftingContextOpenedByGuildBook = not frameWasShown
-    if professionFrame then
+    if professionFrame and not frameWasShown then
         if type(GGM.HideBlizzardProfessionPanel) == "function" then
             GGM.HideBlizzardProfessionPanel(frame.api, professionFrame)
         elseif type(professionFrame.Hide) == "function" then

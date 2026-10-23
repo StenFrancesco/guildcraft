@@ -2157,6 +2157,31 @@ T.test("selecting an own profession opens and immediately hides Blizzard's profe
     T.assertEqual(hidden, 1)
 end)
 
+T.test("opening an All recipe preserves an already visible Blizzard profession panel", function()
+    local GGM = loadUI()
+    local hidden, restyled = 0, 0
+    local professionFrame = {
+        IsShown = function() return true end,
+        Hide = function() hidden = hidden + 1 end,
+        SetFrameStrata = function() restyled = restyled + 1 end,
+        SetFrameLevel = function() restyled = restyled + 1 end,
+    }
+    local frame = {
+        professionLibraryMode = "All",
+        api = {
+            InCombatLockdown = function() return false end,
+            issecretvalue = function() return false end,
+            ProfessionsFrame = professionFrame,
+            C_TradeSkillUI = { OpenTradeSkill = function() return true end },
+        },
+    }
+
+    T.assertTrue(GGM.OpenSelectedProfessionContext(frame, 164, true))
+    T.assertEqual(hidden, 0, "an existing panel must stay visible")
+    T.assertEqual(restyled, 0, "an existing panel must keep its presentation")
+    T.assertFalse(frame.craftingContextOpenedByGuildBook)
+end)
+
 T.test("clicking an own recipe row does not open Blizzard's profession window", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
