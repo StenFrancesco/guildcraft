@@ -1830,6 +1830,7 @@ end)
 T.test("opening a Guild recipe during combat never opens a crafting profession", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     local opened = 0
+    local inCombat = true
     api.C_TradeSkillUI = {
         OpenTradeSkill = function() opened = opened + 1; return true end,
         GetTradeSkillLine = function() return 164 end,
@@ -1839,11 +1840,16 @@ T.test("opening a Guild recipe during combat never opens a crafting profession",
         CraftRecipe = function() return true end,
     }
     api.issecretvalue = function() return false end
-    api.InCombatLockdown = function() return true end
+    api.InCombatLockdown = function() return inCombat end
     GGM.SelectProfession(browser, "Blacksmithing")
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
     T.assertEqual(opened, 0)
     T.assertFalse(browser.recipeDetailsFrame.createButton:IsShown())
+    inCombat = false
+    browser.recipeDetailsFrame.rosterEventFrame.scripts.OnEvent(
+        browser.recipeDetailsFrame.rosterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertEqual(opened, 1)
+    T.assertTrue(browser.recipeDetailsFrame.createButton:IsShown())
 end)
 
 T.test("Guild recipe crafting rejects a protected profession-open result", function()
@@ -1863,6 +1869,34 @@ T.test("Guild recipe crafting rejects a protected profession-open result", funct
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
     T.assertNil(browser.craftingContextSkillLineID)
     T.assertFalse(browser.recipeDetailsFrame.createButton:IsShown())
+end)
+
+T.test("Guild Create rejects unavailable craft counts while Own keeps its fallback", function()
+    for _, countCase in ipairs({ "missing", "throwing", "protected" }) do
+        local GGM, api, browser, recipes = recipeDetailsFixture()
+        local crafted = 0
+        api.C_TradeSkillUI = {
+            OpenTradeSkill = function() return true end,
+            GetTradeSkillLine = function() return 164 end,
+            GetRecipeInfo = function(recipeID)
+                return { recipeID = recipeID, learned = true, craftable = true }
+            end,
+            CraftRecipe = function() crafted = crafted + 1; return true end,
+        }
+        if countCase == "throwing" then
+            api.C_TradeSkillUI.GetCraftableCount = function() error("unavailable") end
+        elseif countCase == "protected" then
+            api.C_TradeSkillUI.GetCraftableCount = function() return 3 end
+        end
+        api.issecretvalue = function(value) return countCase == "protected" and value == 3 end
+        api.InCombatLockdown = function() return false end
+        GGM.SelectProfession(browser, "Blacksmithing")
+        GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+        local details = browser.recipeDetailsFrame
+        T.assertFalse(details.createButton.enabled, countCase)
+        details.createButton.scripts.OnClick(details.createButton)
+        T.assertEqual(crafted, 0, countCase)
+    end
 end)
 
 T.test("own create remains available when Blizzard exposes craftability but not a maximum", function()

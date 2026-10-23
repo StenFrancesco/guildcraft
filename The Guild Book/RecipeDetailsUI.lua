@@ -98,6 +98,18 @@ local function liveRecipeKnown(details)
     return isPublic(api, learned) and learned == true
 end
 
+local function openGuildCraftingContext(details)
+    local browser = details.browser
+    local trade = browser.api.C_TradeSkillUI
+    if browser.professionLibraryMode ~= "All"
+        or browser.craftingContextSkillLineID == browser.selectedProfessionID
+        or type(trade) ~= "table" or type(trade.GetRecipeInfo) ~= "function"
+        or type(GGM.OpenSelectedProfessionContext) ~= "function" then return false end
+    local opened = GGM.OpenSelectedProfessionContext(browser, browser.selectedProfessionID, true)
+    details.openedCraftingContext = opened and browser.craftingContextOpenedByGuildBook == true
+    return opened
+end
+
 local function hideProfessionFrame(details)
     local frame = details.api.ProfessionsFrame or details.api.TradeSkillFrame
     if frame and type(GGM.HideBlizzardProfessionPanel) == "function" then
@@ -145,13 +157,15 @@ local function updateCraftControls(details)
     local maximum = safe and maxCraftable(details) or nil
     details.maxCraftable = maximum
     details.createAllButton:SetText("Create All [" .. tostring(maximum or 0) .. "]")
-    details.createButton:SetEnabled(craftable and amount ~= nil and (maximum == nil or amount <= maximum))
+    details.createButton:SetEnabled(craftable and amount ~= nil
+        and (details.ownMode or maximum ~= nil) and (maximum == nil or amount <= maximum))
     details.createAllButton:SetEnabled(craftable and maximum ~= nil and maximum > 0)
     if details.craftStatus then
         if not contextReady then details.craftStatus:SetText("Crafting unavailable: profession context is not ready.")
         elseif not safe then details.craftStatus:SetText(message)
         elseif not craftable then details.craftStatus:SetText("This recipe cannot currently be crafted.")
-        elseif maximum == nil then details.craftStatus:SetText("Create All availability is unavailable.")
+        elseif maximum == nil then details.craftStatus:SetText(details.ownMode
+            and "Create All availability is unavailable." or "Crafting quantity is unavailable.")
         elseif maximum == 0 then details.craftStatus:SetText("No crafts currently available.")
         elseif amount == nil then details.craftStatus:SetText("Enter an amount from 1 to " .. maximum .. ".")
         elseif amount > maximum then details.craftStatus:SetText("Amount exceeds the available quantity.")
@@ -182,6 +196,7 @@ local function craftRecipe(details, quantity)
     local maximum = safe and maxCraftable(details) or nil
     if not safe then details.craftStatus:SetText(message); showActionStatus(details, "craft"); return false end
     if not liveRecipeKnown(details) or not recipeIsCraftable(details)
+        or (not details.ownMode and maximum == nil)
         or not quantity or quantity < 1 or (maximum and quantity > maximum) then
         details.craftStatus:SetText("Crafting quantity is unavailable.")
         showActionStatus(details, "craft")
@@ -817,6 +832,7 @@ local function createWhisperControls(details)
             or event == "GET_ITEM_INFO_RECEIVED" then
             refreshMaterialDetails()
         end
+        if event == "PLAYER_REGEN_ENABLED" then openGuildCraftingContext(details) end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.openedCraftingContext = nil
@@ -1020,14 +1036,7 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     local preserveSelection = details.recipeID == canonical.recipeID
     if not preserveSelection then details.amountInput:SetText("1") end
     details.recipeID = canonical.recipeID
-    if browser.professionLibraryMode == "All"
-        and browser.craftingContextSkillLineID ~= browser.selectedProfessionID
-        and type(browser.api.C_TradeSkillUI) == "table"
-        and type(browser.api.C_TradeSkillUI.GetRecipeInfo) == "function"
-        and type(GGM.OpenSelectedProfessionContext) == "function" then
-        local opened = GGM.OpenSelectedProfessionContext(browser, browser.selectedProfessionID, true)
-        details.openedCraftingContext = opened and browser.craftingContextOpenedByGuildBook == true
-    end
+    openGuildCraftingContext(details)
     setActionMode(details, browser.professionLibraryMode == "Own")
     details.currentRecipeName = canonical.name
     setRecipeTitle(details, canonical.name)
