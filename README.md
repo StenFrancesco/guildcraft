@@ -153,6 +153,10 @@ an additive
 
 ## Data and synchronization
 
+The Bank page lists a personal or current guild bank only after at least one
+bank tab has been observed and saved. Banks with no saved snapshot are omitted;
+partially captured snapshots remain visible when they contain an observed tab.
+
 The Bank companion also saves each character's backpack and equipped bags,
 including the reagent bag on clients that support it. Capture runs on login,
 entering the world and after bag updates, without opening a bank or changing the
