@@ -222,13 +222,13 @@ local function nextCandidate(sync, peer)
                 or type(localSnapshot.capturedAt) ~= "number" or localSnapshot.capturedAt < remote.capturedAt then
                 return tabID
             end
+            sync.comparedAny = true
         end
     end
     return nil
 end
 
 local function finishPeer(sync)
-    sync.comparedAny = true
     if sync.selectedPeer then
         local peer = sync.peers[sync.selectedPeer]
         if peer then sync.processed[sync.selectedPeer] = peer.signature end
@@ -248,8 +248,11 @@ local function finishPeer(sync)
     if sync.peersInWindow >= MAX_PEERS_PER_WINDOW then
         buildPeerQueue(sync)
         if #sync.peerQueue == 0 then
+            local completedManual = sync.manualActive
             sync.manualActive = false
-            setStatus(sync, "Compared available guild snapshots")
+            local status = "Compared available guild snapshots"
+            if completedManual and not sync.comparedAny then status = "No compatible guild responder found" end
+            setStatus(sync, status)
             return
         end
     end
@@ -301,9 +304,10 @@ local function advanceAfterRequest(sync)
             return
         end
         local sent, err = sendMessage(sync, "Q", { sync.senderKey, sync.guildKey, sync.sessionToken,
-            peer.sessionToken, requestID, tostring(tabID) }, peer.senderKey, "WHISPER", function(success)
+            peer.sessionToken, requestID, tostring(tabID) }, peer.senderKey, "WHISPER", function(success, sendErr)
                 if sync.generation ~= entry.generation or sync.current ~= entry then return end
                 if not success then
+                    setError(sync, sendErr or "bank-sync-send-failed")
                     sync.pending[requestID] = nil
                     advanceAfterRequest(sync)
                 end
@@ -326,7 +330,11 @@ drive = function(sync)
     elseif #sync.peerQueue == 0 or sync.peerIndex > #sync.peerQueue then
         local completedManual = sync.manualActive
         sync.manualActive = false
-        setStatus(sync, completedManual and sync.comparedAny and "Compared available guild snapshots" or "Waiting for guild caches")
+        local status = "Waiting for guild caches"
+        if completedManual then
+            status = sync.comparedAny and "Compared available guild snapshots" or "No compatible guild responder found"
+        end
+        setStatus(sync, status)
         return
     end
     while sync.peerIndex <= #sync.peerQueue do
@@ -341,8 +349,11 @@ drive = function(sync)
     end
     sync.peerQueue = {}
     sync.manualPending = false
+    local completedManual = sync.manualActive
     sync.manualActive = false
-    setStatus(sync, sync.comparedAny and "Compared available guild snapshots" or "Waiting for guild caches")
+    local status = "Compared available guild snapshots"
+    if completedManual and not sync.comparedAny then status = "No compatible guild responder found" end
+    setStatus(sync, status)
 end
 
 local function handleManifest(sync, message, sender)
@@ -432,7 +443,9 @@ local function handleMessage(sync, message, sender, channel)
         if not snapshotOK or type(snapshot) ~= "table" or snapshot.id ~= tonumber(fields[6]) then return false, err or snapshot or "guild-tab-snapshot-unavailable" end
         local sent, sendErr = GGM.SendBankSyncSnapshot(sync.transport, sender,
             { fields[1], fields[2], fields[3], fields[4], fields[5], fields[6] }, snapshot,
-            function(success) if not success then setError(sync, "bank-sync-snapshot-send-failed") end end)
+            function(success, callbackErr)
+                if not success then setError(sync, callbackErr or "bank-sync-snapshot-send-failed") end
+            end)
         return sent, sendErr
     end
     if message.type == "S" then
@@ -443,6 +456,7 @@ local function handleMessage(sync, message, sender, channel)
         cancelTimer(sync, "responseTimer")
         if ok and not err then
             sync.error = nil
+            sync.comparedAny = true
         elseif not ok or err then
             sync.error = err or "bank-sync-merge-failed"
         end
