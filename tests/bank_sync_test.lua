@@ -85,9 +85,8 @@ local function setup(options)
 end
 
 local function manifest(G, sender, token, capturedAt)
-    local snapshot = { id = 1, capturedAt = capturedAt or 10, slots = { [1] = { itemID = 1001, count = 1 } } }
     local pages = assert(G.BankSyncProtocol.BuildManifest(sender, "Raid Team-Silvermoon", token, {
-        [1] = { capturedAt = snapshot.capturedAt, digest = G.BankSyncProtocol.Digest(1, snapshot) },
+        [1] = { capturedAt = capturedAt or 10 },
     }))
     return assert(G.BankSyncProtocol.Decode(pages[1], "GUILD"))
 end
