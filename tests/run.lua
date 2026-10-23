@@ -1,6 +1,11 @@
 package.path = "./?.lua;./?/init.lua;" .. package.path
 
 local suites = {
+    "tests.cpu_work_test",
+    "tests.profession_cpu_data_test",
+    "tests.profession_cpu_index_test",
+    "tests.profession_roster_cpu_test",
+    "tests.profession_sync_cpu_test",
     "tests.chat_throttle_test",
     "tests.automatic_sync_test",
     "tests.gear_backend_test",
@@ -26,6 +31,7 @@ local suites = {
     "tests.profession_transport_test",
     "tests.profession_compression_test",
     "tests.profession_sync_data_test",
+    "tests.profession_sync_cache_test",
     "tests.profession_sync_test",
     "tests.profession_automatic_sync_test",
     "tests.profession_index_test",
@@ -35,6 +41,8 @@ local suites = {
     "tests.inspect_gear_test",
     "tests.saved_character_model_test",
     "tests.recipe_details_test",
+    "tests.material_tracker_test",
+    "tests.material_tracker_banks_test",
 }
 
 for _, moduleName in ipairs(suites) do

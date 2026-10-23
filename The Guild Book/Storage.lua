@@ -83,6 +83,8 @@ function GGM.InitializeDatabase(existing)
         return nil, "unsupported-schema-version:" .. tostring(existing.schemaVersion)
     end
 
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(existing) end
+
     if not validLocalCharacterGUIDs(existing.localCharacterGUIDs) then
         return nil, "database-local-character-guids-invalid"
     end
@@ -150,6 +152,16 @@ function GGM.GetProfessionRecord(db, characterKey)
 end
 
 function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
+    local operationReconcile
+    if type(options) == "table" and type(GGM.ConsumeProfessionValidationOperation) == "function" then
+        operationReconcile = GGM.ConsumeProfessionValidationOperation(
+            db,
+            options.indexValidationOperation,
+            identity
+        )
+    end
+    -- Saving can touch the registry before a later validation fails, so drop warm sync data first.
+    if type(GGM.InvalidateProfessionSyncCache) == "function" then GGM.InvalidateProfessionSyncCache(db) end
     if type(db) ~= "table" or type(db.professions) ~= "table" then
         return false, "database-invalid"
     end
@@ -174,8 +186,10 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
     )
     if characterErr then return false, characterErr end
 
-    local indexOk, indexErr = GGM.EnsureProfessionIndex(db, true)
-    if not indexOk then return false, indexErr end
+    if not operationReconcile then
+        local indexOk, indexErr = GGM.EnsureProfessionIndex(db, true)
+        if not indexOk then return false, indexErr end
+    end
 
     if localID == nil then
         localID, characterErr = GGM.EnsureProfessionCharacter(db, identity)
@@ -197,11 +211,17 @@ function GGM.SaveProfessionSnapshot(db, identity, snapshot, options)
         }
     end
 
-    local indexed, reconcileErr = GGM.ReconcileProfessionRecipeMembership(
-        db,
-        localID,
-        snapshot
-    )
+    local indexed, reconcileErr
+    if operationReconcile then
+        indexed, reconcileErr = operationReconcile(localID, snapshot)
+        if not indexed and reconcileErr == "profession-index-operation-stale" then
+            local indexOk, indexErr = GGM.EnsureProfessionIndex(db, true)
+            if not indexOk then return false, indexErr end
+            indexed, reconcileErr = GGM.ReconcileProfessionRecipeMembership(db, localID, snapshot)
+        end
+    else
+        indexed, reconcileErr = GGM.ReconcileProfessionRecipeMembership(db, localID, snapshot)
+    end
     if not indexed then return false, reconcileErr end
 
     record.identity = copyIdentity(identity)

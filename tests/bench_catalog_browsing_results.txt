@@ -1,0 +1,41 @@
+Issue #94 PR3 catalog/list probe -- 22 October 2026
+Final current-code rerun after eligibility and search cancellation fixes.
+Runtime: bundled Lua 5.1 on this workspace host. Five samples, median os.clock CPU.
+Fixture creation and forced GC are outside timed intervals. Normal GC runs during
+operations. Dense synthetic overlap; not typical-guild/FPS data.
+
+Baseline catalog implementation: test0-01 before PR3 (bfe4851 catalog behavior;
+PR2 added only sync cache invalidation hooks outside the catalog path).
+Combined verification baseline: PR2 commit 8fa3fe3, which preserves that catalog.
+The saved baseline ProfessionIndex.lua was supplied as the benchmark argument.
+
+Owners x recipes | baseline cold/warm ms | PR3 cold/warm ms | baseline dates cold/warm | PR3 dates cold/warm
+10 x 500         | 8 / 8                 | 4 / 2            | 5000 / 5000             | 10 / 0
+50 x 1000        | 81 / 81               | 39 / 15          | 50000 / 50000           | 50 / 0
+100 x 2000       | 355 / 352             | 158 / 59         | 200000 / 200000         | 100 / 0
+
+Unique owner descriptor tables fall from owners*recipes to owners. Every warm
+PR3 read returns the identical model; baseline warm reads return a new model.
+Full validation and exact membership comparison are retained, so warm reads
+still traverse data. Slicing/reusing validation is issue #94 PR5 scope.
+
+UI regression probes use actual browser code with mocked WoW frames:
+- 4096 recipes, 230-unit viewport: 9 pooled recipe buttons, rather than one per
+  result. All 4096 IDs are reached over three complete scrolling passes; the
+  final recycled row opens recipe 4096. Search down to one result and back does
+  not grow the pool. Recipe rows no longer construct hidden owner labels.
+- 1000 characters, 200-unit viewport: 8 pooled character buttons, rather than
+  one per result. Every key is reachable; scrolling reuses the exact filtered
+  result array and selection. The final recycled button selects character 1000.
+- Both pools retain at most their largest viewport requirement; count does not
+  increase with result count or repeated searches/scrolling.
+- Latest-edit debounce, hidden callbacks, reopening, selection changes and
+  existing recipe details/tooltips are covered by regression tests.
+
+Reproduce current: lua tests/bench_catalog_browsing.lua
+Reproduce baseline: lua tests/bench_catalog_browsing.lua <baseline ProfessionIndex.lua>
+UI/cache assertions: lua tests/run.lua
+
+These probes do not measure WoW GPU rendering, FPS, combat behavior or live frame
+spikes. Live visual/tooltip/scroll checks and in-game frame-time measurements
+remain outstanding. SavedVariables and synchronization protocols are unchanged.

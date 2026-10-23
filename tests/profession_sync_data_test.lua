@@ -76,6 +76,101 @@ T.test("profession manifests exclude inactive or corrupt snapshots", function()
     T.assertNil(G.GetProfessionSyncManifest(db, 164))
 end)
 
+T.test("warm profession manifests reuse recipe content hashes", function()
+    local G = load()
+    local db = G.InitializeDatabase(nil)
+    save(G, db, "Player-1-AAA", { 3, 8 })
+    local originalHash = G.HashProfessionRecipes
+    local hashCalls = 0
+    G.HashProfessionRecipes = function(...)
+        hashCalls = hashCalls + 1
+        return originalHash(...)
+    end
+
+    local first = assert(G.GetProfessionSyncManifest(db, 164))
+    local firstCalls = hashCalls
+    T.assertTrue(firstCalls > 0)
+    local second = assert(G.GetProfessionSyncManifest(db, 164))
+    T.assertEqual(hashCalls, firstCalls)
+    T.assertEqual(second[1].hash, first[1].hash)
+
+    save(G, db, "Player-1-AAA", { 3, 9 }, 110)
+    local changed = assert(G.GetProfessionSyncManifest(db, 164))
+    T.assertTrue(hashCalls > firstCalls)
+    T.assertFalse(changed[1].hash == second[1].hash)
+end)
+
+T.test("profession sync manifest cache observes direct freshness and eligibility changes", function()
+    local G = load()
+    local db = G.InitializeDatabase(nil)
+    save(G, db, "Player-1-AAA", { 3 }, 100)
+    local first = assert(G.GetProfessionSyncManifest(db, 164))
+    db.professions["Player-1-AAA-Realm"].snapshots[164].capturedAt = 200
+    local fresh = assert(G.GetProfessionSyncManifest(db, 164))
+    T.assertEqual(fresh[1].capturedAt, 200)
+    T.assertEqual(fresh[1].hash, first[1].hash)
+
+    db.professionCharacters[1].active = false
+    T.assertEqual(#G.GetProfessionSyncManifest(db, 164), 0)
+    db.professionCharacters[1].active = true
+    T.assertEqual(#G.GetProfessionSyncManifest(db, 164), 1)
+end)
+
+T.test("profession sync cache revalidates direct character identity changes", function()
+    local G = load()
+    local db = G.InitializeDatabase(nil)
+    save(G, db, "Player-1-AAA", { 3 })
+    T.assertEqual(#G.GetProfessionSyncManifest(db, 164), 1)
+    local identity = db.professions["Player-1-AAA-Realm"].identity
+    identity.name = nil
+    T.assertNil(G.GetProfessionSyncManifest(db, 164))
+    identity.name = "Player-1-AAA"
+    T.assertEqual(#G.GetProfessionSyncManifest(db, 164), 1)
+end)
+
+T.test("profession sync cache observes a replaced profession index", function()
+    local G = load()
+    local db = G.InitializeDatabase(nil)
+    save(G, db, "Player-1-AAA", { 3 })
+    local before = assert(G.GetProfessionSyncManifest(db, 164))
+    db.professionRecipeIndex[164] = { [12] = { name = "Replacement", crafters = { 1 } } }
+    local after = assert(G.GetProfessionSyncManifest(db, 164))
+    T.assertFalse(after[1].hash == before[1].hash)
+end)
+
+T.test("profession sync cache revalidates forbidden and malformed snapshot fields", function()
+    local G = load()
+    local db = G.InitializeDatabase(nil)
+    save(G, db, "Player-1-AAA", { 3 })
+    local snapshots = db.professions["Player-1-AAA-Realm"].snapshots
+    T.assertEqual(#G.GetProfessionSyncManifest(db, 164), 1)
+
+    snapshots[164].recipes = {}
+    T.assertNil(G.GetProfessionSyncManifest(db, 164))
+    snapshots[164].recipes = nil
+    T.assertEqual(#G.GetProfessionSyncManifest(db, 164), 1)
+
+    snapshots[171] = true
+    T.assertNil(G.GetProfessionSyncManifest(db, 164))
+end)
+
+T.test("filtered and unfiltered profession digests remain distinct after membership changes", function()
+    local G = load()
+    local db = G.InitializeDatabase(nil)
+    save(G, db, "Player-1-AAA", { 3 })
+    save(G, db, "Player-1-BBB", { 8 })
+    local members = { ["Player-1-AAA"] = true }
+    local filtered, _, filteredCount = G.GetProfessionSyncDigest(db, 164, members)
+    local unfiltered, _, unfilteredCount = G.GetProfessionSyncDigest(db, 164)
+    T.assertFalse(filtered == unfiltered)
+    T.assertEqual(filteredCount, 1)
+    T.assertEqual(unfilteredCount, 2)
+    members["Player-1-BBB"] = true
+    local allMembers, _, allMemberCount = G.GetProfessionSyncDigest(db, 164, members)
+    T.assertEqual(allMembers, unfiltered)
+    T.assertEqual(allMemberCount, 2)
+end)
+
 T.test("recipe sync merge unions older knowledge without inventing observation time", function()
     local G = load()
     T.assertEqual(type(G.MergeProfessionSyncRecord), "function")

@@ -135,12 +135,20 @@ T.test("main profession sync waits for reconciled roster and routes addon messag
             T.assertEqual(prefix, "GC_PROF"); T.assertEqual(sender, "Alice-Realm")
             received = received + 1; return "ignored"
         end
+        local trackerRestores = 0
+        G.RestoreMaterialTracker = function(api, db)
+            T.assertTrue(api == _G)
+            T.assertTrue(db == G.db)
+            T.assertNil(G.guildGearBrowserFrame)
+            trackerRestores = trackerRestores + 1
+        end
         G.RecordLocalPlayerOwnership = function() return true end
         G.ReconcileProfessionGuildRoster = function() G.professionRosterMembershipCurrent = true; return true end
         T.loadAddonFile("The Guild Book/Main.lua", G)
         onEvent(frame, "ADDON_LOADED", "The Guild Book")
         T.assertNotNil(G.professionSync)
         onEvent(frame, "PLAYER_LOGIN")
+        T.assertEqual(trackerRestores, 1, "login restores tracking without opening the browser")
         T.assertEqual(logins, 1, "login schedules work while roster readiness gates actual traffic")
         onEvent(frame, "PLAYER_ENTERING_WORLD")
         onEvent(frame, "GUILD_ROSTER_UPDATE")
@@ -657,5 +665,37 @@ T.test("unsupported schema five SavedVariables remain untouched for manual reset
         T.assertTrue(_G.TheGuildBookDB.characters.sentinel)
         T.assertEqual(GGM.startupError, "unsupported-schema-version:5")
         T.assertNil(GGM.db)
+    end)
+end)
+T.test('presence-only roster updates refresh sync presence without invalidating the catalog',function()
+    local onEvent, catalogRefreshes, rosterRefreshes= nil,0,0
+    local frame={RegisterEvent=function() end,SetScript=function(_,_,handler) onEvent=handler end}
+    withGlobals({CreateFrame=function() return frame end},function()
+        local G={};stubSnapshotUI(G)
+        G.RefreshVisibleProfessionCatalog=function() catalogRefreshes=catalogRefreshes+1 end
+        G.ReconcileProfessionGuildRoster=function() G.professionRosterMembershipCurrent=true;return true,nil,false end
+        G.RefreshProfessionSyncRoster=function() rosterRefreshes=rosterRefreshes+1;return true end
+        T.loadAddonFile('The Guild Book/Main.lua',G)
+        G.db={};G.professionSync={};G.professionRosterRefreshSucceeded=true;G.professionRosterMembershipCurrent=true
+        onEvent(frame,'GUILD_ROSTER_UPDATE')
+        T.assertEqual(rosterRefreshes,1);T.assertEqual(catalogRefreshes,0)
+        G.professionRosterMembershipCurrent=false
+        onEvent(frame,'GUILD_ROSTER_UPDATE')
+        T.assertEqual(catalogRefreshes,1,'restoring trusted membership must refresh eligibility')
+    end)
+end)
+T.test('main queues roster validation and ignores completion after database replacement',function()
+    local onEvent,pending,queued= nil,nil,0
+    local frame={RegisterEvent=function() end,SetScript=function(_,_,fn) onEvent=fn end}
+    withGlobals({CreateFrame=function() return frame end},function()
+        local G={};stubSnapshotUI(G)
+        G.QueueProfessionRosterReconciliation=function(api,db,complete) queued=queued+1;pending=complete;return {} end
+        G.ReconcileProfessionGuildRoster=function() error('must queue the runtime roster validation') end
+        T.loadAddonFile('The Guild Book/Main.lua',G)
+        G.db={};G.professionRosterRefreshSucceeded=true;G.professionRosterMembershipCurrent=true
+        onEvent(frame,'GUILD_ROSTER_UPDATE')
+        T.assertEqual(queued,1);T.assertNotNil(pending)
+        G.db={};pending(true,nil,false)
+        T.assertNil(G.lastProfessionIndexError)
     end)
 end)

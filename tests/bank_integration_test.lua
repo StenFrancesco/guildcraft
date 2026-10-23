@@ -1,5 +1,13 @@
 local T = require("tests.testlib")
 
+local function setChunkEnv(chunk, env)
+    if setfenv then
+        setfenv(chunk, env)
+    elseif debug and debug.setupvalue then
+        debug.setupvalue(chunk, 1, env)
+    end
+end
+
 local function fixture(saved)
     local frame = { events = {}, scripts = {} }
     function frame:RegisterEvent(event) self.events[event] = true end
@@ -33,7 +41,7 @@ local function fixture(saved)
     local memory, GGM = {}, {}
     local function load(path, name, namespace)
         local chunk = assert(loadfile(path))
-        setfenv(chunk, api)
+        setChunkEnv(chunk, api)
         chunk(name, namespace)
     end
     load("The Guild Book Bank/BankMemory.lua", "The Guild Book Bank", memory)
@@ -90,6 +98,79 @@ T.test("companion login routes carried inventory capture without opening a bank"
     T.assertNotNil(record.inventory)
     T.assertNil(next(record.tabs))
     T.assertNil(record.capturedAt)
+end)
+
+T.test("main installs OnUpdate only for pending work and batches bank event bursts", function()
+    local saved = { schemaVersion = 1, characters = {}, guilds = {} }
+    local api, frame, _, counts = fixture(saved)
+    local event = assert(frame.scripts.OnEvent)
+    event(frame, "ADDON_LOADED", "The Guild Book Bank")
+    T.assertNil(frame.scripts.OnUpdate)
+
+    event(frame, "BANKFRAME_OPENED")
+    local readsBefore = counts()
+    local changesBefore = select(2, counts())
+    T.assertNil(frame.scripts.OnUpdate)
+    event(frame, "BAG_UPDATE", 6)
+    event(frame, "BAG_UPDATE", 6)
+    event(frame, "BAG_UPDATE_DELAYED")
+    T.assertEqual(counts(), readsBefore)
+    local update = assert(frame.scripts.OnUpdate, "pending work did not install OnUpdate")
+    update(frame, 0)
+    T.assertEqual(counts(), readsBefore + 12)
+    T.assertEqual(select(2, counts()), changesBefore + 1)
+    T.assertNil(frame.scripts.OnUpdate)
+end)
+
+T.test("closing the bank removes pending OnUpdate work without another capture", function()
+    local saved = { schemaVersion = 1, characters = {}, guilds = {} }
+    local api, frame, _, counts = fixture(saved)
+    local event = assert(frame.scripts.OnEvent)
+    event(frame, "ADDON_LOADED", "The Guild Book Bank")
+    event(frame, "BANKFRAME_OPENED")
+    event(frame, "BAG_UPDATE", 6)
+    local staleUpdate = assert(frame.scripts.OnUpdate)
+    local readsBeforeClose = counts()
+    event(frame, "BANKFRAME_CLOSED")
+    T.assertNil(frame.scripts.OnUpdate)
+    staleUpdate(frame, 0)
+    T.assertEqual(counts(), readsBeforeClose)
+    T.assertEqual(saved.characters["Alice-Silvermoon"].status, "incomplete")
+    event(frame, "BANKFRAME_OPENED")
+    event(frame, "BAG_UPDATE", 6)
+    local currentUpdate = assert(frame.scripts.OnUpdate)
+    local readsAfterOpen = counts()
+    staleUpdate(frame, 0)
+    T.assertEqual(counts(), readsAfterOpen)
+    T.assertTrue(frame.scripts.OnUpdate == currentUpdate)
+    currentUpdate(frame, 0)
+    T.assertEqual(counts(), readsAfterOpen + 2)
+end)
+
+T.test("replacing the controller cancels the old pending batch", function()
+    local saved = { schemaVersion = 1, characters = {}, guilds = {} }
+    local api, frame, _, counts = fixture(saved)
+    local event = assert(frame.scripts.OnEvent)
+    event(frame, "ADDON_LOADED", "The Guild Book Bank")
+    event(frame, "BANKFRAME_OPENED")
+    event(frame, "BAG_UPDATE", 6)
+    local staleUpdate = assert(frame.scripts.OnUpdate)
+    local readsBeforeReplace = counts()
+
+    event(frame, "ADDON_LOADED", "The Guild Book Bank")
+    T.assertNil(frame.scripts.OnUpdate)
+    staleUpdate(frame, 0)
+    T.assertEqual(counts(), readsBeforeReplace)
+    T.assertEqual(saved.characters["Alice-Silvermoon"].status, "incomplete")
+    event(frame, "BANKFRAME_OPENED")
+    event(frame, "BAG_UPDATE", 6)
+    local currentUpdate = assert(frame.scripts.OnUpdate)
+    local readsAfterOpen = counts()
+    staleUpdate(frame, 0)
+    T.assertEqual(counts(), readsAfterOpen)
+    T.assertTrue(frame.scripts.OnUpdate == currentUpdate)
+    currentUpdate(frame, 0)
+    T.assertEqual(counts(), readsAfterOpen + 2)
 end)
 
 T.test("companion entrypoint preserves unsupported SavedVariables and does no capture", function()

@@ -6,6 +6,8 @@ local WHISPER_COOLDOWN_SECONDS = 2
 local createCrafterDropdown
 local refreshCrafterWhisperState
 local shown
+local updateTrackingControls
+local renderMaterials
 
 local function createUIPanelButton(api, parent, label, width, height)
     local button = api.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -541,8 +543,38 @@ createCrafterDropdown = function(details, forceScrollable)
     end)
 end
 
-local function renderMaterials(details, model)
+local function materialBankNotes(details, model)
+    local itemIDs = {}
+    for _, group in ipairs(model.materials) do
+        for _, choice in ipairs(group.choices) do
+            if choice.itemID then itemIDs[choice.itemID] = true end
+        end
+    end
+    if not next(itemIDs) then return {} end
+    local locations = GGM.BuildMaterialBankItemLocations(details.api, itemIDs,
+        rawget(details.api, "TheGuildBookBankDB"))
+    local currentKey = GGM.GetMaterialBankPlayerKey(details.api)
+    local notes = {}
+    for itemID, banks in pairs(locations) do
+        local lines = {}
+        for _, bank in ipairs(banks) do
+            if bank.count and bank.count > 0 then
+                local count = (bank.partial and "at least " or "") .. bank.count
+                local observation = bank.partial and "last-known; incomplete" or "last-known"
+                local line = bank.key == currentKey and ("Your bank: " .. count)
+                    or (bank.key .. ": " .. count .. " in personal bank")
+                lines[#lines + 1] = line .. " (" .. observation .. ")"
+            end
+        end
+        notes[itemID] = table.concat(lines, "\n")
+    end
+    return notes
+end
+
+renderMaterials = function(details, model, preserveScroll)
+    local scrollPosition = preserveScroll and details.materialScroll:GetVerticalScroll() or 0
     details.materialModel = model
+    local bankNotes = materialBankNotes(details, model)
     local message = model.message or (#model.materials == 0 and "No crafting materials required." or "")
     details.materialStatus:SetText(message)
     if message == "" then details.materialStatus:Hide() else details.materialStatus:Show() end
@@ -551,7 +583,7 @@ local function renderMaterials(details, model)
     details.materialScroll:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -70, 274)
     if #model.materials == 0 then details.materialScroll:Hide() else details.materialScroll:Show() end
     local rowIndex, y = 0, 0
-    local function addRow(label, icon, heading)
+    local function addRow(label, icon, heading, itemID)
         rowIndex = rowIndex + 1
         local row = details.materialRows[rowIndex]
         if not row then
@@ -561,6 +593,8 @@ local function renderMaterials(details, model)
             row.icon:SetSize(24, 24)
             row.icon:SetPoint("TOPLEFT", row, "TOPLEFT", 8, -4)
             row.label = text(row, "GameFontHighlightSmall", "TOPLEFT", row, "TOPLEFT", 40, -8, MATERIAL_WIDTH - 48)
+            row.bankNote = text(row, "GameFontDisableSmall", "TOPLEFT", row, "TOPLEFT", 40, -28, MATERIAL_WIDTH - 48)
+            applyTextTheme(row.bankNote, "muted")
             details.materialRows[rowIndex] = row
         end
         row:ClearAllPoints()
@@ -570,6 +604,14 @@ local function renderMaterials(details, model)
         row.label:SetWidth(heading and MATERIAL_WIDTH - 8 or MATERIAL_WIDTH - 48)
         row.label:SetText(label)
         local rowHeight = math.max(32, row.label:GetStringHeight() + 16)
+        local note = itemID and bankNotes[itemID] or ""
+        row.bankNote:SetText(note or "")
+        if note and note ~= "" then
+            row.bankNote:ClearAllPoints()
+            row.bankNote:SetPoint("TOPLEFT", row, "TOPLEFT", 40, -rowHeight + 4)
+            rowHeight = rowHeight + row.bankNote:GetStringHeight() + 4
+            row.bankNote:Show()
+        else row.bankNote:Hide() end
         row:SetHeight(rowHeight)
         applyTextTheme(row.label, heading and "text" or "textSoft")
         if heading then row.icon:Hide() else row.icon:SetTexture(icon or UNKNOWN_ICON); row.icon:Show() end
@@ -579,17 +621,42 @@ local function renderMaterials(details, model)
     for _, group in ipairs(model.materials) do
         if #group.choices == 1 then
             local choice = group.choices[1]
-            addRow(choice.name .. "  ×" .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false)
+            addRow(choice.name .. "  ×" .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false, choice.itemID)
         else
             local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " ×" .. group.quantity
             if #group.choices > 1 then label = label .. " (choose one)" end
             addRow(label, nil, true)
-            for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false) end
+            for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false, choice.itemID) end
         end
     end
     for index = rowIndex + 1, #details.materialRows do details.materialRows[index]:Hide() end
     details.materialContent:SetHeight(math.max(1, y))
-    details.materialScroll:SetVerticalScroll(0)
+    if preserveScroll and type(details.materialScroll.GetVerticalScrollRange) == "function" then
+        scrollPosition = math.min(scrollPosition, math.max(0, details.materialScroll:GetVerticalScrollRange()))
+    end
+    details.materialScroll:SetVerticalScroll(scrollPosition)
+    if updateTrackingControls then updateTrackingControls(details) end
+end
+
+function GGM.RefreshRecipeMaterialBankNotes()
+    local browser = GGM.guildGearBrowserFrame
+    local details = browser and browser.recipeDetailsFrame
+    if not shown(details) or not details.materialModel then return false end
+    renderMaterials(details, details.materialModel, true)
+    return true
+end
+
+updateTrackingControls = function(details)
+    if not details.trackMaterialsButton then return end
+    local tracked = GGM.LoadMaterialTracking(details.api, details.browser.db)
+    if tracked and tracked.recipeID == details.recipeID then
+        details.trackMaterialsButton:SetEnabled(true)
+        return
+    end
+    local amount = parseAmount(details.api, details.amountInput:GetText())
+    local snapshot = GGM.CreateMaterialTrackingSnapshot(details.api, details.recipeID,
+        details.currentRecipeName, amount, details.materialModel)
+    details.trackMaterialsButton:SetEnabled(snapshot ~= nil)
 end
 
 local function createWhisperControls(details)
@@ -609,6 +676,7 @@ local function createWhisperControls(details)
     details.amountInput:SetScript("OnTextChanged", function()
         refreshCrafterWhisperState(details, nil, false)
         updateCraftControls(details)
+        updateTrackingControls(details)
     end)
 
     local function makeAmountButton(label, offset, delta)
@@ -661,8 +729,13 @@ local function createWhisperControls(details)
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CRAFT_BEGIN")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CLOSE")
+    details.rosterEventFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
     details.rosterEventFrame:SetScript("OnEvent", function(_, event)
         if not shown(details) then return end
+        if event == "PLAYER_REGEN_ENABLED" or event == "TRADE_SKILL_LIST_UPDATE"
+            or event == "GET_ITEM_INFO_RECEIVED" then
+            renderMaterials(details, GGM.BuildRecipeMaterialDetails(api, details.recipeID), true)
+        end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.browser.craftingContextSkillLineID = nil
@@ -763,7 +836,7 @@ local function createWindow(browser, recipe)
     details.materialPanel:SetPoint("TOPLEFT", details, "TOPLEFT", 32, -164)
     details.materialPanel:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -32, 262)
     details.materialPanel.background:SetColorTexture(0.93, 0.78, 0.51, 0.18)
-    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 46, -180, 424)
+    details.materialHeading = text(details, "GameFontNormal", "TOPLEFT", details, "TOPLEFT", 46, -180, 270)
     details.materialHeading:SetText("CRAFTING MATERIALS")
     details.materialStatus = text(details, "GameFontHighlightSmall", "TOPLEFT", details, "TOPLEFT", 46, -208, 424)
     details.materialStatus:SetHeight(32)
@@ -785,6 +858,21 @@ local function createWindow(browser, recipe)
     details.cachedStatus:SetText("Recipe knowledge is cached.")
     applyTextTheme(details.cachedStatus, "muted")
     createWhisperControls(details)
+    details.trackMaterialsButton = createUIPanelButton(api, details, "Track materials", 144, 26)
+    details.trackMaterialsButton:SetPoint("TOPRIGHT", details, "TOPRIGHT", -46, -172)
+    details.trackMaterialsButton:SetScript("OnClick", function()
+        local tracked = GGM.LoadMaterialTracking(api, browser.db)
+        if tracked and tracked.recipeID == details.recipeID then
+            GGM.UntrackRecipeMaterials(api, browser.db)
+            updateTrackingControls(details)
+            return
+        end
+        local amount = parseAmount(api, details.amountInput:GetText())
+        -- Read again at the user's click rather than trusting a stale schematic.
+        local model = GGM.BuildRecipeMaterialDetails(api, details.recipeID)
+        renderMaterials(details, model)
+        GGM.TrackRecipeMaterials(api, browser.db, details.recipeID, details.currentRecipeName, amount, model)
+    end)
     createCrafterDropdown(details)
     setActionMode(details, browser.professionLibraryMode == "Own")
     api.UISpecialFrames = api.UISpecialFrames or {}

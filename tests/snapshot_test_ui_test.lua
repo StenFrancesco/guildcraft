@@ -14,6 +14,9 @@ local function loadUI()
     T.loadAddonFile("The Guild Book gear/Storage.lua", GGM)
     T.loadAddonFile("The Guild Book/SavedCharacterModel.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTracker.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTrackerBanks.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTrackerUI.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetailsUI.lua", GGM)
     local bankView = loadfile("The Guild Book/BankView.lua")
     if bankView then bankView("The Guild Book", GGM) end
@@ -704,12 +707,18 @@ T.test("Own is the first default filter and both filters retain their meaning af
     T.assertFalse(toggle.allRadio:GetChecked())
     T.assertEqual(#frame.visibleProfessionEntries, 2)
     toggle.allRadio.scripts.OnClick(toggle.allRadio)
+    GGM.SelectProfession(frame, "Tailoring")
+    frame.professionSearchBox:SetText("cloth")
+    frame.professionRecipeScroll:SetVerticalScroll(18)
     frame:Hide()
     GGM.ShowGuildGearBrowserWindow(api, db)
     T.assertEqual(frame.professionLibraryMode, "Own")
     T.assertTrue(toggle.ownRadio:GetChecked())
     T.assertFalse(toggle.allRadio:GetChecked())
     T.assertEqual(#frame.visibleProfessionEntries, 2)
+    T.assertEqual(frame.selectedProfession, "Tailoring", "reopening keeps a still-owned selection")
+    T.assertEqual(frame.professionSearchBox:GetText(), "cloth")
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
 end)
 
 T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
@@ -749,6 +758,7 @@ end)
 T.test("profession library scrolls all nine rows within its sidebar", function()
     local GGM = loadUI()
     local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
     local scroll = frame.professionLibraryScroll
     local content = frame.professionLibraryContent
 
@@ -833,7 +843,7 @@ T.test("character content stays within the journal's painted page borders", func
     T.assertTrue(detail.point.x - inset.x >= 635 and detail.point.x - inset.x <= 645, "detail misses the painted left border")
     T.assertTrue(-detail.point.y + inset.y >= 70 and -detail.point.y + inset.y <= 80, "detail misses the painted top border")
     T.assertTrue(detail.point.x + detail.width <= 1350, "detail extends beyond the painted right border")
-    T.assertTrue(-detail.point.y + detail.height <= 574, "detail extends beyond the painted bottom border")
+    T.assertTrue(-detail.point.y + detail.height <= frame.height - 56, "detail extends beyond the painted bottom border")
     local libraryLeft = frame.searchPanel.point.x
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
@@ -862,6 +872,28 @@ T.test("character realm stays left aligned beneath the character name", function
     T.assertEqual(frame.realmLine.justifyH, "LEFT")
     T.assertTrue(math.abs(frame.realmLine.point.x - frame.characterLine.point.x) <= 1,
         "realm label must share the name's left edge")
+end)
+
+T.test("equipment quickslot border stays behind the item artwork", function()
+    local GGM = loadUI()
+    local api = makeBrowserAPI()
+    local createFrame = api.CreateFrame
+    api.CreateFrame = function(...)
+        local control = createFrame(...)
+        local createTexture = control.CreateTexture
+        control.CreateTexture = function(self, name, layer, ...)
+            local texture = createTexture(self, name, layer, ...)
+            texture.drawLayer = layer
+            return texture
+        end
+        return control
+    end
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
+    for _, button in ipairs(frame.slotButtons) do
+        T.assertEqual(button.quickslot.drawLayer, "BORDER",
+            "padded quickslot artwork must not draw an inset box over the item")
+        T.assertEqual(button.icon.drawLayer, "ARTWORK")
+    end
 end)
 
 T.test("portrait decoration follows the portrait bounds without an overlay icon texture", function()
@@ -901,14 +933,20 @@ end)
 
 T.test("character portrait and weapon labels have separate space above the footer", function()
     local GGM = loadUI()
-    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local api = makeBrowserAPI()
+    api.GetItemInfo = function() return "The Untamed Blade" end
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
     local portraitBottom = -frame.modelStage.point.y + frame.modelStage.height
     local footerTop = frame.gearPanel.height - frame.detailFooter.point.y - frame.detailFooter.height
     for _, button in ipairs(frame.slotButtons) do
         if button.paperDollGroup == "bottom" then
             local top = -button.point.y - button.height / 2
-            local labelsBottom = -button.point.y + button.height / 2 + 5 + 16 + 1 + 14
+            local labelsBottom = -button.point.y + button.height / 2 + 5
+                + button.label.height + 1 + 14
             T.assertTrue(top >= portraitBottom + 8, "weapons overlap the saved portrait")
+            T.assertTrue(button.label.height >= 42,
+                "three-line weapon names need enough height to remain readable")
+            T.assertEqual(button.label.text, "The Untamed Blade")
             T.assertTrue(labelsBottom <= footerTop - 6, "weapon labels overlap the footer")
         end
     end
@@ -995,6 +1033,96 @@ local function recipeDetailsFixture()
     return GGM, api, frame, recipes, function() return reads end, db
 end
 
+T.test("recipe details show personal bank notes below individual materials without tracking", function()
+    local G, api, browser, recipes, reads = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitFullName = function() return "Alice", "Realm" end
+    local function bank(name, itemID, count, partial)
+        return { identity = { key = name .. "-Realm", name = name, realm = "Realm" },
+            status = partial and "incomplete" or "cached", capturedAt = 100,
+            tabs = { [1] = { id = 1, name = "Personal", numSlots = 1, status = "cached", capturedAt = 100,
+                slots = { { itemID = itemID, count = count } } } } }
+    end
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = {
+        ["Alice-Realm"] = bank("Alice", 1, 4), ["Bob-Realm"] = bank("Bob", 1, 20, true),
+        ["Carol-Realm"] = bank("Carol", 2, 7), ["Dave-Realm"] = bank("Dave", 3, 2),
+    }, guilds = { ["Guild-Realm"] = bank("Guild", 1, 999) } }
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNil(G.materialTrackerFrame)
+    T.assertNotNil(details.materialRows[2].bankNote)
+    T.assertFalse(details.materialRows[1].bankNote:IsShown(), "alternative heading has no item note")
+    local note = details.materialRows[2].bankNote.text
+    T.assertTrue(note:find("Your bank: 4", 1, true) ~= nil)
+    T.assertTrue(note:find("Bob-Realm: at least 20 in personal bank", 1, true) ~= nil)
+    T.assertNil(note:find("Available on", 1, true))
+    T.assertTrue(note:find("last-known; incomplete", 1, true) ~= nil)
+    T.assertNil(note:find("Carol", 1, true), "alternative items need their own quantities")
+    T.assertNil(note:find("Guild", 1, true))
+    T.assertTrue(details.materialRows[3].bankNote.text:find("Carol-Realm: 7", 1, true) ~= nil)
+    T.assertTrue(details.materialRows[4].bankNote.text:find("Dave-Realm: 2", 1, true) ~= nil,
+        "optional item notes do not depend on tracker required-only filtering")
+    T.assertTrue(-details.materialRows[3].point.y >= details.materialRows[1].height + details.materialRows[2].height)
+    local before = reads()
+    details.materialScroll:SetVerticalScroll(12)
+    api.TheGuildBookBankDB.characters["Bob-Realm"].tabs[1].slots[1].count = 9
+    _G.GuildGearMemoryBankChanged()
+    T.assertEqual(reads(), before, "bank changes reuse the current recipe model")
+    T.assertEqual(details.materialScroll.verticalScroll, 12)
+    T.assertTrue(details.materialRows[2].bankNote.text:find("at least 9", 1, true) ~= nil)
+    api.TheGuildBookBankDB = nil
+    details.materialScroll.GetVerticalScrollRange = function() return 0 end
+    _G.GuildGearMemoryBankChanged()
+    T.assertEqual(details.materialScroll.verticalScroll, 0, "clamp scrolling when removing bank notes shrinks the list")
+    T.assertFalse(details.materialRows[2].bankNote:IsShown())
+    T.assertEqual(details.materialRows[2].bankNote.text, "")
+    T.assertEqual(details.materialRows[2].height, 32)
+end)
+
+T.test("recipe material refresh events preserve the current scroll position", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    local materials = {}
+    for index = 1, 20 do
+        materials[index] = { quantity = 1, choices = {
+            { itemID = index, name = "Material " .. index },
+        } }
+    end
+    G.BuildRecipeMaterialDetails = function()
+        return { state = "ready", materials = materials }
+    end
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    for _, event in ipairs({ "GET_ITEM_INFO_RECEIVED", "TRADE_SKILL_LIST_UPDATE" }) do
+        details.materialScroll:SetVerticalScroll(87)
+        details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, event)
+        T.assertEqual(details.materialScroll.verticalScroll, 87,
+            event .. " should retain the material list scroll position")
+    end
+end)
+
+T.test("single recipe material bank note clears when rows are reused for currency or missing data", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    local choice = { itemID = 1, name = "Rough Stone" }
+    G.BuildRecipeMaterialDetails = function()
+        return { state = "ready", materials = { { name = choice.name, quantity = 1, choices = { choice } } } }
+    end
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = { ["Bob-Realm"] = {
+        identity = { key = "Bob-Realm", name = "Bob", realm = "Realm" }, status = "cached", capturedAt = 100,
+        tabs = { [1] = { id = 1, name = "Personal", numSlots = 1, status = "cached", capturedAt = 100,
+            slots = { { itemID = 1, count = 20 } } } },
+    } } }
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.materialRows[1].bankNote)
+    T.assertEqual(details.materialRows[1].bankNote.text, "Bob-Realm: 20 in personal bank (last-known)")
+    T.assertTrue(details.materialRows[1].height > 32)
+    choice = { currencyID = 1, name = "Currency" }
+    G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertFalse(details.materialRows[1].bankNote:IsShown())
+    T.assertEqual(details.materialRows[1].height, 32)
+    choice = { itemID = 900, name = "Missing item" }
+    G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertFalse(details.materialRows[1].bankNote:IsShown())
+end)
+
 T.test("changing profession library mode closes open recipe details", function()
     local GGM, _, browser, recipes = recipeDetailsFixture()
     local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
@@ -1009,6 +1137,220 @@ T.test("changing profession library mode closes open recipe details", function()
     browser.professionLibraryToggle.allRadio.scripts.OnClick(browser.professionLibraryToggle.allRadio)
     T.assertEqual(browser.professionLibraryMode, "All")
     T.assertFalse(details:IsShown())
+end)
+
+T.test("recipe track button uses Amount and tracker survives closing the browser with live counts", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local count = 1
+    api.C_Item = { GetItemCount = function(id) return id == 1 and count or 0 end }
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    details.amountInput:SetText("3")
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    T.assertNotNil(tracker)
+    T.assertTrue(tracker.parent == api.UIParent)
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 1 / 9")
+    T.assertEqual(tracker.snapshot.amount, 3)
+    browser:Hide()
+    T.assertTrue(tracker:IsShown())
+    count = 9
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 9 / 9")
+    T.assertEqual(tracker.rows[1].label.textColor[2], 1)
+    count = 0
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 0 / 9")
+    T.assertNotNil(GGM.LoadMaterialTracking(api, browser.db))
+    tracker.untrackButton.scripts.OnClick()
+    T.assertFalse(tracker:IsShown())
+    T.assertNil(GGM.LoadMaterialTracking(api, browser.db))
+end)
+
+T.test("tracker personal bank toggle renders locations and refreshes without completing bag requirements", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    api.C_Item = { GetItemCount = function() return 0 end }
+    api.UnitFullName = function() return "Alice", "Realm" end
+    api.date = function(_, timestamp) return "time:" .. timestamp end
+    local function bank(name, count)
+        return { identity = { key = name .. "-Realm", name = name, realm = "Realm" },
+            status = "cached", capturedAt = 100, tabs = { [1] = {
+                id = 1, name = "Bank", status = "cached", capturedAt = 100, numSlots = 1,
+                slots = { [1] = { itemID = 1, count = count } },
+            } } }
+    end
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = {
+        ["Alice-Realm"] = bank("Alice", 4), ["Bob-Realm"] = bank("Bob", 20),
+    }, guilds = { ["Guild-Realm"] = bank("Guild", 999) } }
+    G.ShowRecipeDetailsWindow(browser, recipes[1]).trackMaterialsButton.scripts.OnClick()
+    local tracker = G.materialTrackerFrame
+    T.assertNotNil(tracker.altMaterialsToggle)
+    T.assertFalse(tracker.altMaterialsToggle:GetChecked())
+    T.assertFalse(tracker.rows[1].bankDetails:IsShown())
+    tracker.altMaterialsToggle:SetChecked(true)
+    tracker.altMaterialsToggle.scripts.OnClick(tracker.altMaterialsToggle)
+    local lines = tracker.rows[1].bankDetails.text
+    T.assertTrue(lines:find("Your bank: 4", 1, true) ~= nil)
+    T.assertTrue(lines:find("Bob-Realm - Bank: 20", 1, true) ~= nil)
+    T.assertTrue(lines:find("last seen time:100", 1, true) ~= nil)
+    T.assertNil(lines:find("Guild", 1, true))
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: 0 / 3")
+    T.assertTrue(tracker.rows[1].label.textColor[2] < 1)
+    T.assertTrue(G.LoadMaterialTracking(api, browser.db).showAltMaterials)
+    browser:Hide()
+    api.TheGuildBookBankDB.characters["Bob-Realm"].tabs[1].slots[1].count = 8
+    api.UnitFullName = function() return "Alice", nil end
+    api.GetRealmName = function() return "Realm" end
+    _G.GuildGearMemoryBankChanged()
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("Bob-Realm - Bank: 8", 1, true) ~= nil)
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("Your bank: 4", 1, true) ~= nil)
+    tracker.GetLeft, tracker.GetTop = function() return 800 end, function() return 700 end
+    tracker.scripts.OnDragStop(tracker)
+    T.assertTrue(G.LoadMaterialTracking(api, browser.db).showAltMaterials)
+    local model = { state = "ready", materials = { { quantity = 1, choices = { { itemID = 1, name = "Copper" } } } } }
+    G.TrackRecipeMaterials(api, browser.db, 124, "Replacement", 2, model)
+    T.assertTrue(tracker.altMaterialsToggle:GetChecked())
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertTrue(fresh.materialTrackerFrame.altMaterialsToggle:GetChecked())
+    tracker = fresh.materialTrackerFrame
+    tracker.altMaterialsToggle:SetChecked(false)
+    tracker.altMaterialsToggle.scripts.OnClick(tracker.altMaterialsToggle)
+    T.assertFalse(tracker.rows[1].bankDetails:IsShown())
+    T.assertFalse(fresh.LoadMaterialTracking(api, browser.db).showAltMaterials)
+end)
+
+T.test("tracker bank toggle handles missing companion and partial captures visibly", function()
+    local G, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    G.ShowRecipeDetailsWindow(browser, recipes[1]).trackMaterialsButton.scripts.OnClick()
+    local tracker = G.materialTrackerFrame
+    T.assertNotNil(tracker.altMaterialsToggle)
+    tracker.altMaterialsToggle:SetChecked(true)
+    tracker.altMaterialsToggle.scripts.OnClick(tracker.altMaterialsToggle)
+    T.assertEqual(tracker.bankStatus.text, "Personal bank data unavailable.")
+    api.TheGuildBookBankDB = { schemaVersion = 1, characters = {
+        ["Bob-Realm"] = { identity = { key = "Bob-Realm", name = "Bob", realm = "Realm" },
+            status = "incomplete", tabs = {} },
+    } }
+    G.RefreshMaterialTracker()
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("Bob-Realm - Bank: ?", 1, true) ~= nil)
+    T.assertTrue(tracker.rows[1].bankDetails.text:find("incomplete", 1, true) ~= nil)
+    tracker.untrackButton.scripts.OnClick()
+    _G.GuildGearMemoryBankChanged()
+    T.assertFalse(tracker:IsShown())
+end)
+
+T.test("recipe tracking toggles off on a second click even when Amount or material data is unavailable", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    T.assertTrue(tracker:IsShown())
+    details.amountInput:SetText("0")
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    GGM.BuildRecipeMaterialDetails = function() error("untracking must not read the recipe schematic") end
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertFalse(tracker:IsShown())
+    T.assertNil(tracker.snapshot)
+    T.assertNil(GGM.LoadMaterialTracking(api, browser.db))
+    tracker.scripts.OnEvent(tracker, "BAG_UPDATE_DELAYED")
+    T.assertFalse(tracker:IsShown())
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertNil(fresh.materialTrackerFrame)
+end)
+
+T.test("recipe tracking can be enabled again after toggling off", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertFalse(GGM.materialTrackerFrame:IsShown())
+    details.amountInput:SetText("2")
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertTrue(GGM.materialTrackerFrame:IsShown())
+    T.assertEqual(GGM.LoadMaterialTracking(api, browser.db).amount, 2)
+end)
+
+T.test("tracker restores without browser and saves its position independently for each character", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    details.trackMaterialsButton.scripts.OnClick()
+    local tracker = GGM.materialTrackerFrame
+    tracker.GetLeft = function() return 800 end
+    tracker.GetTop = function() return 700 end
+    tracker.scripts.OnDragStop(tracker)
+    local fresh = loadUI()
+    fresh.RestoreMaterialTracker(api, browser.db)
+    tracker = fresh.materialTrackerFrame
+    T.assertTrue(tracker:IsShown())
+    T.assertEqual(tracker.point.x, 800)
+    T.assertEqual(tracker.point.y, 700)
+    T.assertEqual(tracker.rows[1].label.text, "Copper / Fine Copper: ? / 3")
+    T.assertNil(fresh.guildGearBrowserFrame)
+    api.UnitGUID = function() return "Player-2-DEF" end
+    fresh.RestoreMaterialTracker(api, browser.db)
+    T.assertFalse(tracker:IsShown())
+end)
+
+T.test("tracker scrolls long lists and hides surplus rows when a shorter recipe replaces them", function()
+    local GGM, api, browser = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local model = { state = "ready", materials = {} }
+    for index = 1, 20 do
+        model.materials[index] = { quantity = 1, choices = { { itemID = index, name = "Material " .. index } } }
+    end
+    T.assertTrue(GGM.TrackRecipeMaterials(api, browser.db, 123, "Long recipe", 1, model))
+    local tracker = GGM.materialTrackerFrame
+    T.assertEqual(#tracker.rows, 20)
+    T.assertTrue(tracker.content.height > tracker.height)
+    T.assertTrue(tracker.scroll.scrollChild == tracker.content)
+    model.materials = { model.materials[1] }
+    T.assertTrue(GGM.TrackRecipeMaterials(api, browser.db, 124, "Short recipe", 1, model))
+    T.assertTrue(GGM.materialTrackerFrame == tracker)
+    T.assertTrue(tracker.rows[1]:IsShown())
+    T.assertFalse(tracker.rows[20]:IsShown())
+    T.assertEqual(tracker.scroll.verticalScroll, 0)
+end)
+
+T.test("recipe tracking rejects invalid Amount unavailable materials and refreshes once data is ready", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    api.issecretvalue = function() return false end
+    api.UnitGUID = function() return "Player-1-ABC" end
+    local details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertNotNil(details.trackMaterialsButton)
+    details.amountInput:SetText("0")
+    T.assertFalse(details.trackMaterialsButton.enabled)
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertNil(GGM.materialTrackerFrame)
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[2])
+    T.assertFalse(details.trackMaterialsButton.enabled)
+    GGM.BuildRecipeMaterialDetails = function() return { state = "ready", materials = {
+        { quantity = 2, choices = { { itemID = 4, name = "Silver" } } },
+    } } end
+    details.rosterEventFrame.scripts.OnEvent(nil, "PLAYER_REGEN_ENABLED")
+    T.assertTrue(details.trackMaterialsButton.enabled)
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertEqual(GGM.materialTrackerFrame.snapshot.recipeID, 22)
+    details = GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    details.trackMaterialsButton.scripts.OnClick()
+    T.assertEqual(GGM.materialTrackerFrame.snapshot.recipeID, 11)
+    T.assertEqual(#GGM.materialTrackerFrame.rows, 1)
 end)
 
 local function configureCrafterWhisperAPI(GGM, api, rows)
@@ -1281,6 +1623,7 @@ T.test("closing the guild book only closes a profession context it opened", func
     T.assertEqual(closeCalls, 0, "an independently opened profession context must remain open")
     T.assertEqual(hideCalls, 0, "the independently opened profession frame must remain visible")
 
+    frame:Show()
     frame.professionLibraryMode = "Own"
     GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(openedSkillLineID, frame.selectedProfessionID)
@@ -1641,6 +1984,31 @@ T.test("large crafter lists switch native dropdown to a scrollable menu on refre
     T.assertEqual(details.selectedCrafterKey, details.crafters[20].key)
 end)
 
+T.test("taller equipment window preserves the navigation artwork scale on every tab", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    for _, tab in ipairs({ "Character", "Professions", "Bank" }) do
+        GGM.SelectGuildGearBrowserTab(frame, tab)
+        local top, bottom = frame.navigationBackdropTop, frame.navigationBackdropBottom
+        T.assertTrue(top ~= nil and bottom ~= nil, "shared navigation needs its own unstretched artwork")
+        T.assertEqual(top.texture, GGM.UIJournalTextures.window)
+        T.assertEqual(top.width, GGM.UIStyleTokens.railWidth)
+        T.assertTrue(top.height >= 332, "all three painted navigation rows must retain their original scale")
+        T.assertEqual(top.point.y, 0)
+        T.assertEqual(top.texCoord[1], 0)
+        T.assertEqual(top.texCoord[3], 0)
+        T.assertTrue(math.abs(top.width / top.texCoord[2] - 1400) < 0.001,
+            "navigation artwork must retain its original horizontal scale")
+        T.assertTrue(math.abs(top.height / top.texCoord[4] - 630) < 0.001,
+            "navigation artwork must retain its original vertical scale")
+        T.assertEqual(bottom.texCoord[3], top.texCoord[4])
+        T.assertEqual(bottom.texCoord[4], 1)
+        T.assertEqual(bottom.points.TOPLEFT.y, -top.height)
+        T.assertEqual(bottom.points.BOTTOMLEFT.y, 0)
+        T.assertTrue(bottom.points.BOTTOMLEFT.relativeTo == frame)
+    end
+end)
+
 T.test("journal window uses the reference canvas size, custom backdrop, and screen-fit scale", function()
     local GGM = loadUI()
     local api = makeBrowserAPI()
@@ -1651,7 +2019,7 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     }, separator)
 
     T.assertEqual(frame.width, 1400)
-    T.assertEqual(frame.height, 630)
+    T.assertEqual(frame.height, 694)
     T.assertNil(frame.template)
     T.assertEqual(frame.background.texture, mediaPath .. "journal-window.blp")
     T.assertTrue(frame.background.allPointsTo == frame)
@@ -1723,7 +2091,7 @@ T.test("journal profession page follows the parchment reference proportions and 
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
 
     T.assertEqual(ui.windowWidth, 1400)
-    T.assertEqual(ui.windowHeight, 630)
+    T.assertEqual(ui.windowHeight, 694)
     T.assertEqual(ui.professionLibraryX, 314)
     T.assertEqual(ui.professionDetailX, 629)
     T.assertEqual(ui.professionLibraryTop, 145)
@@ -2088,26 +2456,27 @@ T.test("profession search filters cached recipes only, changing profession clear
     end
     local before = copy(db)
     local frame = showBrowser(GGM, api, db)
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
     local builderCalls = #calls
 
     frame.professionSearchBox:SetText("COPPER")
     T.assertEqual(#calls, builderCalls)
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Copper Bracers")
-    T.assertTrue(string.find(frame.professionRecipeRows[1].knownBy.text, "saved 2026-09-01", 1, true) ~= nil)
+    T.assertEqual(frame.professionRecipeRows[1].recipe.knownBy[1].savedDate, "saved 2026-09-01")
 
     frame.professionButtons[2].scripts.OnClick(frame.professionButtons[2])
     T.assertEqual(frame.professionSearchBox:GetText(), "")
     T.assertEqual(#frame.filteredProfessionRecipes, 2)
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
-    T.assertEqual(#calls, builderCalls + 2)
+    T.assertEqual(#calls, builderCalls + 1)
     T.assertEqual(frame.professionSearchBox:GetText(), "")
 
     frame.professionSearchBox:SetText("ring")
     builderCalls = #calls
     frame.navigationTabs[2].scripts.OnClick(frame.navigationTabs[2])
     frame.navigationTabs[1].scripts.OnClick(frame.navigationTabs[1])
-    T.assertEqual(#calls, builderCalls + 1)
+    T.assertEqual(#calls, builderCalls)
     T.assertEqual(frame.professionSearchBox:GetText(), "ring")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Silver Ring")
@@ -2132,6 +2501,7 @@ T.test("profession messages preserve unavailable and empty base states and disti
     end, calls)
     local frame = showBrowser(GGM, makeBrowserAPI(), { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
 
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
     T.assertEqual(frame.professionStatus.text, "Current guild membership could not be confirmed.")
     mode = "identities"; GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(frame.professionStatus.text, "Current guild member identities could not be confirmed.")
@@ -2168,12 +2538,12 @@ T.test("visible profession catalog refreshes locally after roster reconciliation
     end
     local frame = showBrowser(GGM, api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
-    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 2")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 1")
 
     -- A completed reconciliation refreshes the currently visible catalog from local saved data.
     GGM.professionRosterMembershipCurrent = true
     T.assertTrue(GGM.RefreshVisibleProfessionCatalog())
-    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 3")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Recipe 2")
 
     -- A failed reconciliation clears stale owners by rebuilding the fail-closed unavailable model.
     GGM.professionRosterMembershipCurrent = false
@@ -2182,7 +2552,7 @@ T.test("visible profession catalog refreshes locally after roster reconciliation
     T.assertEqual(#frame.filteredProfessionRecipes, 0)
 end)
 
-T.test("profession owner rows show name realm and date without ownership badges", function()
+T.test("profession rows retain owner metadata for details without constructing hidden labels", function()
     local GGM = loadUI()
     local calls = {}
     local localOwner = {
@@ -2215,9 +2585,10 @@ T.test("profession owner rows show name realm and date without ownership badges"
     )
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
 
-    local text = frame.professionRecipeRows[1].knownBy.text
-    T.assertEqual(text,
-        "Known by: Alice-Silvermoon — 2026-10-01\nBob-ArgentDawn — 2026-09-30")
+    local row = frame.professionRecipeRows[1]
+    T.assertNil(row.knownBy)
+    T.assertTrue(row.recipe.knownBy[1] == localOwner)
+    T.assertTrue(row.recipe.knownBy[2] == guildOwner)
 end)
 
 T.test("guild gear browser shows the no saved guild gear state for an empty database", function()
@@ -2583,7 +2954,7 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     T.assertTrue(emptySlot.visible)
     T.assertTrue(emptySlot.empty)
     T.assertTrue(emptySlot.icon.desaturated)
-    T.assertEqual(emptySlot.icon.alpha, 0.32)
+    T.assertTrue(emptySlot.icon.alpha > 0 and emptySlot.icon.alpha < 1)
     T.assertEqual(emptySlot.key, "OFF_HAND")
     T.assertEqual(emptySlot.label.text, "Off hand")
     T.assertEqual(emptySlot.status.text, "Empty")
@@ -3038,8 +3409,8 @@ T.test("compact absent optional and required slots render as empty", function()
     T.assertTrue(frame.slotButtons[shirtIndex].empty)
     T.assertEqual(frame.slotButtons[shirtIndex].label.text, "Shirt")
     T.assertEqual(frame.slotButtons[shirtIndex].status.text, "Empty")
-    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 146)
-    T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 98)
+    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 156)
+    T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 156)
 end)
 
 T.test("sequence-gap browser records remain refresh-needed with all values and bounded captions", function()
@@ -3060,8 +3431,8 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     for index, row in ipairs(frame.detailModel.slots) do
         local button = frame.slotButtons[index]
         T.assertFalse(row.unavailable)
-        local expectedWidth = button.paperDollGroup == "bottom" and 92 or 98
-        T.assertTrue(button.label.width <= (button.paperDollGroup == "bottom" and 92 or 146))
+        local expectedWidth = button.paperDollGroup == "bottom" and 92 or 156
+        T.assertTrue(button.label.width <= (button.paperDollGroup == "bottom" and 92 or 156))
         T.assertTrue(button.status.width <= expectedWidth)
         T.assertEqual(button.label.text, row.displayName)
         T.assertTrue(#(button.status.text or "") <= 7)
@@ -3143,7 +3514,7 @@ T.test("equipped gear labels show item names from modern and legacy item APIs", 
         local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
         for _, button in ipairs(frame.slotButtons) do
             T.assertEqual(button.label.text, name)
-            T.assertEqual(button.label.height, 32)
+            T.assertEqual(button.label.height, button.paperDollGroup == "bottom" and 44 or 32)
         end
     end
 end)
@@ -3177,4 +3548,419 @@ T.test("item-name refresh follows the selected character without replacing empty
     T.assertEqual(head.status.text, "Empty")
     T.assertEqual(head.label.height, 14)
     T.assertNil(head.itemLink)
+end)
+
+
+T.test("PR1 hidden profession events build nothing and opening consumes latest data once", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local calls, revision = {}, 1
+    installProfessionCatalogStub(G, function()
+        return professionCatalog("ready", { { recipeID = 1, name = "Revision " .. revision, knownBy = {} } })
+    end, calls)
+    local db = makeDB(G)
+    local frame = G.CreateGuildGearBrowserWindow(api)
+    G.guildGearBrowserFrame, frame.db = frame, db
+    for i = 1, 5 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
+    T.assertEqual(#calls, 0, "an initialized hidden browser must build no catalog")
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(#calls, 1, "opening must build one catalog")
+    frame.professionSearchBox:SetText("Revision")
+    frame.professionRecipeScroll:SetVerticalScroll(30)
+    frame:Hide()
+    local before = #calls
+    revision = 2
+    for i = 1, 5 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
+    T.assertEqual(#calls, before, "hidden events must build zero catalogs")
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(#calls, before + 1, "reopening dirty data must build once")
+    T.assertEqual(frame.professionRecipeRows[1].recipe.name, "Revision 2")
+    T.assertEqual(frame.professionSearchBox:GetText(), "Revision")
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
+    frame:Hide()
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(#calls, before + 1, "clean reopening must reuse the catalog")
+end)
+
+T.test("PR1 inactive profession events wait until tab entry and gear never rebuilds other pages", function()
+    local G, api, calls = loadUI(), makeBrowserAPI(), {}
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    local db = makeDB(G, { makeRecord(G) })
+    G.db = db
+    local frame = showBrowser(G, api, db)
+    T.assertEqual(#calls, 0, "opening Characters must not build professions")
+    local banks = 0
+    G.RefreshVisibleBankView = function() banks = banks + 1 end
+    for _, tab in ipairs({ "Character", "Bank", "Professions" }) do
+        G.SelectGuildGearBrowserTab(frame, tab)
+        local before, beforeBanks = #calls, banks
+        for i = 1, 3 do G.RefreshVisibleGuildGearBrowser() end
+        T.assertEqual(#calls, before, "gear must not build professions on " .. tab)
+        T.assertEqual(banks, beforeBanks, "gear must not refresh Bank on " .. tab)
+    end
+    G.SelectGuildGearBrowserTab(frame, "Bank")
+    local before = #calls
+    for i = 1, 3 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
+    T.assertEqual(#calls, before)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 1)
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 1, "clean tab entry reuses saved rendering")
+end)
+
+T.test("PR1 visible invalidations coalesce and callbacks retain hidden dirty data", function()
+    local G, api, calls, timers = loadUI(), makeBrowserAPI(), {}, {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    local frame, before = G.guildGearBrowserFrame, #calls
+    for i = 1, 5 do G.RefreshVisibleProfessionCatalog() end
+    T.assertEqual(#calls, before)
+    T.assertEqual(#timers, 1, "one callback for an event burst")
+    timers[1]()
+    T.assertEqual(#calls, before + 1)
+    G.RefreshVisibleProfessionCatalog()
+    frame:Hide()
+    timers[2]()
+    T.assertEqual(#calls, before + 1, "queued callback must check actual visibility")
+    G.ShowGuildGearBrowserWindow(api, frame.db)
+    T.assertEqual(#calls, before + 2)
+    G.RefreshVisibleProfessionCatalog()
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 3)
+    timers[3]()
+    T.assertEqual(#calls, before + 3, "tab entry consumes queued work")
+end)
+
+T.test("PR1 gear refresh rebinds saved selection and coalesces without losing browsing state", function()
+    local G, api, timers = loadUI(), makeBrowserAPI(), {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    G.RequestCompleteSnapshot = function() error("browsing must not request gear") end
+    local db = makeDB(G, { makeRecord(G) })
+    G.db = db
+    local frame = showBrowser(G, api, db)
+    frame.searchBox:SetText("Alice")
+    timers[1]() -- Apply the debounced search before measuring event coalescing.
+    timers = {}
+    frame.listScroll:SetVerticalScroll(24)
+    local replacement = makeDB(G, { makeRecord(G) }).characters["Alice-Silvermoon"]
+    replacement.gear.capturedAt = 1700000900
+    db.characters["Alice-Silvermoon"] = replacement
+    for i = 1, 4 do G.RefreshVisibleGuildGearBrowser() end
+    T.assertEqual(#timers, 1)
+    timers[1]()
+    T.assertTrue(frame.selectedEntry.record == replacement)
+    T.assertEqual(frame.capturedLine.text, "saved-1700000900")
+    T.assertEqual(frame.searchBox:GetText(), "Alice")
+    T.assertEqual(frame.listScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
+    frame.listRows[1].scripts.OnClick(frame.listRows[1])
+end)
+
+
+T.test("PR1 shown but invisible professions and hidden selections retain dirty state", function()
+    local G, api, calls = loadUI(), makeBrowserAPI(), {}
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    local frame, before = G.guildGearBrowserFrame, #calls
+    frame.professionLibraryMode = "All"
+    frame.IsVisible = function() return false end
+    T.assertTrue(frame:IsShown())
+    T.assertFalse(G.RefreshVisibleProfessionCatalog())
+    G.SelectProfession(frame, "Blacksmithing")
+    T.assertEqual(#calls, before)
+    frame.IsVisible = function() return true end
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(#calls, before + 1)
+    T.assertEqual(calls[#calls].professionID, 164)
+end)
+
+T.test("PR1 paired catalog and library invalidations share one catalog build", function()
+    local G, api, calls, timers = loadUI(), makeBrowserAPI(), {}, {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    installProfessionCatalogStub(G, function() return professionCatalog("ready", {}) end, calls)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    local before = #calls
+    G.RefreshVisibleProfessionCatalog()
+    G.RefreshVisibleProfessionLibrary()
+    T.assertEqual(#timers, 1)
+    timers[1]()
+    T.assertEqual(#calls, before + 1)
+end)
+
+
+T.test("PR1 hidden gear changes flush latest Characters once and Bank opens once", function()
+    local G, api, timers = loadUI(), makeBrowserAPI(), {}
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    local db = makeDB(G, { makeRecord(G) })
+    G.db = db
+    local frame = showBrowser(G, api, db)
+    local builds, original = 0, G.BuildGuildGearBrowserEntries
+    G.BuildGuildGearBrowserEntries = function(...)
+        builds = builds + 1
+        return original(...)
+    end
+    frame:Hide()
+    db.characters["Alice-Silvermoon"].gear.capturedAt = 1700000999
+    for i = 1, 3 do T.assertFalse(G.RefreshVisibleGuildGearBrowser()) end
+    T.assertEqual(builds, 0)
+    T.assertEqual(#timers, 0)
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(builds, 1)
+    T.assertEqual(frame.capturedLine.text, "saved-1700000999")
+    local banks = 0
+    G.RefreshVisibleBankView = function() banks = banks + 1 end
+    G.SelectGuildGearBrowserTab(frame, "Bank")
+    frame:Hide()
+    banks = 0
+    G.ShowGuildGearBrowserWindow(api, db)
+    T.assertEqual(banks, 1)
+end)
+
+
+T.test("PR1 hidden and inactive profession sidebar resizing defers widget work", function()
+    local G, api = loadUI(), makeBrowserAPI()
+    local frame = G.CreateGuildGearBrowserWindow(api)
+    G.guildGearBrowserFrame = frame
+    local layouts = 0
+    local original = frame.professionLibraryContent.SetSize
+    frame.professionLibraryContent.SetSize = function(self, ...)
+        layouts = layouts + 1
+        return original(self, ...)
+    end
+    frame.professionLibraryScroll.scripts.OnSizeChanged()
+    T.assertEqual(layouts, 0)
+    G.ShowGuildGearBrowserWindow(api, makeDB(G))
+    T.assertTrue(layouts > 0)
+    G.SelectGuildGearBrowserTab(frame, "Character")
+    local before = layouts
+    frame.professionLibraryScroll.scripts.OnSizeChanged()
+    T.assertEqual(layouts, before)
+    G.SelectGuildGearBrowserTab(frame, "Professions")
+    T.assertEqual(layouts, before + 1)
+end)
+
+
+T.test("large recipe lists recycle a bounded viewport pool and keep the last recipe clickable", function()
+    local GGM, recipes = loadUI(), {}
+    for i = 1, 4096 do recipes[i] = { recipeID = i, name = string.format("Recipe %04d", i), knownBy = {} } end
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
+    local api = makeBrowserAPI()
+    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    local frame = GGM.guildGearBrowserFrame
+    frame.professionRecipeScroll:SetHeight(230)
+    frame.professionRecipeScroll.scripts.OnSizeChanged(frame.professionRecipeScroll)
+    local pool = #frame.professionRecipeRows
+    T.assertTrue(pool <= 10, "4096 results must allocate only viewport rows")
+    local opened
+    GGM.ShowRecipeDetailsWindow = function(_, recipe) opened = recipe end
+    local seen = {}
+    for pass = 1, 3 do
+        for offset = 0, 4096 * 46, 230 do
+            frame.professionRecipeScroll:SetVerticalScroll(offset)
+            for _, row in ipairs(frame.professionRecipeRows) do
+                if row.recipe then seen[row.recipe.recipeID] = true end
+            end
+        end
+    end
+    for id = 1, 4096 do T.assertTrue(seen[id], "every recipe must remain reachable") end
+    frame.professionRecipeScroll:SetVerticalScroll(4096 * 46 - 230)
+    T.assertEqual(#frame.professionRecipeRows, pool)
+    local last
+    for _, row in ipairs(frame.professionRecipeRows) do
+        if row.recipe and row.recipe.recipeID == 4096 then last = row end
+    end
+    T.assertNotNil(last)
+    last.scripts.OnClick(last)
+    T.assertTrue(opened == recipes[4096])
+    frame.professionSearchBox:SetText("Recipe 4096")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0)
+    T.assertTrue(frame.professionRecipeRows[1].recipe == recipes[4096])
+    for i = 2, pool do T.assertNil(frame.professionRecipeRows[i].recipe) end
+    frame.professionSearchBox:SetText("")
+    T.assertEqual(#frame.professionRecipeRows, pool)
+end)
+
+T.test("large character lists recycle rows without refiltering or changing selection on scroll", function()
+    local GGM, api = loadUI(), makeBrowserAPI()
+    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    local frame = GGM.guildGearBrowserFrame
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    local entries = {}
+    for i = 1, 1000 do
+        entries[i] = { key = "Char" .. i .. "-Realm", name = "Char" .. i, realm = "Realm" }
+    end
+    frame.entries = entries
+    frame.listScroll:SetHeight(200)
+    GGM.SelectGuildGearBrowserTab(frame, "Character")
+    local pool, filtered, selected = #frame.listRows, frame.filteredEntries, frame.selectedEntry
+    T.assertTrue(pool <= 9, "1000 characters must allocate only viewport rows")
+    local seen = {}
+    for offset = 0, frame.listContent.height, 200 do
+        frame.listScroll:SetVerticalScroll(offset)
+        for _, row in ipairs(frame.listRows) do if row.entry then seen[row.entry.key] = true end end
+    end
+    for _, entry in ipairs(entries) do T.assertTrue(seen[entry.key], "every character must remain reachable") end
+    T.assertTrue(frame.filteredEntries == filtered)
+    T.assertTrue(frame.selectedEntry == selected)
+    local last
+    for _, row in ipairs(frame.listRows) do if row.entry == entries[1000] then last = row end end
+    T.assertNotNil(last)
+    last.scripts.OnClick(last)
+    T.assertTrue(frame.selectedEntry == entries[1000])
+    frame.searchBox:SetText("Char1000")
+    T.assertEqual(frame.listScroll:GetVerticalScroll(), 0)
+    T.assertEqual(#frame.filteredEntries, 1)
+    T.assertTrue(frame.listRows[1].entry == entries[1000])
+    T.assertEqual(#frame.listRows, pool)
+end)
+
+T.test("search debounces edits and hidden callbacks do no rendering", function()
+    local GGM, api = loadUI(), makeBrowserAPI()
+    local recipes = { { recipeID = 1, name = "Alpha" }, { recipeID = 2, name = "Beta" } }
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
+    GGM.ShowGuildGearBrowserWindow(api, { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
+    local frame = GGM.guildGearBrowserFrame
+    local timers = {}
+    api.C_Timer = { After = function(seconds, callback)
+        timers[#timers + 1] = { seconds = seconds, callback = callback }
+    end }
+    frame.professionSearchBox:SetText("Al")
+    frame.professionSearchBox:SetText("Beta")
+    T.assertEqual(#frame.filteredProfessionRecipes, 2)
+    T.assertEqual(timers[#timers].seconds, 0.125)
+    for _, timer in ipairs(timers) do timer.callback() end
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.filteredProfessionRecipes[1].recipeID, 2)
+    frame.professionSearchBox:SetText("Alpha")
+    frame:Hide()
+    timers[#timers].callback()
+    T.assertEqual(frame.filteredProfessionRecipes[1].recipeID, 2)
+end)
+
+
+T.test("character search applies only the latest edit and pending profession search refreshes after reopening", function()
+    local GGM, api, timers = loadUI(), makeBrowserAPI(), {}
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    frame.searchBox:SetText("missing")
+    frame.searchBox:SetText("Alice")
+    local original = frame.filteredEntries
+    timers[1]()
+    T.assertTrue(frame.filteredEntries == original)
+    timers[2]()
+    T.assertEqual(#frame.filteredEntries, 1)
+    T.assertEqual(frame.selectedEntry.name, "Alice")
+    local recipes = { { recipeID = 1, name = "Alpha" }, { recipeID = 2, name = "Beta" } }
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
+    GGM.SelectGuildGearBrowserTab(frame, "Professions")
+    frame.professionSearchBox:SetText("Beta")
+    frame:Hide()
+    timers[#timers]()
+    GGM.ShowGuildGearBrowserWindow(api, frame.db)
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertEqual(frame.professionRecipeRows[1].recipe.recipeID, 2)
+end)
+
+
+T.test("switching profession cancels an obsolete pending search", function()
+    local GGM, api, timers = loadUI(), makeBrowserAPI(), {}
+    installProfessionCatalogStub(GGM, function() return professionCatalog("ready", { { recipeID = 1, name = "Alpha" } }) end, {})
+    GGM.ShowGuildGearBrowserWindow(api, makeDB(GGM))
+    local frame = GGM.guildGearBrowserFrame
+    api.C_Timer = { After = function(_, callback) timers[#timers + 1] = callback end }
+    local filters, filter = 0, GGM.FilterProfessionRecipeBrowserEntries
+    GGM.FilterProfessionRecipeBrowserEntries = function(...) filters = filters + 1; return filter(...) end
+    frame.professionSearchBox:SetText("Alpha")
+    GGM.SelectProfession(frame, "Blacksmithing")
+    local afterSelection = filters
+    timers[1]()
+    T.assertEqual(filters, afterSelection, "the previous profession's search must be cancelled")
+end)
+T.test('PR5 catalog preparation yields and cancels hidden or replaced selections', function()
+    local G, api, calls = loadUI(), makeBrowserAPI(), {}
+    G.CPUManualDriver = true
+    T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    installProfessionCatalogStub(G, function(id)
+        for i=1,1000 do G.CPUCheckpoint() end
+        return professionCatalog('ready',{{recipeID=id,name='Result '..id}})
+    end, calls)
+    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    local frame=G.guildGearBrowserFrame
+    T.assertNil(frame.professionCatalog, 'catalog should publish only when complete')
+    G.RunCPUFrame(); T.assertNil(frame.professionCatalog)
+    frame:Hide(); G.RunCPUFrame()
+    T.assertEqual(G.GetCPUJobCount(),0)
+    G.ShowGuildGearBrowserWindow(api,frame.db)
+    G.SelectProfession(frame,'Blacksmithing')
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(frame.professionCatalog.recipes[1].recipeID,164)
+    T.assertEqual(G.GetCPUJobCount(),0)
+end)
+T.test('PR5 recipe search slices and publishes only the latest complete query',function()
+    local G, api, recipes=loadUI(),makeBrowserAPI(),{}
+    for i=1,4096 do recipes[i]={recipeID=i,name='Recipe '..i} end
+    installProfessionCatalogStub(G,function() return professionCatalog('ready',recipes) end,{})
+    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    local frame=G.guildGearBrowserFrame
+    G.CPUManualDriver=true; T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    local original=frame.filteredProfessionRecipes
+    frame.professionSearchBox:SetText('Recipe 4'); G.RunCPUFrame()
+    T.assertTrue(frame.filteredProfessionRecipes==original)
+    frame.professionSearchBox:SetText('Recipe 4096')
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(#frame.filteredProfessionRecipes,1)
+    T.assertEqual(frame.filteredProfessionRecipes[1].recipeID,4096)
+    T.assertEqual(G.GetCPUJobCount(),0)
+end)
+T.test('PR5 character search yields and retains the latest selection and complete list',function()
+    local G,api,entries=loadUI(),makeBrowserAPI(),{}
+    local frame=showBrowser(G,api,makeDB(G,{makeRecord(G)}))
+    for i=1,4096 do entries[i]={key='Char'..i..'-Realm',name='Char'..i,realm='Realm'} end
+    frame.entries=entries
+    G.SelectGuildGearBrowserTab(frame,'Character')
+    G.CPUManualDriver=true; T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    local original=frame.filteredEntries
+    frame.searchBox:SetText('Char4'); G.RunCPUFrame()
+    T.assertTrue(frame.filteredEntries==original)
+    frame.searchBox:SetText('Char4096')
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(#frame.filteredEntries,1); T.assertEqual(frame.selectedEntry.key,'Char4096-Realm')
+    T.assertEqual(G.GetCPUJobCount(),0)
+end)
+T.test('PR5 character build restarts when the search changes while queued',function()
+    local G,api,timers=loadUI(),makeBrowserAPI(),{}
+    local frame=showBrowser(G,api,makeDB(G,{makeRecord(G),makeRecord(G)}))
+    G.CPUManualDriver=true; T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    api.C_Timer={After=function(_,callback) timers[#timers+1]=callback end}
+
+    frame.charactersDirty=true
+    G.SelectGuildGearBrowserTab(frame,'Character')
+    T.assertEqual(G.GetCPUJobCount(),1)
+    frame.searchBox:SetText('Alice')
+    T.assertEqual(#timers,1,'search debounce should be waiting while build runs')
+
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(G.GetCPUJobCount(),0)
+    T.assertEqual(#timers,2,'stale build should queue a replacement refresh')
+
+    timers[2]()
+    T.assertEqual(G.GetCPUJobCount(),1)
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(G.GetCPUJobCount(),0)
+    T.assertEqual(#frame.filteredEntries,1)
+    T.assertEqual(frame.filteredEntries[1].name,'Alice')
+end)
+T.test('changing profession clears recycled rows until the new catalog completes',function()
+    local G,api=loadUI(),makeBrowserAPI()
+    installProfessionCatalogStub(G,function(id) return professionCatalog('ready',{{recipeID=id,name='Recipe '..id}}) end,{})
+    G.ShowGuildGearBrowserWindow(api,makeDB(G))
+    local frame=G.guildGearBrowserFrame
+    T.assertNotNil(frame.professionRecipeRows[1].recipe)
+    G.CPUManualDriver=true;T.loadAddonFile('The Guild Book/CPUWork.lua',G)
+    G.SelectProfession(frame,'Blacksmithing')
+    for _,row in ipairs(frame.professionRecipeRows) do T.assertNil(row.recipe) end
+    for i=1,100 do G.RunCPUFrame() end
+    T.assertEqual(frame.professionRecipeRows[1].recipe.recipeID,164)
 end)

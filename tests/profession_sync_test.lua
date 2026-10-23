@@ -715,6 +715,32 @@ T.test("legacy background announcements are hints and their queries are ignored"
     T.assertEqual(b.sync.peers[a.identity.key:lower()][164], digest)
 end)
 
+T.test("login and background hints skip local digests and replies reuse one manifest", function()
+    local bus = guild()
+    local a, b = bus:client("Alice"), bus:client("Bob")
+    a:ready(); b:ready()
+    local digestCalls, manifestCalls = 0, 0
+    local getDigest, getManifest = b.G.GetProfessionSyncDigest, b.G.GetProfessionSyncManifest
+    b.G.GetProfessionSyncDigest = function(...) digestCalls = digestCalls + 1; return getDigest(...) end
+    b.G.GetProfessionSyncManifest = function(...) manifestCalls = manifestCalls + 1; return getManifest(...) end
+    local hintDigest = assert(a.G.GetProfessionSyncDigest(a.db, 164, a.sync.members))
+
+    for _, reason in ipairs({ "login", "background" }) do
+        local announcement = "P5|A|*|123-1|0|164," .. hintDigest .. "," .. reason
+        T.assertEqual(b.sync.transport.onPayload(announcement, a.identity.key, "GUILD"), "announced")
+    end
+    T.assertEqual(digestCalls, 0)
+
+    local saveAnnouncement = "P5|A|*|123-3|0|164," .. hintDigest .. ",save"
+    T.assertEqual(b.sync.transport.onPayload(saveAnnouncement, a.identity.key, "GUILD"), "announced")
+    T.assertEqual(digestCalls, 1)
+    manifestCalls = 0
+
+    local query = "P5|Q|*|123-2|164|" .. hintDigest .. ";manual;;"
+    T.assertEqual(b.sync.transport.onPayload(query, a.identity.key, "GUILD"), "comparing")
+    T.assertEqual(manifestCalls, 1)
+end)
+
 T.test("manual session timeout cancels queued frames and ignores a late CTL completion", function()
     local bus = guild()
     local peer, requester = bus:client("Alice"), bus:client("Bob")

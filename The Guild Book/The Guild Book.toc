@@ -12,6 +12,7 @@ Libs/LibStub/LibStub.lua
 Libs/LibDeflate/LibDeflate.lua
 
 Constants.lua
+CPUWork.lua
 CharacterIdentity.lua
 GearBackend.lua
 LocalCharacterOwnership.lua
@@ -27,9 +28,13 @@ ProfessionAutomaticSync.lua
 SavedDatabases.lua
 SavedCharacterModel.lua
 RecipeDetails.lua
+MaterialTracker.lua
+MaterialTrackerBanks.lua
+MaterialTrackerUI.lua
 RecipeDetailsUI.lua
 BankView.lua
 BankUI.lua
 SnapshotTestUI.lua
 ProfessionLinkSave.lua
+ProfessionRosterWork.lua
 Main.lua

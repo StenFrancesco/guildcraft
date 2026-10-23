@@ -51,7 +51,9 @@ local function requestProfessionAutoSave()
     local function save()
         if controller.autoSaveRequest ~= request then return end
         controller.autoSaveRequest = nil
-        local _, err = GGM.TryAutoSaveProfession(controller)
+        local _, err
+        if GGM.QueueProfessionSave then _, err = GGM.QueueProfessionSave(controller, true)
+        else _, err = GGM.TryAutoSaveProfession(controller) end
         GGM.lastProfessionSaveError = err
     end
     -- SetItemRef is observed by a post-hook. Let it establish the new owner
@@ -60,6 +62,33 @@ local function requestProfessionAutoSave()
         _G.C_Timer.After(0, save)
     else
         save()
+    end
+end
+
+local function cancelRosterWork()
+    GGM.professionRosterWork = nil
+    if GGM.CancelProfessionRosterReconciliation then GGM.CancelProfessionRosterReconciliation() end
+end
+local function reconcileRoster(automaticSave)
+    local db, wasCurrent = GGM.db, GGM.professionRosterMembershipCurrent
+    local request = {}
+    GGM.professionRosterWork = request
+    local function complete(ok, err, identityChanged)
+        if GGM.professionRosterWork ~= request or GGM.db ~= db then return end
+        GGM.professionRosterWork = nil
+        if ok then GGM.lastProfessionIndexError = nil
+        else GGM.lastProfessionIndexError = err; GGM.professionRosterMembershipCurrent = false end
+        refreshProfessionSyncRoster()
+        if not ok or not wasCurrent or identityChanged ~= false then refreshVisibleProfessionCatalog() end
+        if automaticSave then requestProfessionAutoSave() end
+    end
+    if GGM.QueueProfessionRosterReconciliation then
+        -- Recipient presence can change independently of the expensive saved
+        -- profession validation. Refresh the current public roster immediately.
+        if wasCurrent then refreshProfessionSyncRoster() end
+        GGM.QueueProfessionRosterReconciliation(_G, db, complete)
+    else
+        complete(GGM.ReconcileProfessionGuildRoster(_G, db))
     end
 end
 
@@ -130,6 +159,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
         GGM.professionPlayerLoggedIn = true
+        if type(GGM.RestoreMaterialTracker) == "function" then
+            GGM.RestoreMaterialTracker(_G, GGM.db)
+        end
         if GGM.professionSync and type(GGM.LoginProfessionSync) == "function" then
             if GGM.LoginProfessionSync(GGM.professionSync) then GGM.professionLoginSyncIssued = true end
         end
@@ -187,6 +219,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_GUILD_UPDATE" then
         if not GGM.db or GGM.startupError then return end
         if event == "PLAYER_GUILD_UPDATE" then
+            cancelRosterWork()
             GGM.professionRosterRefreshIssued = false
             GGM.professionRosterRefreshSucceeded = false
             GGM.professionRosterMembershipCurrent = false
@@ -197,6 +230,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
         local guildOk, inGuild = pcall(_G.IsInGuild)
         if not guildOk or type(inGuild) ~= "boolean" then
+            cancelRosterWork()
             GGM.professionRosterMembershipCurrent = false
             GGM.lastProfessionIndexError = "profession-roster-unavailable"
             refreshProfessionSyncRoster()
@@ -207,10 +241,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
             GGM.professionRosterRefreshIssued = false
             GGM.professionRosterRefreshPending = false
             GGM.professionRosterRefreshSucceeded = false
-            local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
-            if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
-            refreshProfessionSyncRoster()
-            refreshVisibleProfessionCatalog()
+            reconcileRoster(false)
             return
         end
         if GGM.professionRosterRefreshIssued then return end
@@ -238,11 +269,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
     if event == "GUILD_ROSTER_UPDATE" then
         if not GGM.db or GGM.startupError or not GGM.professionRosterRefreshSucceeded then return end
         GGM.professionRosterRefreshPending = false
-        local ok, err = GGM.ReconcileProfessionGuildRoster(_G, GGM.db)
-        if ok then GGM.lastProfessionIndexError = nil else GGM.lastProfessionIndexError = err end
-        refreshProfessionSyncRoster()
-        refreshVisibleProfessionCatalog()
-        requestProfessionAutoSave()
+        reconcileRoster(true)
         return
     end
 

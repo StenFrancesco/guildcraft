@@ -31,6 +31,14 @@ Enable the three addons in the game's AddOns list, then open the browser with `/
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
 within the same session preserves the last selected tab.
+
+Profession changes received while the browser is closed or another page is open
+are saved immediately and drawn once when Professions becomes visible. Repeated
+visible updates share one queued refresh. Gear changes refresh only the visible
+Characters list and selected equipment; they do not rebuild Professions or Bank.
+Refreshes retain searches, valid selections and scroll positions. Opening or
+selecting a character continues to show saved gear without requesting an update.
+
 The profession filters are ordered Own, then All. Own is selected by default,
 including when reopening the browser, and lists the current character's captured
 professions. All shows the full profession list. When Own has captured entries,
@@ -44,10 +52,75 @@ offline display. Older records can also gain it from cached character or guild
 roster information when selected. If the class cannot be determined, the frame
 shows a question mark. Race and gender labels remain below the icon.
 
+The equipment snapshot uses a compact Classic character-sheet layout with 44px
+slots, larger built-in UI text, outward-facing item names and weapons grouped
+below the portrait. The journal is slightly taller to fit the larger slots;
+its width is unchanged. The shared navigation artwork retains its original scale
+so its painted buttons stay aligned on Characters, Professions and Bank. It reuses
+native slot artwork and the existing journal art.
+
 The Characters footer keeps the equipment helper text on the left and the
 Last Captured label with its date/time on the right, with separate space for each.
 
 If The Guild Book gear has an unsupported database, gear capture and synchronization are unavailable; profession and bank features remain usable. `/ggm status` reports storage errors. Lua API identifiers and the gear message protocol keep their existing names and formats.
+
+## Recipe material tracker
+
+Open a recipe in the Professions browser, set **Amount** to the number of crafts
+(1–999), and click **Track materials**. A movable material tracker stays on screen
+when the recipe window and `/ggm` browser are closed. Drag its background to move
+it; long material lists can be scrolled. Click **Track materials** again for the
+same recipe, or click **Untrack** on the tracker, to remove it. Removing tracking
+also clears the saved target, so it stays closed after a reload or login.
+
+Each row shows the current character's available materials against the amount
+required, for example `Linen Cloth: 1 / 5`. Completed rows turn green. Counts update
+as materials enter or leave your bags, including after collecting auction purchases
+from the mailbox. Bank, reagent bank, account bank, mailbox and other characters'
+items are excluded from this main count and its green completion indicator.
+Currency reagents use the character's current currency balance.
+Unavailable or protected counts display `?`.
+
+Enable **Show alt materials** in the tracker to see materials in your characters'
+saved personal banks, including **Your bank** for the current character. This
+reuses the personal bank snapshots already captured by **The Guild Book Bank**;
+guild banks are excluded. Each matching location shows the character, quantity
+and last capture time. These are last-known counts: log into an alt and visit its
+bank to refresh its snapshot. Incomplete captures show `?` or a partial quantity
+marked **incomplete**. Missing bank data is reported explicitly. This option does
+not capture alt bags or add shared account-bank support beyond the companion's
+existing personal bank records.
+
+Recipe details also show a small availability note directly beneath each item
+with known personal bank stock, for example **Altname-Realm: 20 in
+personal bank (last-known)**. These notes appear without tracking the recipe and
+include optional items. Each alternative lists its own item quantity. Partial
+captures say **at least** and **incomplete**; unknown or missing stock does not
+claim availability. Notes refresh when the Bank companion saves changed data.
+
+Bank quantities are informational and do not turn a material green. Alternatives
+are combined once per location within a material group; the same physical items
+can appear under different groups that accept them, so do not add those location
+lines together. The toggle is saved with your tracked recipe and retained when
+moving the tracker or replacing its recipe.
+
+The tracker includes required materials only. Interchangeable alternatives share
+a count, and inventory is allocated across material groups without counting the
+same items twice. Optional reagents are excluded. The craft quantity is a fixed
+shopping target; crafting does not automatically reduce it.
+
+One recipe is tracked per character. Clicking **Track materials** for a different
+recipe replaces the previous target using the current Amount. To change the amount
+for the tracked recipe, toggle it off, set Amount, then track it again.
+The recipe, quantity and tracker position
+are remembered across reloads and logins. Tracking requires readable recipe material
+data; starting tracking is disabled when those details or a valid quantity are
+unavailable. An already tracked recipe can still be toggled off.
+Tracking does not craft, buy items or send messages, and does not require either
+companion addon for bag tracking; the optional personal bank breakdown requires
+the Bank companion's saved data. Its per-character settings are stored locally in
+an additive
+`materialTracking` field of `TheGuildBookDB`; sharing protocols are unchanged.
 
 ## Data and synchronization
 
@@ -265,6 +338,25 @@ To create a local install ZIP containing all three addon folders, run
 `python ui-concepts/package-bank-polish.py` (requires Pillow). The output is
 `ui-concepts/The-Guild-Book-Addons.zip`.
 
+## Large catalog browsing
+
+Recipe and character lists reuse rows for the visible area plus four buffered
+rows. Scrolling rebinds those rows without rebuilding search results or details;
+search waits 125 ms after the latest edit. Full scroll ranges and selection by
+recipe ID or character key keep every result accessible.
+
+Profession catalog models and shared owner/date descriptors live only in runtime
+memory. Unchanged catalogs reuse their models and formatted dates. Changes to
+recipes, labels/icons, observation times, identities, ownership, membership,
+activity, repairs or database inputs are checked before reuse; unrelated profession
+updates retain the selected catalog. Full validation still runs on catalog reads.
+
+Run `lua tests/bench_catalog_browsing.lua` for a reproducible cold/warm CPU and
+date-format probe. An optional path to a baseline `ProfessionIndex.lua` allows the
+same fixture to measure the prior implementation. Results and limitations are in
+`tests/bench_catalog_browsing_results.txt`. In-game visual, scrolling, tooltip and
+frame-time checks remain necessary; standalone timings do not establish FPS gains.
+
 ## Development
 
 Run the regression suite with Lua 5.1:
@@ -274,6 +366,43 @@ lua tests/run.lua
 ```
 
 In this workspace, the bundled runtime can be used with `./tools/lua/lua.exe tests/run.lua`.
+
+Profession synchronization caches content hashes, manifest rows and aggregate
+digests in runtime state outside SavedVariables. Controlled profession saves,
+registry/roster reconciliation, repairs and purges invalidate that state; metadata
+and database/index table changes are also checked before reuse. Full index
+validation remains on manifest reads. P5 serialization, compression and transport
+behavior are unchanged.
+
+Run `lua tests/check_toc_syntax.lua` to compile all TOC-listed Lua sources and
+`lua tests/bench_profession_sync_cache.lua` for reproducible cold/warm calculation,
+codec and end-to-end sync probes against the frozen uncached implementation.
+See [the PR2 measurements](docs/performance/2026-10-22-profession-sync-cache.md)
+for methodology and limits. Standalone CPU results do not establish in-game FPS
+improvements.
+
+## CPU preparation and validation
+
+Cold profession catalogs, list searches, synchronization calculations, local
+snapshot preparation and roster validation run through one event-driven background
+queue. Completed results replace the prior view together; changing profession
+clears the previous profession's clickable rows while the new view prepares.
+Closing a view or changing relevant data, guild/session or database cancels old
+work. The queue stops its update handler when no work remains.
+
+Ordinary saves can reuse full index validation prepared for one exact database
+revision and identity. That permission is single-use and checked again before
+membership changes. Load/recovery validation and malformed-record checks remain;
+renames, repairs and stale or replaced inputs use the full validation path.
+Presence-only roster changes update availability without rebuilding unchanged
+profession catalogs.
+
+The shared preparation deadline targets spare frame time, but measured GC and
+stress-case atomic work can exceed the initial 1 ms background / 2 ms interactive
+targets. Gear, Bank, codecs and public synchronous APIs retain their existing
+contracts. See [PR5 measurements and remaining limits](docs/performance/2026-10-22-pr5-cpu-work.md)
+for raw probes, fixed-deadline behavior and checks. In-game frame-time and memory
+measurements across all three addons remain outstanding.
 
 ## Open pull requests
 

@@ -199,10 +199,13 @@ function GGM.SaveActiveLinkedProfession(controller)
         return nil, "profession-source-unavailable"
     end
 
-    local snapshot, captureErr = GGM.CaptureLinkedProfessionSnapshot(
-        controller.api,
-        snapshotSource
-    )
+    local prepared = controller.preparedSave
+    controller.preparedSave = nil
+    if prepared and (not GGM.IsCPUInputCurrent(controller.db, prepared.input)
+        or prepared.snapshot.source ~= snapshotSource) then prepared = nil end
+    local snapshot, captureErr
+    if prepared then snapshot = prepared.snapshot
+    else snapshot, captureErr = GGM.CaptureLinkedProfessionSnapshot(controller.api, snapshotSource) end
     if not snapshot then return nil, captureErr end
 
     local saveOptions
@@ -217,8 +220,11 @@ function GGM.SaveActiveLinkedProfession(controller)
             return nil, playerGuildErr
         end
     end
-    local beforeHash
-    if GGM.professionSync and type(GGM.GetProfessionSyncDigest) == "function" then
+    local beforeHash = prepared and prepared.beforeHash
+    if prepared then
+        saveOptions = saveOptions or {}
+        saveOptions.indexValidationOperation = prepared.indexValidationOperation
+    elseif GGM.professionSync and type(GGM.GetProfessionSyncDigest) == "function" then
         beforeHash = GGM.GetProfessionSyncDigest(controller.db, snapshot.professionID)
     end
     local saved, saveErr = GGM.SaveProfessionSnapshot(
@@ -337,6 +343,74 @@ function GGM.TryAutoSaveProfession(controller)
     return result, err
 end
 
+-- UI/events prepare data before calling the unchanged synchronous save API.
+-- Closing/replacing the trade context cancels work without retrying in the background.
+function GGM.QueueProfessionSave(controller, automatic)
+    if not GGM.StartCPUJob then
+        local result, err
+        if automatic then result, err = GGM.TryAutoSaveProfession(controller)
+        else result, err = GGM.SaveActiveLinkedProfession(controller) end
+        return result == "saved" or result == "unchanged", err
+    end
+    local api, db = controller.api, controller.db
+    local trade = api and api.C_TradeSkillUI
+    establishOwnProfessionContext(controller, trade)
+    if controller.activeSource == "guild" then
+        -- A link can open before the roster resolves its owner. Retry through
+        -- the same trusted GUID lookup used by the synchronous save boundary.
+        controller.activeIdentity = linkedOwnerIdentity(controller)
+    end
+    local ownerGUID, ownerLink = controller.activeOwnerGUID, controller.activeLink
+    local infoOK, info = pcall(function() return trade.GetBaseProfessionInfo() end)
+    if not infoOK or type(info) ~= "table" or type(info.professionID) ~= "number" then
+        return false, "profession-info-unavailable"
+    end
+    local identity, source, professionID = controller.activeIdentity, controller.activeSource, info.professionID
+    if type(identity) ~= "table" then return false, "profession-owner-unavailable" end
+    if automatic and controller.autoSaved and controller.autoSaved[identity.guid .. ":" .. professionID] then return true end
+    local input, membership = GGM.CaptureCPUInput(db), GGM.professionRosterMembershipCurrent
+    local authoritative = GGM.db == db
+    controller.saveCPUOwner = controller.saveCPUOwner or {}
+    local owner = controller.saveCPUOwner
+    local function current()
+        return controller.db == db and (not authoritative or GGM.db == db)
+            and controller.panelOpen ~= false and controller.activeIdentity == identity
+            and controller.activeSource == source and controller.activeOwnerGUID == ownerGUID
+            and controller.activeLink == ownerLink and GGM.professionRosterMembershipCurrent == membership
+            and GGM.IsCPUInputCurrent(db, input)
+    end
+    local job, err = GGM.StartCPUJob(owner, function()
+        local snapshot, captureErr = GGM.CaptureLinkedProfessionSnapshot(api,
+            source == "player" and GGM.PROFESSION_SOURCE_PLAYER or GGM.PROFESSION_SOURCE_GUILD_LINK)
+        if not snapshot or snapshot.professionID ~= professionID then return nil, captureErr or "profession-context-changed" end
+        local beforeHash
+        if GGM.professionSync and GGM.GetProfessionSyncDigest then beforeHash = GGM.GetProfessionSyncDigest(db, professionID) end
+        local token, validationErr
+        if GGM.PrepareProfessionValidationOperation then token, validationErr = GGM.PrepareProfessionValidationOperation(db, identity) end
+        -- Unsupported rename/repair paths use the original full validation at save time.
+        return {snapshot = snapshot, input = input, beforeHash = beforeHash, indexValidationOperation = token}
+    end, function(prepared, prepareErr)
+        local infoOK, nowInfo = pcall(trade.GetBaseProfessionInfo)
+        if not infoOK or type(nowInfo) ~= "table" or nowInfo.professionID ~= professionID then return end
+        if not prepared then
+            GGM.lastProfessionSaveError = prepareErr
+            setStatus(controller, "Save failed: " .. tostring(prepareErr or "unavailable"), "warning")
+            return
+        end
+        controller.preparedSave = prepared
+        local result, saveErr
+        if automatic then result, saveErr = GGM.TryAutoSaveProfession(controller)
+        else result, saveErr = GGM.SaveActiveLinkedProfession(controller) end
+        controller.preparedSave = nil
+        GGM.lastProfessionSaveError = saveErr
+        if result == "saved" then setStatus(controller, "The Guild Book  •  snapshot saved", "success")
+        elseif result ~= "unchanged" then setStatus(controller, "Save failed: " .. tostring(saveErr or "unavailable"), "warning") end
+    end, { api = api, current = current, onCancel = function()
+        controller.preparedSave = nil
+    end })
+    return job ~= nil, err
+end
+
 function GGM.CreateProfessionSaveButton(controller)
     if controller and controller.button then
         return true, nil
@@ -390,6 +464,7 @@ function GGM.CreateProfessionSaveButton(controller)
     end)
 
     button:SetScript("OnClick", function()
+        if GGM.StartCPUJob then GGM.QueueProfessionSave(controller, false); return end
         local result, err = GGM.SaveActiveLinkedProfession(controller)
         if result == "saved" then
             setStatus(controller, "The Guild Book  •  snapshot saved", "success")
@@ -455,6 +530,8 @@ end
 function GGM.ClearProfessionSaveContext(controller)
     if type(controller) ~= "table" then return end
     controller.panelOpen = false
+    if GGM.CancelCPUJob and controller.saveCPUOwner then GGM.CancelCPUJob(controller.saveCPUOwner) end
+    controller.preparedSave = nil
     controller.autoSaveRequest = nil
     controller.autoSaved = nil
     controller.activeLink = nil
