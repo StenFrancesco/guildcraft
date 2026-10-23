@@ -574,6 +574,7 @@ end
 renderMaterials = function(details, model, preserveScroll)
     local scrollPosition = preserveScroll and details.materialScroll:GetVerticalScroll() or 0
     details.materialModel = model
+    details.pendingMaterialItemIDs = model.pendingItemIDs or {}
     local bankNotes = materialBankNotes(details, model)
     local message = model.message or (#model.materials == 0 and "No crafting materials required." or "")
     details.materialStatus:SetText(message)
@@ -729,12 +730,37 @@ local function createWhisperControls(details)
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CRAFT_BEGIN")
     details.rosterEventFrame:RegisterEvent("TRADE_SKILL_CLOSE")
+    details.rosterEventFrame:RegisterEvent("ITEM_DATA_LOAD_RESULT")
     details.rosterEventFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
-    details.rosterEventFrame:SetScript("OnEvent", function(_, event)
+    local function refreshMaterialDetails()
+        local model = GGM.BuildRecipeMaterialDetails(details.api, details.recipeID)
+        local combatOK, inCombat = false, nil
+        if model.state == "unavailable" and type(details.api.InCombatLockdown) == "function" then
+            combatOK, inCombat = pcall(details.api.InCombatLockdown)
+        end
+        if model.state == "unavailable" and combatOK
+            and isPublic(details.api, inCombat) and inCombat == true then
+            details.retryMaterialsAfterCombat = true
+            return false
+        end
+        details.retryMaterialsAfterCombat = nil
+        renderMaterials(details, model, true)
+        return true
+    end
+    details.rosterEventFrame:SetScript("OnEvent", function(_, event, ...)
         if not shown(details) then return end
+        if event == "ITEM_DATA_LOAD_RESULT" then
+            local itemID, success = ...
+            if isPublic(details.api, itemID) and isPublic(details.api, success)
+                and success == true and details.pendingMaterialItemIDs
+                and details.pendingMaterialItemIDs[itemID] then
+                refreshMaterialDetails()
+            end
+            return
+        end
         if event == "PLAYER_REGEN_ENABLED" or event == "TRADE_SKILL_LIST_UPDATE"
             or event == "GET_ITEM_INFO_RECEIVED" then
-            renderMaterials(details, GGM.BuildRecipeMaterialDetails(api, details.recipeID), true)
+            refreshMaterialDetails()
         end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil

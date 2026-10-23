@@ -1044,9 +1044,22 @@ local function queueBrowserRefresh(frame)
 end
 
 function GGM.SelectProfession(frame, selectedKey)
+    if selectedKey == nil then
+        if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
+        frame.selectedProfession = nil
+        frame.selectedProfessionID = nil
+        frame.professionCatalog = { state = "unavailable", recipes = {} }
+        if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
+        frame.professionSearchBox:SetText("")
+        frame.professionDetailPanel:Hide()
+        for _, button in ipairs(frame.professionButtons) do professionButtonColor(button, false) end
+        if frame.activeTab == "Professions" then GGM.SetSharedStatus(frame, "") end
+        return true
+    end
     local selectedProfession
     for _, profession in ipairs(PROFESSIONS) do if profession.key == selectedKey then selectedProfession = profession; break end end
     if not selectedProfession then return false end
+    frame.professionDetailPanel:Show()
     local changed = frame.selectedProfession ~= selectedKey
     if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.selectedProfession = selectedKey
@@ -1155,6 +1168,16 @@ function GGM.RefreshVisibleProfessionLibrary(frame)
         frame.professionLibraryToggle.ownRadio:SetChecked(own)
         setTextColor(frame.professionLibraryToggle.allRadio.label, own and THEME.muted or THEME.text)
         setTextColor(frame.professionLibraryToggle.ownRadio.label, own and THEME.text or THEME.muted)
+    end
+    -- The detail selection must belong to the same list as the visible buttons.
+    if frame.db and frame.professionDetailPanel then
+        local selectionVisible = false
+        for _, entry in ipairs(visibleEntries) do
+            if entry.key == frame.selectedProfession then selectionVisible = true; break end
+        end
+        if not selectionVisible then
+            GGM.SelectProfession(frame, visibleEntries[1] and visibleEntries[1].key or nil)
+        end
     end
     return true
 end
@@ -1545,8 +1568,10 @@ renderProfessionRows = function(frame)
             setColor(innerBevelEdges[4], THEME.iconBevelShadow)
             row.name = createText(row, "OVERLAY", "GameFontHighlight")
             GGM.ApplyJournalFont(row.name, 17, "bold")
-            row.name:SetPoint("LEFT", row, "LEFT", 50, 0)
-            row.name:SetWidth(599)
+            -- Bound the label inside the scroll row instead of relying on an
+            -- automatically sized FontString when the hidden page is laid out.
+            row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 50, -8)
+            row.name:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -18, 8)
             row.name:SetJustifyH("LEFT")
             setTextColor(row.name, THEME.text)
             row.separator = row:CreateTexture(nil, "BORDER")
