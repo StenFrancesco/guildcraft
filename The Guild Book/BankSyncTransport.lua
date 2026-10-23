@@ -1,6 +1,7 @@
 local _, GGM = ...
 local P = GGM.BankSyncProtocol
 local MAX_FRAME, CHUNK, MAX_FRAMES, MAX_ASSEMBLIES, TTL = 255, 230, 192, 8, 300
+local MAX_GENERAL_ASSEMBLIES, MAX_ASSEMBLIES_PER_SENDER = MAX_ASSEMBLIES - 1, 1
 local MAX_SNAPSHOT_GROUPS, MAX_QUEUED_FRAMES, MAX_CONTROL_FRAMES = 8, 1552, 16
 
 local function int(v, lo, hi) return type(v)=="number" and v==math.floor(v) and v>=lo and v<=hi end
@@ -103,7 +104,7 @@ function GGM.CreateBankSyncTransport(api,onMessage,onFailure)
         or type(onMessage)~="function" then return nil,"bank-sync-transport-api-unavailable" end
     local lib=LibStub and LibStub:GetLibrary("LibDeflate",true)
     if not lib or not lib.EncodeForWoWAddonChannel or not lib.DecodeForWoWAddonChannel or not lib.CompressDeflate or not lib.Adler32 or type(GGM.DecompressProfessionDeflate)~="function" then return nil,"bank-sync-compression-unavailable" end
-    return {api=api,onMessage=onMessage,onFailure=onFailure,queue={},assemblies={},nextID=0,snapshotTargets={},snapshotGroups=0,controlFrames=0,generation=0},nil
+    return {api=api,onMessage=onMessage,onFailure=onFailure,queue={},assemblies={},priorityAssemblies={},nextID=0,snapshotTargets={},snapshotGroups=0,controlFrames=0,generation=0},nil
 end
 
 function GGM.SetBankSyncTransportIdentity(t,senderKey,sessionToken)
@@ -163,30 +164,55 @@ function GGM.CancelBankSyncTransport(t,reason)
     if type(timer)=="table" and type(timer.Cancel)=="function" then pcall(timer.Cancel,timer) end
     -- This clears only addon-owned work. CTL cannot retract its one submitted
     -- frame; the controller must reject any stale completed response by session/request.
-    t.assemblies={}; clearAll(t,reason or "bank-sync-send-cancelled")
+    t.assemblies={}; t.priorityAssemblies={}; clearAll(t,reason or "bank-sync-send-cancelled")
     return true
 end
 
-local function cleanup(t,now) for key,assembly in pairs(t.assemblies) do if now-assembly.at>TTL then t.assemblies[key]=nil end end end
-function GGM.ReceiveBankSyncFrame(t,prefix,text,channel,sender,validateResponse)
+local function cleanup(t,now)
+    for key,assembly in pairs(t.assemblies) do if now-assembly.at>TTL then t.assemblies[key]=nil end end
+    for key,assembly in pairs(t.priorityAssemblies) do if now-assembly.at>TTL then t.priorityAssemblies[key]=nil end end
+end
+local function countAssemblies(assemblies)
+    local count=0; for _ in pairs(assemblies) do count=count+1 end; return count
+end
+function GGM.ReceiveBankSyncFrame(t,prefix,text,channel,sender,validateResponse,authorizeSender,isExpectedResponse)
     if prefix~=P.PREFIX then return "ignored" end
     if type(text)~="string" or #text>MAX_FRAME or type(sender)~="string" or #sender==0 or #sender>80 or (channel~="GUILD" and channel~="WHISPER") then return nil,"bank-sync-frame-invalid" end
     local id,ix,totalText,start=text:match("^F1|(%d%d%d%d%d%d)|(%d%d%d)|(%d%d%d)|()")
     local index,total=tonumber(ix),tonumber(totalText)
     if not id or id=="000000" or not int(index,1,MAX_FRAMES) or not int(total,1,MAX_FRAMES) or index>total then return nil,"bank-sync-frame-invalid" end
     local chunk=text:sub(start); if #chunk<1 or #chunk>CHUNK then return nil,"bank-sync-chunk-invalid" end
+    if type(authorizeSender)~="function" then return nil,"bank-sync-sender-unavailable" end
+    local authOK,authorized=pcall(authorizeSender,sender,channel)
+    if not authOK or authorized~=true then return nil,"bank-sync-sender-unavailable" end
+    t.assemblies=t.assemblies or {}; t.priorityAssemblies=t.priorityAssemblies or {}
     local now=t.api.GetTime(); cleanup(t,now)
-    local key=sender.."|"..channel.."|"..id; local assembly=t.assemblies[key]
+    local key=sender.."|"..channel.."|"..id
+    local assembly=t.priorityAssemblies[key] or t.assemblies[key]
+    local priority=t.priorityAssemblies[key]~=nil
     if not assembly then
-        local count=0; for _ in pairs(t.assemblies) do count=count+1 end
-        if count>=MAX_ASSEMBLIES then return nil,"bank-sync-assembly-limit" end
-        assembly={n=total,parts={},count=0,bytes=0,at=now}; t.assemblies[key]=assembly
-    elseif assembly.n~=total then t.assemblies[key]=nil; return nil,"bank-sync-frame-conflict" end
-    if assembly.parts[index] then if assembly.parts[index]~=chunk then t.assemblies[key]=nil; return nil,"bank-sync-frame-conflict" end; return "partial" end
+        local expected=false
+        if type(isExpectedResponse)=="function" then
+            local expectedOK,value=pcall(isExpectedResponse,sender,channel)
+            expected=expectedOK and value==true
+        end
+        if expected then
+            if countAssemblies(t.priorityAssemblies)>=1 then return nil,"bank-sync-priority-assembly-limit" end
+            priority=true
+        else
+            if countAssemblies(t.assemblies)>=MAX_GENERAL_ASSEMBLIES then return nil,"bank-sync-assembly-limit" end
+            local senderCount=0
+            for _,item in pairs(t.assemblies) do if item.sender==sender then senderCount=senderCount+1 end end
+            if senderCount>=MAX_ASSEMBLIES_PER_SENDER then return nil,"bank-sync-sender-assembly-limit" end
+        end
+        assembly={n=total,parts={},count=0,bytes=0,at=now,sender=sender,channel=channel}
+        if priority then t.priorityAssemblies[key]=assembly else t.assemblies[key]=assembly end
+    elseif assembly.n~=total then if priority then t.priorityAssemblies[key]=nil else t.assemblies[key]=nil end; return nil,"bank-sync-frame-conflict" end
+    if assembly.parts[index] then if assembly.parts[index]~=chunk then if priority then t.priorityAssemblies[key]=nil else t.assemblies[key]=nil end; return nil,"bank-sync-frame-conflict" end; return "partial" end
     assembly.parts[index]=chunk; assembly.count=assembly.count+1; assembly.bytes=assembly.bytes+#chunk; assembly.at=now
-    if assembly.bytes>CHUNK*MAX_FRAMES then t.assemblies[key]=nil; return nil,"bank-sync-payload-too-large" end
+    if assembly.bytes>CHUNK*MAX_FRAMES then if priority then t.priorityAssemblies[key]=nil else t.assemblies[key]=nil end; return nil,"bank-sync-payload-too-large" end
     if assembly.count<total then return "partial" end
-    local payload=decodePayload(table.concat(assembly.parts)); t.assemblies[key]=nil
+    local payload=decodePayload(table.concat(assembly.parts)); if priority then t.priorityAssemblies[key]=nil else t.assemblies[key]=nil end
     if not payload then return nil,"bank-sync-decode-failed" end
     local message,err=P.Decode(payload,channel); if not message then return nil,err end
     if message.type=="S" then
@@ -199,4 +225,4 @@ function GGM.ReceiveBankSyncFrame(t,prefix,text,channel,sender,validateResponse)
     return state or "complete",handlerErr
 end
 
-GGM.BankSyncTransportConstants={MAX_FRAME=MAX_FRAME,CHUNK=CHUNK,MAX_FRAMES=MAX_FRAMES,TTL=TTL,MAX_SNAPSHOT_GROUPS=MAX_SNAPSHOT_GROUPS,MAX_QUEUED_FRAMES=MAX_QUEUED_FRAMES}
+GGM.BankSyncTransportConstants={MAX_FRAME=MAX_FRAME,CHUNK=CHUNK,MAX_FRAMES=MAX_FRAMES,TTL=TTL,MAX_ASSEMBLIES=MAX_ASSEMBLIES,MAX_GENERAL_ASSEMBLIES=MAX_GENERAL_ASSEMBLIES,MAX_ASSEMBLIES_PER_SENDER=MAX_ASSEMBLIES_PER_SENDER,MAX_SNAPSHOT_GROUPS=MAX_SNAPSHOT_GROUPS,MAX_QUEUED_FRAMES=MAX_QUEUED_FRAMES}

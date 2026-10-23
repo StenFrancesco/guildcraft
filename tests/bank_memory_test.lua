@@ -484,6 +484,65 @@ T.test("guild open records metadata as incomplete without reading any tab conten
     T.assertNil(api.calls.guildItemLink)
 end)
 
+T.test("guild bank session establishment retries after a transient invalid current tab", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    api.currentGuildTab = nil
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+
+    send(controller, "GUILDBANKFRAME_OPENED")
+    T.assertNil(controller.guildSessionToken)
+    T.assertTrue(controller.guildSessionEstablishPending)
+
+    api.currentGuildTab = 1
+    send(controller, "GUILDBANKBAGSLOTS_CHANGED")
+    T.assertNotNil(controller.guildSessionToken)
+    T.assertFalse(controller.guildSessionEstablishPending)
+end)
+
+T.test("guild bank session establishment retries after a transient metadata read failure", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local getTabInfo = api.GetGuildBankTabInfo
+    api.GetGuildBankTabInfo = function() error("tab metadata not ready") end
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+
+    send(controller, "GUILDBANKFRAME_OPENED")
+    T.assertNil(controller.guildSessionToken)
+    T.assertTrue(controller.guildSessionEstablishPending)
+
+    api.GetGuildBankTabInfo = getTabInfo
+    send(controller, "GUILDBANK_UPDATE_TABS")
+    T.assertNotNil(controller.guildSessionToken)
+    T.assertFalse(controller.guildSessionEstablishPending)
+end)
+
+T.test("remote guild snapshots recover missing icons locally from item IDs", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    api.GetItemInfoInstant = function(itemID)
+        T.assertEqual(itemID, 4001)
+        return itemID, "Item", 1, 1, 98765
+    end
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    send(controller, "GUILDBANKFRAME_OPENED")
+    local context = assert(controller:GetGuildBankSyncContext())
+    local snapshot = {
+        id = 1, name = "Guild Tab 1", numSlots = 98, observedSlotCount = 98,
+        capturedAt = api.now + 1, status = "cached",
+        slots = { [1] = { itemID = 4001, itemLink = "|Hitem:4001|h[Item]|h", count = 3 } },
+    }
+
+    local merged, err = controller:MergeGuildBankSyncSnapshot(context.guildKey, context.sessionToken, 1, snapshot)
+
+    T.assertTrue(merged)
+    T.assertNil(err)
+    T.assertEqual(database.guilds[context.guildKey].tabs[1].slots[1].icon, 98765)
+end)
+
 T.test("guild contents-ready captures only the current tab and timestamps each observed tab", function()
     local memory = loadModule()
     local api = makeAPI()

@@ -3,6 +3,7 @@ local P = GGM.BankSyncProtocol
 
 local MAX_PEERS, PEER_TTL, MAX_PENDING, MAX_PEERS_PER_WINDOW = 64, 300, 8, 4
 local CAPTURE_DEBOUNCE, RESPONSE_TIMEOUT = 1, 30
+local MAX_REQUEST_ATTEMPTS = 2
 
 local function integer(value, minimum, maximum)
     return type(value) == "number" and value == math.floor(value) and value >= minimum and value <= maximum
@@ -31,6 +32,43 @@ local function apiCall(fn, ...)
     local ok, first, second = pcall(fn, ...)
     if not ok then return false, "api-failed" end
     return true, first, second
+end
+
+local function safeRosterValue(sync, value)
+    local checker = sync.api.issecretvalue
+    if type(checker) ~= "function" then return false end
+    local ok, secret = pcall(checker, value)
+    return ok and secret == false
+end
+
+local function rosterNamesMatch(left, right)
+    return senderMatches(left, right) or senderMatches(right, left)
+end
+
+local function sameGuildRank(sync, requester)
+    local countOK, count = apiCall(sync.api.GetNumGuildMembers)
+    if not countOK or not safeRosterValue(sync, count) or not integer(count, 1, 1000) then return false end
+    if type(sync.api.GetGuildRosterInfo) ~= "function" or type(sync.api.issecretvalue) ~= "function" then return false end
+    local roster = {}
+    for index = 1, count do
+        local ok, name, _, rankIndex = pcall(sync.api.GetGuildRosterInfo, index)
+        if not ok or not safeRosterValue(sync, name) or not safeRosterValue(sync, rankIndex)
+            or type(name) ~= "string" or name == "" or not integer(rankIndex, 0, 100) then return false end
+        roster[#roster + 1] = { name = name, rank = rankIndex }
+    end
+    local function uniqueRank(name)
+        local matches, rank = 0, nil
+        for _, row in ipairs(roster) do
+            if rosterNamesMatch(row.name, name) then
+                matches = matches + 1
+                rank = row.rank
+            end
+        end
+        if matches == 1 then return rank end
+    end
+    local localRank = uniqueRank(sync.senderKey)
+    local requesterRank = uniqueRank(requester)
+    return localRank ~= nil and requesterRank ~= nil and localRank == requesterRank
 end
 
 local function context(sync)
@@ -105,6 +143,15 @@ local function clearWork(sync, clearManual)
     end
 end
 
+local function attemptsFor(sync, peerKey, peer)
+    local entry = sync.requestAttempts[peerKey]
+    if not entry or entry.signature ~= peer.signature then
+        entry = { signature = peer.signature, tabs = {} }
+        sync.requestAttempts[peerKey] = entry
+    end
+    return entry.tabs
+end
+
 local function expirePeers(sync)
     local ok, now = apiCall(sync.api.GetTime)
     if not ok or type(now) ~= "number" then return false end
@@ -113,6 +160,7 @@ local function expirePeers(sync)
         if now - peer.lastSeen > PEER_TTL then
             sync.peers[key] = nil
             sync.peerCount = math.max(0, sync.peerCount - 1)
+            sync.processed[key], sync.requestAttempts[key], sync.manifestReplies[key] = nil, nil, nil
             if sync.selectedPeer == key then
                 selectedExpired = true
                 clearWork(sync, false)
@@ -216,7 +264,9 @@ local function nextCandidate(sync, peer)
     if not peerManifest then return nil end
     for _, tabID in ipairs(sortedTabIDs(peerManifest.tabs)) do
         local remote = peerManifest.tabs[tabID]
-        if not remote.noComplete and remote.digest and ctx.viewableTabIDs[tabID] then
+        local attempts = attemptsFor(sync, peer, peerManifest)
+        if not remote.noComplete and remote.digest and ctx.viewableTabIDs[tabID]
+            and (attempts[tabID] or 0) < MAX_REQUEST_ATTEMPTS then
             local snapshotOK, localSnapshot = apiCall(sync.bankAPI.GetGuildBankSyncSnapshot, tabID, ctx.sessionToken)
             if not snapshotOK or type(localSnapshot) ~= "table" or localSnapshot.status ~= "cached"
                 or type(localSnapshot.capturedAt) ~= "number" or localSnapshot.capturedAt < remote.capturedAt then
@@ -287,6 +337,8 @@ local function advanceAfterRequest(sync)
             requestID = requestID, generation = sync.generation }
         sync.pending[requestID] = entry
         sync.current = entry
+        local attempts = attemptsFor(sync, peerKey, peer)
+        attempts[tabID] = (attempts[tabID] or 0) + 1
         setStatus(sync, "Requesting guild tab " .. tabID)
         local timeoutScheduled = schedule(sync, "responseTimer", RESPONSE_TIMEOUT, function()
             if sync.current == entry then
@@ -374,9 +426,14 @@ local function handleManifest(sync, message, sender)
     if not current and sync.peerCount >= MAX_PEERS then
         local oldestKey, oldestAt
         for key, peer in pairs(sync.peers) do if not oldestAt or peer.lastSeen < oldestAt then oldestKey, oldestAt = key, peer.lastSeen end end
-        if oldestKey then sync.peers[oldestKey] = nil; sync.peerCount = sync.peerCount - 1 end
+        if oldestKey then
+            sync.peers[oldestKey] = nil
+            sync.processed[oldestKey], sync.requestAttempts[oldestKey], sync.manifestReplies[oldestKey] = nil, nil, nil
+            sync.peerCount = sync.peerCount - 1
+        end
     end
     local signature = manifestSignature(complete)
+    if current and current.signature ~= signature then sync.requestAttempts[peerKey] = nil end
     sync.peers[peerKey] = { senderKey = complete.sender, guildKey = complete.guildKey,
         sessionToken = complete.sessionToken, tabs = complete.tabs, lastSeen = now, signature = signature }
     if not current then sync.peerCount = sync.peerCount + 1 end
@@ -384,6 +441,10 @@ local function handleManifest(sync, message, sender)
     schedulePeerExpiry(sync)
     if sync.selectedPeer == peerKey and sync.current and sync.current.peerToken ~= complete.sessionToken then
         clearWork(sync, false)
+    end
+    if sync.manifestReplies[peerKey] ~= complete.sessionToken then
+        sync.manifestReplies[peerKey] = complete.sessionToken
+        publishManifest(sync)
     end
     buildPeerQueue(sync)
     if sync.current then return true end
@@ -419,6 +480,7 @@ local function handleMessage(sync, message, sender, channel)
         local key = normalized(fields[1]); local peer = sync.peers[key]
         if peer and peer.sessionToken == fields[3] then
             sync.peers[key] = nil; sync.peerCount = math.max(0, sync.peerCount - 1); sync.processed[key] = nil
+            sync.requestAttempts[key], sync.manifestReplies[key] = nil, nil
             if sync.selectedPeer == key then
                 clearWork(sync, false)
                 buildPeerQueue(sync)
@@ -439,6 +501,7 @@ local function handleMessage(sync, message, sender, channel)
             or not peer.tabs[tonumber(fields[6])] or not ctx or not ctx.viewableTabIDs[tonumber(fields[6])] then
             return false, "bank-sync-request-unbound"
         end
+        if not sameGuildRank(sync, sender) then return false, "bank-sync-request-unbound" end
         local snapshotOK, snapshot, err = apiCall(sync.bankAPI.GetGuildBankSyncSnapshot, tonumber(fields[6]), ctx.sessionToken)
         if not snapshotOK or type(snapshot) ~= "table" or snapshot.id ~= tonumber(fields[6]) then return false, err or snapshot or "guild-tab-snapshot-unavailable" end
         local sent, sendErr = GGM.SendBankSyncSnapshot(sync.transport, sender,
@@ -477,6 +540,7 @@ function GGM.CreateBankSync(api)
     local sync = { api = api, bankAPI = supported and bankAPI or nil, available = supported,
         status = supported and "Waiting for guild bank access" or "Bank sync unavailable",
         peers = {}, peerCount = 0, processed = {}, pending = {}, peerQueue = {}, peerIndex = 1,
+        requestAttempts = {}, manifestReplies = {},
         manualPending = false, manualActive = false, comparedAny = false, requestSequence = 0, generation = 0,
         sessionActive = false, assembler = P and P.NewManifestAssembler(function() return api.GetTime() end) }
     if not supported then
@@ -509,6 +573,7 @@ function GGM.CancelBankSync(sync, reason)
     clearWork(sync, true)
     cancelTimer(sync, "peerExpiryTimer")
     sync.peers, sync.peerCount, sync.processed, sync.assembler = {}, 0, {}, P.NewManifestAssembler(function() return sync.api.GetTime() end)
+    sync.requestAttempts, sync.manifestReplies = {}, {}
     sync.sessionActive = false
     sync.sessionToken, sync.guildKey, sync.senderKey = nil, nil, nil
     if sync.transport then
@@ -533,6 +598,7 @@ local function startSession(sync)
     sync.error = nil
     sync.sessionActive, sync.guildKey, sync.sessionToken, sync.senderKey = true, ctx.guildKey, ctx.sessionToken, identity.key
     sync.peers, sync.peerCount, sync.processed, sync.pending = {}, 0, {}, {}
+    sync.requestAttempts, sync.manifestReplies = {}, {}
     sync.comparedAny = false
     sync.assembler = P.NewManifestAssembler(function() return sync.api.GetTime() end)
     local ok, identityErr = GGM.SetBankSyncTransportIdentity(sync.transport, identity.key, ctx.sessionToken)
@@ -548,7 +614,21 @@ function GGM.HandleBankSyncAddonMessage(sync, prefix, message, distribution, sen
     local function validate(senderName, fields)
         return validateSnapshotResponse(sync, senderName, fields)
     end
-    local state, err = GGM.ReceiveBankSyncFrame(sync.transport, prefix, message, distribution, sender, validate)
+    local function authorizeSender(senderName, channel)
+        if not sync.sessionActive then return false end
+        if channel == "GUILD" then return true end
+        if channel ~= "WHISPER" then return false end
+        for _, peer in pairs(sync.peers) do
+            if peer.guildKey == sync.guildKey and senderMatches(peer.senderKey, senderName) then return true end
+        end
+        return false
+    end
+    local function isExpectedResponse(senderName, channel)
+        local entry = sync.current
+        return channel == "WHISPER" and entry ~= nil and senderMatches(entry.senderKey, senderName)
+    end
+    local state, err = GGM.ReceiveBankSyncFrame(sync.transport, prefix, message, distribution, sender, validate,
+        authorizeSender, isExpectedResponse)
     if err then setError(sync, err) end
     return state, err
 end
@@ -599,6 +679,7 @@ function GGM.RequestBankSyncFromButton(sync)
     if not sync.sessionActive then return false, "Open an accessible guild bank tab first" end
     if sync.manualPending or sync.manualActive then return true, nil end
     sync.processed = {}
+    sync.requestAttempts = {}
     sync.error = nil
     sync.comparedAny = false
     sync.manualPending = sync.current ~= nil

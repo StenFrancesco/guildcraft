@@ -294,7 +294,7 @@ local function establishGuildSession(controller, identity, metadata, forceNew)
     local currentOk, currentTab = safeCall(controller.api, controller.api.GetCurrentGuildBankTab, 1)
     if not currentOk or not isInteger(currentTab, 1, metadata.count) or not viewable[currentTab] then
         clearGuildSession(controller, true)
-        controller.guildSessionEstablishPending = false
+        controller.guildSessionEstablishPending = controller.guildOpen
         return false, currentOk and "guild-current-tab-invalid" or currentTab
     end
     if not controller.guildSessionToken and not controller.guildSessionEstablishPending then
@@ -439,6 +439,13 @@ local function optionalIcon(api, icon)
         return nil, "icon-invalid"
     end
     return icon, nil
+end
+
+local function iconForItem(api, itemID)
+    local infoOK, fields = safeCallSelected(api, api.GetItemInfoInstant, { 5 }, itemID)
+    if not infoOK then return nil end
+    local icon = optionalIcon(api, fields[1])
+    return icon
 end
 
 local function capturePersonalTab(api, descriptor)
@@ -822,7 +829,11 @@ local function refreshGuildMetadata(controller)
     local identity, identityErr = getGuildIdentity(api)
     if not identity then
         clearGuildSession(controller, true)
-        controller.guildSessionEstablishPending = false
+        if identityErr == "guild-name-unavailable" then
+            controller.guildSessionEstablishPending = false
+        elseif controller.guildOpen then
+            controller.guildSessionEstablishPending = true
+        end
         return false, identityErr
     end
     if controller.guildSessionGuildKey and controller.guildSessionGuildKey ~= identity.key then
@@ -838,7 +849,7 @@ local function refreshGuildMetadata(controller)
     local metadata, metadataErr = readGuildMetadata(api)
     if not metadata then
         clearGuildSession(controller, true)
-        controller.guildSessionEstablishPending = false
+        controller.guildSessionEstablishPending = controller.guildOpen
         local changed = created or markAllTabsIncomplete(record)
         if changed then notifyChanged(controller, "guild-metadata") end
         return false, metadataErr
@@ -846,7 +857,7 @@ local function refreshGuildMetadata(controller)
     local metadataChanged, applyErr = applyGuildMetadata(record, metadata)
     if applyErr then
         clearGuildSession(controller, true)
-        controller.guildSessionEstablishPending = false
+        controller.guildSessionEstablishPending = controller.guildOpen
         local changed = created or markAllTabsIncomplete(record)
         if changed then notifyChanged(controller, "guild-metadata") end
         return false, applyErr
@@ -1117,6 +1128,9 @@ local function validateGuildSnapshot(api, tabID, snapshot, descriptor, requireOb
         end
         local safeIcon, safeIconErr = optionalIcon(api, iconValue)
         if safeIconErr then return nil, safeIconErr end
+        if safeIcon == nil and requireObservedSlotCount then
+            safeIcon = iconForItem(api, itemID)
+        end
         clone.slots[slotID] = {
             itemID = itemID,
             itemLink = itemLink,
@@ -1247,6 +1261,7 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
         end
         self.personalOpen, self.guildOpen = false, false
         self.personalPending, self.guildMetadataPending, self.guildReadinessDeferred = false, false, false
+        self.guildSessionEstablishPending = false
         self.batching = false
         if self.batchChanged then
             self.batchChanged = false
@@ -1414,12 +1429,16 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
         end
         if event == "PLAYER_GUILD_UPDATE" then
             if self.guildOpen then
-                local identity = getGuildIdentity(self.api)
+                local identity, identityErr = getGuildIdentity(self.api)
                 if not identity or identity.key ~= self.guildSessionGuildKey then
                     clearGuildSession(self, true)
                     self.guildSessionGuildKey = identity and identity.key or nil
-                    self.guildSessionEstablishPending = false
-                elseif self.guildSessionToken then
+                    if not identity then
+                        self.guildSessionEstablishPending = identityErr ~= "guild-name-unavailable"
+                    else
+                        self.guildSessionEstablishPending = false
+                    end
+                else
                     return refreshGuildMetadata(self)
                 end
             else
