@@ -391,7 +391,7 @@ local UI = {
     space6 = 24,
     borderWidth = 1,
     windowWidth = 1400,
-    windowHeight = 630,
+    windowHeight = 694,
     railWidth = 292,
     headerHeight = 72,
     pageMargin = 50,
@@ -415,7 +415,7 @@ local UI = {
     characterLibraryBottom = 574,
     characterDetailX = 629,
     characterDetailTop = 64,
-    characterDetailHeight = 510,
+    characterDetailHeight = 574,
     characterDetailWidth = 721,
     professionLibraryX = 314,
     professionLibraryTop = 145,
@@ -754,14 +754,16 @@ local function renderBrowserDetail(frame, entry, api)
         button.key = slot.key
         button.icon:SetTexture(slot.icon)
         button.icon:SetDesaturated(slot.empty or slot.unavailable)
-        button.icon:SetAlpha(slot.unavailable and 0.14 or (slot.empty and 0.32 or 1))
+        button.icon:SetAlpha(slot.unavailable and 0.25 or (slot.empty and 0.7 or 1))
         setColor(button.slotBackground, slot.unavailable and THEME.input or THEME.slot)
         recolorBorder(button.borderEdges, slot.unavailable and THEME.borderSoft or (slot.empty and THEME.border or THEME.gold))
         if button.glow then
             if not slot.empty and not slot.unavailable then button.glow:Show() else button.glow:Hide() end
         end
         button.label:SetText(slot.displayName)
-        button.label:SetHeight(slot.itemID and 32 or 14)
+        local labelHeight = slot.itemID and 32 or 14
+        if slot.itemID and button.paperDollGroup == "bottom" then labelHeight = 44 end
+        button.label:SetHeight(labelHeight)
         button.pendingItemString = slot.itemID and slot.displayName == "Item " .. tostring(slot.itemID) and slot.itemString or nil
         setText(button.status, slot.statusText)
         button.empty = slot.empty
@@ -1042,9 +1044,22 @@ local function queueBrowserRefresh(frame)
 end
 
 function GGM.SelectProfession(frame, selectedKey)
+    if selectedKey == nil then
+        if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
+        frame.selectedProfession = nil
+        frame.selectedProfessionID = nil
+        frame.professionCatalog = { state = "unavailable", recipes = {} }
+        if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
+        frame.professionSearchBox:SetText("")
+        frame.professionDetailPanel:Hide()
+        for _, button in ipairs(frame.professionButtons) do professionButtonColor(button, false) end
+        if frame.activeTab == "Professions" then GGM.SetSharedStatus(frame, "") end
+        return true
+    end
     local selectedProfession
     for _, profession in ipairs(PROFESSIONS) do if profession.key == selectedKey then selectedProfession = profession; break end end
     if not selectedProfession then return false end
+    frame.professionDetailPanel:Show()
     local changed = frame.selectedProfession ~= selectedKey
     if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     frame.selectedProfession = selectedKey
@@ -1153,6 +1168,16 @@ function GGM.RefreshVisibleProfessionLibrary(frame)
         frame.professionLibraryToggle.ownRadio:SetChecked(own)
         setTextColor(frame.professionLibraryToggle.allRadio.label, own and THEME.muted or THEME.text)
         setTextColor(frame.professionLibraryToggle.ownRadio.label, own and THEME.text or THEME.muted)
+    end
+    -- The detail selection must belong to the same list as the visible buttons.
+    if frame.db and frame.professionDetailPanel then
+        local selectionVisible = false
+        for _, entry in ipairs(visibleEntries) do
+            if entry.key == frame.selectedProfession then selectionVisible = true; break end
+        end
+        if not selectionVisible then
+            GGM.SelectProfession(frame, visibleEntries[1] and visibleEntries[1].key or nil)
+        end
     end
     return true
 end
@@ -1543,8 +1568,10 @@ renderProfessionRows = function(frame)
             setColor(innerBevelEdges[4], THEME.iconBevelShadow)
             row.name = createText(row, "OVERLAY", "GameFontHighlight")
             GGM.ApplyJournalFont(row.name, 17, "bold")
-            row.name:SetPoint("LEFT", row, "LEFT", 50, 0)
-            row.name:SetWidth(599)
+            -- Bound the label inside the scroll row instead of relying on an
+            -- automatically sized FontString when the hidden page is laid out.
+            row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 50, -8)
+            row.name:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -18, 8)
             row.name:SetJustifyH("LEFT")
             setTextColor(row.name, THEME.text)
             row.separator = row:CreateTexture(nil, "BORDER")
@@ -1958,7 +1985,7 @@ end
 
 local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     local button = api.CreateFrame("Button", nil, frame.gearPanel)
-    button:SetSize(34, 34)
+    button:SetSize(44, 44)
     button:SetPoint("CENTER", frame.gearPanel, "TOPLEFT", x, y)
     button.paperDollGroup, button.paperDollOrder = layout.group, layout.order
 
@@ -1968,14 +1995,16 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
     setColor(button.slotBackground, THEME.slot)
 
     button.icon = button:CreateTexture(nil, "ARTWORK")
-    button.icon:SetPoint("TOPLEFT", button, "TOPLEFT", 5, -5)
-    button.icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -5, 5)
+    button.icon:SetPoint("TOPLEFT", button, "TOPLEFT", 4, -4)
+    button.icon:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
 
-    button.quickslot = button:CreateTexture(nil, "OVERLAY")
+    -- Quickslot artwork has an inset rim; keep it behind the opaque item
+    -- texture so that rim cannot draw a second box across the icon.
+    button.quickslot = button:CreateTexture(nil, "BORDER")
     button.quickslot:SetAllPoints(button)
     button.quickslot:SetTexture("Interface\\Buttons\\UI-Quickslot2")
     button.quickslot:SetAlpha(0.92)
-    button.borderEdges = createFlatBorder(button, THEME.borderSoft, 3)
+    button.borderEdges = createFlatBorder(button, THEME.borderSoft, 1)
 
     button.glow = button:CreateTexture(nil, "BACKGROUND")
     button.glow:SetPoint("TOPLEFT", button, "TOPLEFT", -2, 2)
@@ -1993,29 +2022,24 @@ local function createSlotButton(api, frame, trackedSlot, layout, x, y)
 
     button.label = createText(button, "OVERLAY", "GameFontHighlightSmall")
     button.label:SetText(slotDisplayNames[trackedSlot.key])
-    GGM.ApplyJournalFont(button.label, 12)
+    button.label:SetFont(api.STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 14, "")
     if button.label.SetWordWrap then button.label:SetWordWrap(true) end
     setTextColor(button.label, THEME.textSoft)
     button.status = createText(button, "OVERLAY", "GameFontDisableSmall")
+    button.status:SetFont(api.STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 12, "")
     setTextColor(button.status, THEME.muted)
 
-    if layout.group ~= "bottom" then
-        button.rowRule = button:CreateTexture(nil, "BACKGROUND")
-        button.rowRule:SetSize(146, 1)
-        button.rowRule:SetPoint(layout.group == "left" and "TOPLEFT" or "TOPRIGHT",
-            button, layout.group == "left" and "BOTTOMLEFT" or "BOTTOMRIGHT", 0, -1)
-        setColor(button.rowRule, THEME.gold, 0.22)
-    end
-
+    -- Keep the native paper-doll silhouette: slots beside the portrait,
+    -- names extending outward. Two-line names fit inside each 47px row.
     if layout.group == "left" then
-        button.label:SetWidth(146); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 9, 5)
-        button.status:SetWidth(98); button.status:SetJustifyH("LEFT"); button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -2)
+        button.label:SetWidth(156); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -8, 0)
+        button.status:SetWidth(156); button.status:SetJustifyH("RIGHT"); button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -2)
     elseif layout.group == "right" then
-        button.label:SetWidth(146); button.label:SetJustifyH("RIGHT"); button.label:SetPoint("RIGHT", button, "LEFT", -9, 5)
-        button.status:SetWidth(98); button.status:SetJustifyH("RIGHT"); button.status:SetPoint("TOPRIGHT", button.label, "BOTTOMRIGHT", 0, -2)
+        button.label:SetWidth(156); button.label:SetJustifyH("LEFT"); button.label:SetPoint("LEFT", button, "RIGHT", 8, 0)
+        button.status:SetWidth(156); button.status:SetJustifyH("LEFT"); button.status:SetPoint("TOPLEFT", button.label, "BOTTOMLEFT", 0, -2)
     else
-        button.label:SetWidth(92); button.label:SetJustifyH("CENTER"); button.label:SetPoint("TOP", button, "BOTTOM", 0, -5)
-        button.status:SetWidth(92); button.status:SetJustifyH("CENTER"); button.status:SetPoint("TOP", button.label, "BOTTOM", 0, -1)
+        button.label:SetWidth(72); button.label:SetJustifyH("CENTER"); button.label:SetPoint("TOP", button, "BOTTOM", 0, -5)
+        button.status:SetWidth(72); button.status:SetJustifyH("CENTER"); button.status:SetPoint("TOP", button.label, "BOTTOM", 0, -1)
     end
     button:Hide()
     return button
@@ -2085,6 +2109,24 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.background:SetTexture(JOURNAL_TEXTURES.window)
     frame.background:SetVertexColor(1, 1, 1, 1)
     frame.background:SetAlpha(1)
+
+    -- The journal texture contains painted navigation buttons laid out for a
+    -- 1400x630 canvas. Keep that section at its original scale as the taller
+    -- equipment page grows; only the illustration below the buttons stretches.
+    local originalHeight, navigationBottom = 630, 366
+    local railUV = UI.railWidth / UI.windowWidth
+    local splitUV = navigationBottom / originalHeight
+    frame.navigationBackdropTop = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
+    frame.navigationBackdropTop:SetTexture(JOURNAL_TEXTURES.window)
+    frame.navigationBackdropTop:SetSize(UI.railWidth, navigationBottom)
+    frame.navigationBackdropTop:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    frame.navigationBackdropTop:SetTexCoord(0, railUV, 0, splitUV)
+    frame.navigationBackdropBottom = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
+    frame.navigationBackdropBottom:SetTexture(JOURNAL_TEXTURES.window)
+    frame.navigationBackdropBottom:SetWidth(UI.railWidth)
+    frame.navigationBackdropBottom:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -navigationBottom)
+    frame.navigationBackdropBottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    frame.navigationBackdropBottom:SetTexCoord(0, railUV, splitUV, 1)
 
     frame.navigationRail = api.CreateFrame("Frame", nil, frame)
     frame.navigationRail:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -28)
@@ -2310,10 +2352,10 @@ function GGM.CreateGuildGearBrowserWindow(api)
     setTextColor(frame.detailEmpty, THEME.muted)
     frame.detailEmpty:Hide()
 
-    local sideX = { left = 54, right = UI.characterDetailWidth - 54 }
-    local sideStartY, sidePitch = -185, 37
-    local bottomX = { UI.characterDetailWidth / 2 - 96, UI.characterDetailWidth / 2, UI.characterDetailWidth / 2 + 96 }
-    local bottomY = -411
+    local sideX = { left = 220, right = UI.characterDetailWidth - 220 }
+    local sideStartY, sidePitch = -175, 47
+    local bottomX = { UI.characterDetailWidth / 2 - 78, UI.characterDetailWidth / 2, UI.characterDetailWidth / 2 + 78 }
+    local bottomY = -421
     for index, trackedSlot in ipairs(GGM.TRACKED_SLOTS) do
         local layout = GGM.BROWSER_SLOT_LAYOUT[trackedSlot.key]
         local x, y

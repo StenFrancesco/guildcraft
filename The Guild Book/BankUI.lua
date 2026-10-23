@@ -724,5 +724,7 @@ function GGM.RefreshVisibleBankView()
 end
 
 _G.GuildGearMemoryBankChanged = function()
+    if type(GGM.RefreshMaterialTracker) == "function" then GGM.RefreshMaterialTracker() end
+    if type(GGM.RefreshRecipeMaterialBankNotes) == "function" then GGM.RefreshRecipeMaterialBankNotes() end
     return GGM.RefreshVisibleBankView()
 end
