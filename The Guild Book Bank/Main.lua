@@ -50,6 +50,18 @@ local function publishAPI()
         MergeGuildBankSyncSnapshot = function(guildKey, sessionToken, tabID, snapshot)
             return controller:MergeGuildBankSyncSnapshot(guildKey, sessionToken, tabID, snapshot)
         end,
+        GetGuildBankCachedSyncContext = function()
+            return controller:GetGuildBankCachedSyncContext()
+        end,
+        GetGuildBankCachedSyncManifest = function(guildKey)
+            return controller:GetGuildBankCachedSyncManifest(guildKey)
+        end,
+        GetGuildBankCachedSyncSnapshot = function(guildKey, tabID)
+            return controller:GetGuildBankCachedSyncSnapshot(guildKey, tabID)
+        end,
+        MergeGuildBankCachedSyncSnapshot = function(guildKey, tabID, snapshot)
+            return controller:MergeGuildBankCachedSyncSnapshot(guildKey, tabID, snapshot)
+        end,
     }
 end
 

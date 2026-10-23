@@ -1218,6 +1218,79 @@ local function mergeGuildSyncSnapshot(controller, guildKey, sessionToken, tabID,
     return true, nil
 end
 
+-- City synchronization uses only data already saved by a normal bank capture.
+-- These helpers deliberately do not query guild-bank tab metadata or read bank APIs.
+local function guildCacheSyncContext(controller)
+    local identity, identityErr = getGuildIdentity(controller.api)
+    if not identity then return nil, identityErr end
+    return { guildKey = identity.key }, nil
+end
+
+local function getGuildCacheSyncManifest(controller, guildKey)
+    local context, contextErr = guildCacheSyncContext(controller)
+    if not context then return nil, contextErr end
+    if guildKey ~= context.guildKey then return nil, "guild-identity-invalid" end
+    local record = rawget(controller.database.guilds, context.guildKey)
+    local tabs = {}
+    if type(record) ~= "table" or type(record.tabs) ~= "table" then return tabs, nil end
+    for tabID, tab in pairs(record.tabs) do
+        if isInteger(tabID, 1, MAX_GUILD_TABS) and validExistingTab(tab, tabID)
+            and tab.status == "cached" and tab.numSlots == GUILD_TAB_SLOTS
+            and isInteger(tab.capturedAt, 0, 9007199254740991) then
+            tabs[tabID] = { capturedAt = tab.capturedAt }
+        end
+    end
+    return tabs, nil
+end
+
+local function getGuildCacheSyncSnapshot(controller, guildKey, tabID)
+    local context, contextErr = guildCacheSyncContext(controller)
+    if not context then return nil, contextErr end
+    if guildKey ~= context.guildKey then return nil, "guild-identity-invalid" end
+    if not isInteger(tabID, 1, MAX_GUILD_TABS) then return nil, "guild-tab-invalid" end
+    local record = rawget(controller.database.guilds, context.guildKey)
+    local tab = type(record) == "table" and type(record.tabs) == "table" and rawget(record.tabs, tabID) or nil
+    if not validExistingTab(tab, tabID) or tab.status ~= "cached"
+        or tab.numSlots ~= GUILD_TAB_SLOTS
+        or not isInteger(tab.capturedAt, 0, 9007199254740991) then
+        return nil, "guild-tab-snapshot-unavailable"
+    end
+    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, tab, { name = tab.name })
+    if not validated then return nil, validationErr end
+    return copyGuildTab(validated), nil
+end
+
+local function mergeGuildCacheSyncSnapshot(controller, guildKey, tabID, snapshot)
+    local context, contextErr = guildCacheSyncContext(controller)
+    if not context then return false, contextErr end
+    if guildKey ~= context.guildKey then return false, "guild-identity-invalid" end
+    if not isInteger(tabID, 1, MAX_GUILD_TABS) then return false, "guild-tab-invalid" end
+    local identity, identityErr = getGuildIdentity(controller.api)
+    if not identity or identity.key ~= guildKey then return false, identityErr or "guild-identity-invalid" end
+    local record = rawget(controller.database.guilds, guildKey)
+    local old = type(record) == "table" and type(record.tabs) == "table" and rawget(record.tabs, tabID) or nil
+    if old ~= nil and not validExistingTab(old, tabID) then return false, "existing-tab-invalid" end
+    local descriptorName = old and old.name or (type(snapshot) == "table" and snapshot.name)
+    if not nonEmptyString(descriptorName) then return false, "guild-tab-metadata-invalid" end
+    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, snapshot,
+        { name = descriptorName }, true)
+    if not validated then return false, validationErr end
+    if old and isInteger(old.capturedAt, 0, 9007199254740991)
+        and validated.capturedAt <= old.capturedAt then
+        return false, nil
+    end
+    if not record then
+        local createdRecord, _, recordErr = ensureRecord(controller.database, "guilds", identity)
+        if not createdRecord then return false, recordErr end
+        record = createdRecord
+    end
+    record.tabs[tabID] = validated
+    record.capturedAt = validated.capturedAt
+    refreshRecordStatus(record)
+    notifyChanged(controller, "remote-merge", tabID)
+    return true, nil
+end
+
 function BankMemory.CreateController(api, database, onChanged, requestFlush)
     if type(api) ~= "table" then
         return nil, "api-invalid"
@@ -1314,6 +1387,22 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
 
     function controller:MergeGuildBankSyncSnapshot(guildKey, sessionToken, tabID, snapshot)
         return mergeGuildSyncSnapshot(self, guildKey, sessionToken, tabID, snapshot)
+    end
+
+    function controller:GetGuildBankCachedSyncContext()
+        return guildCacheSyncContext(self)
+    end
+
+    function controller:GetGuildBankCachedSyncManifest(guildKey)
+        return getGuildCacheSyncManifest(self, guildKey)
+    end
+
+    function controller:GetGuildBankCachedSyncSnapshot(guildKey, tabID)
+        return getGuildCacheSyncSnapshot(self, guildKey, tabID)
+    end
+
+    function controller:MergeGuildBankCachedSyncSnapshot(guildKey, tabID, snapshot)
+        return mergeGuildCacheSyncSnapshot(self, guildKey, tabID, snapshot)
     end
 
     function controller:HandleEvent(event, ...)

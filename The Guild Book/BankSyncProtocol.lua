@@ -1,6 +1,6 @@
 local _, GGM = ...
 
-local P = { VERSION = 1, PREFIX = "GC_BANK1", MAX_FIELD = 4096, MAX_SNAPSHOT = 40000 }
+local P = { VERSION = 2, PREFIX = "GC_BANK2", MAX_FIELD = 4096, MAX_SNAPSHOT = 40000 }
 local function int(v, lo, hi) return type(v) == "number" and v == math.floor(v) and v >= lo and v <= hi end
 local function str(v, max) return type(v) == "string" and #v > 0 and #v <= max and not v:find("[%z\1-\31\127]") end
 local function validLink(link, itemID)
@@ -39,7 +39,7 @@ local schemas = { M = -1, E = 3, Q = 6, S = 0 }
 function P.Encode(kind, values)
     if not schemas[kind] or type(values) ~= "table" then return nil, "bank-sync-message-invalid" end
     if kind ~= "S" then
-        if kind=="M" then if #values<5 or #values>14 or (#values-5)%3~=0 then return nil,"bank-sync-message-invalid" end
+        if kind=="M" then if #values<5 or #values>11 or (#values-5)%2~=0 then return nil,"bank-sync-message-invalid" end
         elseif #values~=schemas[kind] then return nil,"bank-sync-message-invalid" end
         local raw=packet(kind, values)
         local channel=(kind=="M" or kind=="E") and "GUILD" or "WHISPER"
@@ -71,10 +71,10 @@ function P.Encode(kind, values)
 end
 function P.Decode(raw, channel)
     if type(raw) ~= "string" or #raw > P.MAX_SNAPSHOT then return nil, "bank-sync-message-invalid" end
-    local head = parseFields(raw, 2, true); if not head or head[1] ~= "1" or not schemas[head[2]] then return nil, "bank-sync-version-or-type-invalid" end
+    local head = parseFields(raw, 2, true); if not head or head[1] ~= tostring(P.VERSION) or not schemas[head[2]] then return nil, "bank-sync-version-or-type-invalid" end
     local kind = head[2]
     if kind == "S" then
-        local h = parseFields(raw, 9, false, P.MAX_SNAPSHOT); if not h or h[1] ~= "1" or h[2] ~= "S" then return nil, "bank-sync-message-invalid" end
+        local h = parseFields(raw, 9, false, P.MAX_SNAPSHOT); if not h or h[1] ~= tostring(P.VERSION) or h[2] ~= "S" then return nil, "bank-sync-message-invalid" end
         local b = parseFields(h[9], 7, true); if not b then return nil, "bank-sync-snapshot-invalid" end
         local count = tonumber(b[7]); if not int(count, 0, 98) then return nil, "bank-sync-snapshot-invalid" end
         local all = parseFields(h[9], 7 + count * 4); if not all then return nil, "bank-sync-snapshot-invalid" end
@@ -95,28 +95,19 @@ function P.Decode(raw, channel)
     end
     local count=schemas[kind]; local f
     if kind=="M" then
-        for _,n in ipairs({7,10,13,16}) do local candidate=parseFields(raw,n); if candidate then f=candidate; break end end
-        if not f or (#f-7)%3~=0 then return nil,"bank-sync-fields-invalid" end
+        for _,n in ipairs({7,9,11,13}) do local candidate=parseFields(raw,n); if candidate then f=candidate; break end end
+        if not f or (#f-7)%2~=0 then return nil,"bank-sync-fields-invalid" end
     else f=parseFields(raw,count+2) end
     if not f then return nil,"bank-sync-fields-invalid" end
     if (kind=="M" or kind=="E") and channel~="GUILD" or (kind=="Q" and channel~="WHISPER") then return nil,"bank-sync-channel-invalid" end
     local v={}; for i=3,#f do v[#v+1]=f[i] end
     if kind=="M" then
-        local rows=(#v-5)/3
+        local rows=(#v-5)/2
         if not str(v[1],80) or not str(v[2],160) or not str(v[3],64) or not int(tonumber(v[4]),1,3) or not int(tonumber(v[5]),1,3) or tonumber(v[4])>tonumber(v[5]) or rows<0 or rows>3 or rows~=math.floor(rows) then return nil,"bank-sync-manifest-invalid" end
-        local seen={}; for i=6,#v,3 do local tab=tonumber(v[i]); if not int(tab,1,8) or seen[tab] then return nil,"bank-sync-manifest-invalid" end; seen[tab]=true; if v[i+1]=="-" then if v[i+2]~="-" then return nil,"bank-sync-manifest-invalid" end elseif not int(tonumber(v[i+1]),0,9007199254740991) or not v[i+2]:match("^%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x%x$") then return nil,"bank-sync-manifest-invalid" end end
+        local seen={}; for i=6,#v,2 do local tab=tonumber(v[i]); if not int(tab,1,8) or seen[tab] then return nil,"bank-sync-manifest-invalid" end; seen[tab]=true; if v[i+1]~="-" and not int(tonumber(v[i+1]),0,9007199254740991) then return nil,"bank-sync-manifest-invalid" end end
     elseif kind=="E" then if not str(v[1],80) or not str(v[2],160) or not str(v[3],64) then return nil,"bank-sync-session-invalid" end
     elseif kind=="Q" then if not str(v[1],80) or not str(v[2],160) or not str(v[3],64) or not str(v[4],64) or not str(v[5],32) or not int(tonumber(v[6]),1,8) then return nil,"bank-sync-request-invalid" end end
     return {type=kind,fields=v}
-end
-
-function P.Digest(tabID, snapshot)
-    if not int(tabID,1,8) or type(snapshot)~="table" then return nil end
-    local ids={}; for id in pairs(snapshot.slots or {}) do ids[#ids+1]=id end; table.sort(ids)
-    local s={"B1|",tostring(tabID),"|",tostring(snapshot.capturedAt),"|"}
-    for _,id in ipairs(ids) do local x=snapshot.slots[id]; local link=x.itemLink or ""; s[#s+1]=table.concat({id,"|",x.itemID,"|",x.count,"|",#link,":",link,";"}) end
-    local text=table.concat(s); local a,b=5381,17; for i=1,#text do local c=text:byte(i); a=(a*33+c)%2147483647; b=(b*65599+c)%2147483647 end
-    return string.format("%08x%08x",a,b)
 end
 
 function P.BuildManifest(sender,guild,token,tabs)
@@ -126,7 +117,7 @@ function P.BuildManifest(sender,guild,token,tabs)
     local pages={}; local total=math.max(1,math.ceil(#rows/3)); if total>3 then return nil,"bank-sync-manifest-invalid" end
     for page=1,total do
         local values={sender,guild,token,tostring(page),tostring(total)}
-        for i=(page-1)*3+1,math.min(page*3,#rows) do local r=rows[i]; values[#values+1]=tostring(r.id); values[#values+1]=r.row.noComplete and "-" or tostring(r.row.capturedAt); values[#values+1]=r.row.noComplete and "-" or tostring(r.row.digest) end
+        for i=(page-1)*3+1,math.min(page*3,#rows) do local r=rows[i]; values[#values+1]=tostring(r.id); values[#values+1]=r.row.noComplete and "-" or tostring(r.row.capturedAt) end
         local msg=packet("M",values); if not msg or #msg>255 or not P.Encode("M",values) then return nil,"bank-sync-manifest-page-too-large" end; pages[page]=msg
     end
     return pages
@@ -142,11 +133,11 @@ function P.AcceptManifestPage(assembler,message,sender)
     local key=table.concat({sender,v[2],v[3]},"\001"); local set=assembler.sets[key]
     if not set then local n=0; for _ in pairs(assembler.sets) do n=n+1 end; if n>=8 then return nil,"bank-sync-manifest-set-limit" end; set={total=tonumber(v[5]),pages={},at=now}; assembler.sets[key]=set end
     if set.total~=tonumber(v[5]) then assembler.sets[key]=nil; return nil,"bank-sync-manifest-conflict" end
-    local page=tonumber(v[4]); local rows={}; for i=6,#v,3 do rows[#rows+1]={tabID=tonumber(v[i]),capturedAt=v[i+1]=="-" and nil or tonumber(v[i+1]),digest=v[i+2]=="-" and nil or v[i+2],noComplete=v[i+1]=="-"} end
+    local page=tonumber(v[4]); local rows={}; for i=6,#v,2 do rows[#rows+1]={tabID=tonumber(v[i]),capturedAt=v[i+1]=="-" and nil or tonumber(v[i+1]),noComplete=v[i+1]=="-"} end
     local previous=set.pages[page]
     if previous then
         if #previous~=#rows then assembler.sets[key]=nil; return nil,"bank-sync-manifest-conflict" end
-        for i,row in ipairs(rows) do local old=previous[i]; if not old or old.tabID~=row.tabID or old.capturedAt~=row.capturedAt or old.digest~=row.digest or old.noComplete~=row.noComplete then assembler.sets[key]=nil; return nil,"bank-sync-manifest-conflict" end end
+        for i,row in ipairs(rows) do local old=previous[i]; if not old or old.tabID~=row.tabID or old.capturedAt~=row.capturedAt or old.noComplete~=row.noComplete then assembler.sets[key]=nil; return nil,"bank-sync-manifest-conflict" end end
         return "partial"
     end
     set.pages[page]=rows; set.at=now

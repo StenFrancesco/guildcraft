@@ -4,6 +4,12 @@ local P = GGM.BankSyncProtocol
 local MAX_PEERS, PEER_TTL, MAX_PENDING, MAX_PEERS_PER_WINDOW = 64, 300, 8, 4
 local CAPTURE_DEBOUNCE, RESPONSE_TIMEOUT = 1, 30
 local MAX_REQUEST_ATTEMPTS = 2
+local CAPITAL_MAPS = { [84] = true, [85] = true, [87] = true, [88] = true,
+    [89] = true, [90] = true, [103] = true, [110] = true, [111] = true,
+    [125] = true, [126] = true, [391] = true, [392] = true,
+    [393] = true, [622] = true, [624] = true, [627] = true, [628] = true,
+    [1161] = true, [1165] = true, [1670] = true, [1671] = true,
+    [2112] = true, [2339] = true, [2393] = true }
 
 local function integer(value, minimum, maximum)
     return type(value) == "number" and value == math.floor(value) and value >= minimum and value <= maximum
@@ -71,13 +77,37 @@ local function sameGuildRank(sync, requester)
     return localRank ~= nil and requesterRank ~= nil and localRank == requesterRank
 end
 
-local function context(sync)
+local function cachedSameGuildRank(sync, requester)
+    local key = normalized(requester)
+    if not key then return false end
+    sync.rankCache = sync.rankCache or {}
+    local cached = sync.rankCache[key]
+    local rosterGeneration = sync.rosterGeneration or 0
+    if cached and cached.generation == rosterGeneration then return cached.matches end
+    local matches = sameGuildRank(sync, requester)
+    sync.rankCache[key] = { generation = rosterGeneration, matches = matches }
+    return matches
+end
+
+local function context(sync, mode, sessionToken)
     if not sync.available or not sync.bankAPI then return nil, sync.error or "bank-sync-unavailable" end
+    mode = mode or sync.sessionMode
+    if mode == "city" then
+        if not sync.cachedSupported then return nil, "bank-cache-sync-unavailable" end
+        local ok, value, err = apiCall(sync.bankAPI.GetGuildBankCachedSyncContext)
+        if not ok or type(value) ~= "table" or type(value.guildKey) ~= "string" or value.guildKey == "" then
+            return nil, err or value or "guild-cache-context-unavailable"
+        end
+        value.sessionToken = sessionToken or sync.sessionToken
+        value.mode = "city"
+        return value
+    end
     local ok, value, err = apiCall(sync.bankAPI.GetGuildBankSyncContext)
     if not ok or type(value) ~= "table" then return nil, err or value or "guild-session-unavailable" end
     if type(value.guildKey) ~= "string" or value.guildKey == ""
         or type(value.sessionToken) ~= "string" or value.sessionToken == ""
         or type(value.viewableTabIDs) ~= "table" then return nil, "guild-session-context-invalid" end
+    value.mode = "bank"
     return value
 end
 
@@ -86,6 +116,24 @@ local function sortedTabIDs(rows)
     for id in pairs(rows or {}) do if integer(id, 1, 8) then ids[#ids + 1] = id end end
     table.sort(ids)
     return ids
+end
+
+local function tabAllowed(ctx, tabID)
+    return ctx and (ctx.mode == "city" or (ctx.viewableTabIDs and ctx.viewableTabIDs[tabID] == true))
+end
+
+local function getLocalSnapshot(sync, ctx, tabID)
+    if ctx.mode == "city" then
+        return apiCall(sync.bankAPI.GetGuildBankCachedSyncSnapshot, ctx.guildKey, tabID)
+    end
+    return apiCall(sync.bankAPI.GetGuildBankSyncSnapshot, tabID, ctx.sessionToken)
+end
+
+local function mergeSnapshot(sync, ctx, tabID, snapshot)
+    if ctx.mode == "city" then
+        return apiCall(sync.bankAPI.MergeGuildBankCachedSyncSnapshot, ctx.guildKey, tabID, snapshot)
+    end
+    return apiCall(sync.bankAPI.MergeGuildBankSyncSnapshot, ctx.guildKey, ctx.sessionToken, tabID, snapshot)
 end
 
 local function cancelTimer(sync, key)
@@ -216,12 +264,24 @@ local function publishManifest(sync)
     local identity, identityErr = currentIdentity(sync)
     if not identity then setError(sync, identityErr); setStatus(sync, "Bank sync unavailable"); return false, identityErr end
     local tabs = {}
-    for _, tabID in ipairs(sortedTabIDs(ctx.viewableTabIDs)) do
-        local snapshotOK, snapshot, snapshotErr = apiCall(sync.bankAPI.GetGuildBankSyncSnapshot, tabID, ctx.sessionToken)
-        if snapshotOK and type(snapshot) == "table" and snapshot.status == "cached" and snapshot.id == tabID then
-            tabs[tabID] = { capturedAt = snapshot.capturedAt, digest = P.Digest(tabID, snapshot) }
-        else
-            tabs[tabID] = { noComplete = true }
+    if ctx.mode == "city" then
+        local manifestOK, cachedTabs, manifestErr = apiCall(sync.bankAPI.GetGuildBankCachedSyncManifest, ctx.guildKey)
+        if not manifestOK or type(cachedTabs) ~= "table" then return false, manifestErr or "guild-cache-manifest-unavailable" end
+        for tabID, row in pairs(cachedTabs) do
+            if integer(tabID, 1, 8) and type(row) == "table"
+                and integer(row.capturedAt, 0, 9007199254740991) then
+                tabs[tabID] = { capturedAt = row.capturedAt }
+            end
+        end
+    else
+        for _, tabID in ipairs(sortedTabIDs(ctx.viewableTabIDs)) do
+            local snapshotOK, snapshot = getLocalSnapshot(sync, ctx, tabID)
+            if snapshotOK and type(snapshot) == "table" and snapshot.status == "cached" and snapshot.id == tabID
+                and integer(snapshot.capturedAt, 0, 9007199254740991) then
+                tabs[tabID] = { capturedAt = snapshot.capturedAt }
+            else
+                tabs[tabID] = { noComplete = true }
+            end
         end
     end
     local pages, err = P.BuildManifest(identity.key, ctx.guildKey, ctx.sessionToken, tabs)
@@ -239,7 +299,7 @@ local function manifestSignature(manifest)
     local pieces = { manifest.sessionToken }
     for _, id in ipairs(sortedTabIDs(manifest.tabs)) do
         local row = manifest.tabs[id]
-        pieces[#pieces + 1] = table.concat({ id, row.capturedAt or "-", row.digest or "-" }, ":")
+        pieces[#pieces + 1] = table.concat({ id, row.capturedAt or "-" }, ":")
     end
     return table.concat(pieces, "|")
 end
@@ -262,14 +322,16 @@ local function nextCandidate(sync, peer)
     if not ctx then return nil, ctxErr end
     local peerManifest = sync.peers[peer]
     if not peerManifest then return nil end
+    if not cachedSameGuildRank(sync, peerManifest.senderKey) then return nil end
     for _, tabID in ipairs(sortedTabIDs(peerManifest.tabs)) do
         local remote = peerManifest.tabs[tabID]
         local attempts = attemptsFor(sync, peer, peerManifest)
-        if not remote.noComplete and remote.digest and ctx.viewableTabIDs[tabID]
+        if not remote.noComplete and tabAllowed(ctx, tabID)
             and (attempts[tabID] or 0) < MAX_REQUEST_ATTEMPTS then
-            local snapshotOK, localSnapshot = apiCall(sync.bankAPI.GetGuildBankSyncSnapshot, tabID, ctx.sessionToken)
-            if not snapshotOK or type(localSnapshot) ~= "table" or localSnapshot.status ~= "cached"
-                or type(localSnapshot.capturedAt) ~= "number" or localSnapshot.capturedAt < remote.capturedAt then
+            local snapshotOK, savedSnapshot = getLocalSnapshot(sync, ctx, tabID)
+            if not snapshotOK or type(savedSnapshot) ~= "table" or savedSnapshot.status ~= "cached"
+                or not integer(savedSnapshot.capturedAt, 0, 9007199254740991)
+                or savedSnapshot.capturedAt < remote.capturedAt then
                 return tabID
             end
             sync.comparedAny = true
@@ -286,6 +348,14 @@ local function finishPeer(sync)
     sync.selectedPeer = nil
     sync.current = nil
     cancelTimer(sync, "responseTimer")
+    if sync.rosterChangedPending then
+        sync.rosterChangedPending = false
+        sync.processed = {}
+        sync.requestAttempts = {}
+        buildPeerQueue(sync)
+        drive(sync)
+        return
+    end
     sync.peersInWindow = sync.peersInWindow + 1
     if sync.manualPending then
         sync.manualPending = false
@@ -334,7 +404,7 @@ local function advanceAfterRequest(sync)
         local requestID = tostring(sync.requestSequence)
         local entry = { peer = peerKey, senderKey = peer.senderKey, peerToken = peer.sessionToken,
             guildKey = sync.guildKey, localToken = sync.sessionToken, tabID = tabID,
-            requestID = requestID, generation = sync.generation }
+            requestID = requestID, generation = sync.generation, mode = sync.sessionMode }
         sync.pending[requestID] = entry
         sync.current = entry
         local attempts = attemptsFor(sync, peerKey, peer)
@@ -461,14 +531,22 @@ local function validateSnapshotResponse(sync, sender, fields)
         or normalized(fields[1]) ~= normalized(entry.senderKey) or fields[2] ~= entry.guildKey
         or fields[3] ~= entry.localToken or fields[4] ~= entry.peerToken then return false end
     local ctx = context(sync)
-    if not ctx or ctx.guildKey ~= entry.guildKey or ctx.sessionToken ~= entry.localToken or not ctx.viewableTabIDs[entry.tabID] then return false end
+    if not ctx or ctx.guildKey ~= entry.guildKey or ctx.sessionToken ~= entry.localToken
+        or ctx.mode ~= entry.mode or not tabAllowed(ctx, entry.tabID) then return false end
     local peer = sync.peers[entry.peer]
     local nowOK, now = apiCall(sync.api.GetTime)
     if not peer or not nowOK or now - peer.lastSeen > PEER_TTL or peer.sessionToken ~= entry.peerToken then return false end
     local row = peer.tabs[entry.tabID]
     local snap = fields[7]
     return row ~= nil and not row.noComplete and snap.id == entry.tabID and snap.capturedAt == row.capturedAt
-        and P.Digest(entry.tabID, snap) == row.digest
+end
+
+local function majorCityState(sync)
+    local mapAPI = sync.api.C_Map
+    if type(mapAPI) ~= "table" or type(mapAPI.GetBestMapForUnit) ~= "function" then return nil end
+    local ok, mapID = pcall(mapAPI.GetBestMapForUnit, "player")
+    if not ok or not safeRosterValue(sync, mapID) or type(mapID) ~= "number" then return nil end
+    return CAPITAL_MAPS[mapID] == true
 end
 
 local function handleMessage(sync, message, sender, channel)
@@ -498,11 +576,12 @@ local function handleMessage(sync, message, sender, channel)
         local key = normalized(fields[1]); local peer = sync.peers[key]
         if channel ~= "WHISPER" or not senderMatches(fields[1], sender) or fields[2] ~= sync.guildKey
             or fields[4] ~= sync.sessionToken or not peer or peer.sessionToken ~= fields[3]
-            or not peer.tabs[tonumber(fields[6])] or not ctx or not ctx.viewableTabIDs[tonumber(fields[6])] then
+            or not ctx or ctx.guildKey ~= sync.guildKey or ctx.sessionToken ~= sync.sessionToken
+            or not tabAllowed(ctx, tonumber(fields[6])) then
             return false, "bank-sync-request-unbound"
         end
         if not sameGuildRank(sync, sender) then return false, "bank-sync-request-unbound" end
-        local snapshotOK, snapshot, err = apiCall(sync.bankAPI.GetGuildBankSyncSnapshot, tonumber(fields[6]), ctx.sessionToken)
+        local snapshotOK, snapshot, err = getLocalSnapshot(sync, ctx, tonumber(fields[6]))
         if not snapshotOK or type(snapshot) ~= "table" or snapshot.id ~= tonumber(fields[6]) then return false, err or snapshot or "guild-tab-snapshot-unavailable" end
         local sent, sendErr = GGM.SendBankSyncSnapshot(sync.transport, sender,
             { fields[1], fields[2], fields[3], fields[4], fields[5], fields[6] }, snapshot,
@@ -514,7 +593,9 @@ local function handleMessage(sync, message, sender, channel)
     if message.type == "S" then
         if not validateSnapshotResponse(sync, sender, fields) then return false, "bank-sync-response-unbound" end
         local entry = sync.current
-        local ok, merged, err = apiCall(sync.bankAPI.MergeGuildBankSyncSnapshot, entry.guildKey, entry.localToken, entry.tabID, fields[7])
+        local ctx = context(sync)
+        if not ctx or ctx.mode ~= entry.mode then return false, "bank-sync-response-unbound" end
+        local ok, merged, err = mergeSnapshot(sync, ctx, entry.tabID, fields[7])
         sync.pending[entry.requestID] = nil
         cancelTimer(sync, "responseTimer")
         if ok and not err then
@@ -537,12 +618,19 @@ function GGM.CreateBankSync(api)
         and type(bankAPI.GetGuildBankSyncContext) == "function"
         and type(bankAPI.GetGuildBankSyncSnapshot) == "function"
         and type(bankAPI.MergeGuildBankSyncSnapshot) == "function"
+    local cachedSupported = supported
+        and type(bankAPI.GetGuildBankCachedSyncContext) == "function"
+        and type(bankAPI.GetGuildBankCachedSyncManifest) == "function"
+        and type(bankAPI.GetGuildBankCachedSyncSnapshot) == "function"
+        and type(bankAPI.MergeGuildBankCachedSyncSnapshot) == "function"
     local sync = { api = api, bankAPI = supported and bankAPI or nil, available = supported,
-        status = supported and "Waiting for guild bank access" or "Bank sync unavailable",
+        cachedSupported = cachedSupported == true,
+        status = supported and "Waiting for a guild bank or major city" or "Bank sync unavailable",
         peers = {}, peerCount = 0, processed = {}, pending = {}, peerQueue = {}, peerIndex = 1,
         requestAttempts = {}, manifestReplies = {},
         manualPending = false, manualActive = false, comparedAny = false, requestSequence = 0, generation = 0,
-        sessionActive = false, assembler = P and P.NewManifestAssembler(function() return api.GetTime() end) }
+        sessionActive = false, rosterGeneration = 0, rankCache = {},
+        assembler = P and P.NewManifestAssembler(function() return api.GetTime() end) }
     if not supported then
         sync.error = type(bankAPI) == "table" and "bank-companion-unsupported" or "bank-companion-unavailable"
         return sync, sync.error
@@ -574,7 +662,9 @@ function GGM.CancelBankSync(sync, reason)
     cancelTimer(sync, "peerExpiryTimer")
     sync.peers, sync.peerCount, sync.processed, sync.assembler = {}, 0, {}, P.NewManifestAssembler(function() return sync.api.GetTime() end)
     sync.requestAttempts, sync.manifestReplies = {}, {}
+    sync.rankCache = {}
     sync.sessionActive = false
+    sync.sessionMode = nil
     sync.sessionToken, sync.guildKey, sync.senderKey = nil, nil, nil
     if sync.transport then
         GGM.CancelBankSyncTransport(sync.transport, reason or "bank-sync-cancelled")
@@ -583,29 +673,52 @@ function GGM.CancelBankSync(sync, reason)
             GGM.SendBankSyncMessage(sync.transport, "E", { oldSender, oldGuild, oldToken }, nil, "GUILD")
         end
     end
-    setStatus(sync, sync.available and "Waiting for guild bank access" or "Bank sync unavailable")
+    setStatus(sync, sync.available and "Waiting for a guild bank or major city" or "Bank sync unavailable")
     return true
 end
 
-local function startSession(sync)
-    local ctx, err = context(sync)
+local function makeCitySessionToken(sync)
+    local timeOK, now = apiCall(sync.api.GetTime)
+    if not timeOK or type(now) ~= "number" or now < 0 or now == math.huge then
+        return nil, "bank-sync-time-unavailable"
+    end
+    return "city:" .. tostring(math.floor(now * 1000)) .. ":" .. tostring({}):gsub("%s", "")
+end
+
+local function startSession(sync, mode)
+    mode = mode or "bank"
+    if mode == "city" and not sync.cachedSupported then return false, "bank-cache-sync-unavailable" end
+    local token, tokenErr
+    if mode == "city" then token, tokenErr = makeCitySessionToken(sync) end
+    if mode == "city" and not token then setError(sync, tokenErr); return false, tokenErr end
+    local ctx, err = context(sync, mode, token)
     if not ctx then setError(sync, err); setStatus(sync, "Bank sync unavailable"); return false, err end
     local identity, identityErr = currentIdentity(sync)
     if not identity then setError(sync, identityErr); return false, identityErr end
-    if sync.sessionActive and sync.sessionToken == ctx.sessionToken and sync.guildKey == ctx.guildKey then return true end
+    if sync.sessionActive and sync.sessionMode == mode and sync.guildKey == ctx.guildKey
+        and (mode == "city" or sync.sessionToken == ctx.sessionToken) then return true end
     if sync.sessionActive then GGM.CancelBankSync(sync, "guild-session-changed") end
     sync.generation = sync.generation + 1
     sync.error = nil
-    sync.sessionActive, sync.guildKey, sync.sessionToken, sync.senderKey = true, ctx.guildKey, ctx.sessionToken, identity.key
+    sync.sessionActive, sync.sessionMode, sync.guildKey, sync.sessionToken, sync.senderKey = true, mode,
+        ctx.guildKey, ctx.sessionToken, identity.key
     sync.peers, sync.peerCount, sync.processed, sync.pending = {}, 0, {}, {}
     sync.requestAttempts, sync.manifestReplies = {}, {}
+    sync.rankCache = {}
+    sync.rosterChangedPending = false
     sync.comparedAny = false
     sync.assembler = P.NewManifestAssembler(function() return sync.api.GetTime() end)
     local ok, identityErr = GGM.SetBankSyncTransportIdentity(sync.transport, identity.key, ctx.sessionToken)
     if not ok then GGM.CancelBankSync(sync, identityErr); return false, identityErr end
-    setStatus(sync, "Checking available guild snapshots")
+    setStatus(sync, mode == "city" and "Checking saved guild snapshots" or "Checking available guild snapshots")
     publishManifest(sync)
     return true
+end
+
+local function retryCitySession(sync)
+    if not sync.inMajorCity or not sync.cachedSupported or sync.sessionMode == "bank" then return false end
+    if sync.sessionActive and sync.sessionMode == "city" then return false end
+    return startSession(sync, "city")
 end
 
 function GGM.HandleBankSyncAddonMessage(sync, prefix, message, distribution, sender)
@@ -635,23 +748,56 @@ end
 
 function GGM.HandleBankSyncEvent(sync, event)
     if type(sync) ~= "table" then return false end
-    if event == "GUILDBANKFRAME_CLOSED" then return GGM.CancelBankSync(sync, "guild-bank-closed") end
-    if event == "PLAYER_GUILD_UPDATE" and sync.sessionActive then
-        local ctx = context(sync)
-        if not ctx or ctx.guildKey ~= sync.guildKey or ctx.sessionToken ~= sync.sessionToken then
-            return GGM.CancelBankSync(sync, "guild-session-changed")
+    if event == "GUILDBANKFRAME_OPENED" then
+        if sync.sessionActive and sync.sessionMode == "city" then
+            return GGM.CancelBankSync(sync, "guild-bank-opened")
         end
         return false
     end
-    if event == "GUILD_ROSTER_UPDATE" then
-        if expirePeers(sync) and sync.sessionActive then
-            buildPeerQueue(sync)
-            if #sync.peerQueue > 0 then drive(sync) else
-                sync.manualPending = false
-                sync.manualActive = false
-                setStatus(sync, "Waiting for guild caches")
+    if event == "GUILDBANKFRAME_CLOSED" then return GGM.CancelBankSync(sync, "guild-bank-closed") end
+    if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA"
+        or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" then
+        local inCity = majorCityState(sync)
+        if inCity == nil then return false end
+        if inCity then
+            if not sync.inMajorCity then
+                sync.inMajorCity = true
+            end
+            return retryCitySession(sync)
+        else
+            sync.inMajorCity = false
+        end
+        return true
+    end
+    if event == "PLAYER_GUILD_UPDATE" then
+        sync.rosterGeneration = (sync.rosterGeneration or 0) + 1
+        sync.rankCache = {}
+        if sync.sessionActive then
+            local ctx = context(sync)
+            if not ctx or ctx.guildKey ~= sync.guildKey or ctx.sessionToken ~= sync.sessionToken then
+                GGM.CancelBankSync(sync, "guild-session-changed")
             end
         end
+        return retryCitySession(sync)
+    end
+    if event == "GUILD_ROSTER_UPDATE" then
+        sync.rosterGeneration = (sync.rosterGeneration or 0) + 1
+        sync.rankCache = {}
+        if sync.sessionActive then
+            if sync.current then
+                sync.rosterChangedPending = true
+            else
+                sync.processed = {}
+                sync.requestAttempts = {}
+                buildPeerQueue(sync)
+                if #sync.peerQueue > 0 then drive(sync) else
+                    sync.manualPending = false
+                    sync.manualActive = false
+                    setStatus(sync, "Waiting for guild caches")
+                end
+            end
+        end
+        if retryCitySession(sync) then return true end
         return true
     end
     return false
@@ -668,15 +814,15 @@ function GGM.OnBankMemoryChanged(sync, reason, tabID)
         return schedule(sync, "captureTimer", CAPTURE_DEBOUNCE, function() publishManifest(sync) end)
     end
     if reason == "remote-merge" then
-        -- The saved snapshot retains its original capture timestamp and digest.
-        return publishManifest(sync)
+        -- Coalesce forwarded cache updates so a multi-tab merge sends one manifest.
+        return schedule(sync, "captureTimer", CAPTURE_DEBOUNCE, function() publishManifest(sync) end)
     end
     return false
 end
 
 function GGM.RequestBankSyncFromButton(sync)
     if type(sync) ~= "table" or not sync.available then return false, sync and sync.error or "bank-sync-unavailable" end
-    if not sync.sessionActive then return false, "Open an accessible guild bank tab first" end
+    if not sync.sessionActive or sync.sessionMode ~= "bank" then return false, "Open an accessible guild bank tab first" end
     if sync.manualPending or sync.manualActive then return true, nil end
     sync.processed = {}
     sync.requestAttempts = {}
@@ -701,7 +847,12 @@ function GGM.GetBankSyncStatus(sync)
         if sync.error == "bank-companion-unsupported" then return "The Guild Book Bank companion is unsupported" end
         return "Guild bank sync is unavailable"
     end
-    if not sync.sessionActive then return "Open an accessible guild bank tab to start sync" end
+    if not sync.sessionActive then
+        if sync.inMajorCity and not sync.cachedSupported then
+            return "Update The Guild Book Bank to sync saved snapshots in cities"
+        end
+        return "Open a guild bank or enter a major city to start sync"
+    end
     if sync.current then
         local queued = sync.manualPending and "Manual sync queued · finishing tab " or "Syncing guild tab "
         return queued .. tostring(sync.current.tabID)
