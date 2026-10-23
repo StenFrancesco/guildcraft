@@ -3,25 +3,25 @@ local _, GGM = ...
 local P = { VERSION = 1, PREFIX = "GC_BANK1", MAX_FIELD = 4096, MAX_SNAPSHOT = 40000 }
 local function int(v, lo, hi) return type(v) == "number" and v == math.floor(v) and v >= lo and v <= hi end
 local function str(v, max) return type(v) == "string" and #v > 0 and #v <= max and not v:find("[%z\1-\31\127]") end
-local function fields(values)
+local function fields(values, maxField)
     local out = {}
     for i, v in ipairs(values) do
-        if type(v) ~= "string" or #v > P.MAX_FIELD then return nil end
+        if type(v) ~= "string" or #v > (maxField or P.MAX_FIELD) then return nil end
         out[i] = #v .. ":" .. v
     end
     return table.concat(out)
 end
-local function parseFields(s, count)
+local function parseFields(s, count, allowPrefix, lastMax)
     if type(s) ~= "string" or #s > P.MAX_SNAPSHOT then return nil end
     local out, at = {}, 1
     for i = 1, count do
         local colon = s:find(":", at, true); if not colon or colon - at > 5 then return nil end
         local ntext = s:sub(at, colon - 1)
         if not ntext:match("^%d+$") or (#ntext > 1 and ntext:sub(1, 1) == "0") then return nil end
-        local n = tonumber(ntext); if not n or n > P.MAX_FIELD or colon + n > #s then return nil end
+        local n = tonumber(ntext); if not n or n > ((i == count and lastMax) or P.MAX_FIELD) or colon + n > #s then return nil end
         out[i] = s:sub(colon + 1, colon + n); at = colon + n + 1
     end
-    if at ~= #s + 1 then return nil end
+    if not allowPrefix and at ~= #s + 1 then return nil end
     return out
 end
 local function packet(kind, values)
@@ -56,35 +56,35 @@ function P.Encode(kind, values)
     table.sort(ids)
     local vals = { "98", tostring(snap.id), snap.name, "98", tostring(snap.capturedAt), "cached", tostring(n) }
     for _, id in ipairs(ids) do local slot = snap.slots[id]; vals[#vals+1]=tostring(id); vals[#vals+1]=tostring(slot.itemID); vals[#vals+1]=tostring(slot.count); vals[#vals+1]=slot.itemLink end
-    local body = fields(vals); if not body then return nil, "bank-sync-snapshot-invalid" end
+    local body = fields(vals, P.MAX_SNAPSHOT); if not body then return nil, "bank-sync-snapshot-invalid" end
     h[#h + 1] = body
-    local encoded = fields(h)
+    local encoded = fields(h, P.MAX_SNAPSHOT)
     if not encoded or #encoded > P.MAX_SNAPSHOT then return nil, "bank-sync-snapshot-too-large" end
     if not P.Decode(encoded,"WHISPER") then return nil,"bank-sync-snapshot-invalid" end
     return encoded
 end
 function P.Decode(raw, channel)
     if type(raw) ~= "string" or #raw > P.MAX_SNAPSHOT then return nil, "bank-sync-message-invalid" end
-    local head = parseFields(raw, 2); if not head or head[1] ~= "1" or not schemas[head[2]] then return nil, "bank-sync-version-or-type-invalid" end
+    local head = parseFields(raw, 2, true); if not head or head[1] ~= "1" or not schemas[head[2]] then return nil, "bank-sync-version-or-type-invalid" end
     local kind = head[2]
     if kind == "S" then
-        local h = parseFields(raw, 9); if not h or h[1] ~= "1" or h[2] ~= "S" then return nil, "bank-sync-message-invalid" end
-        local b = parseFields(h[9], 7); if not b then return nil, "bank-sync-snapshot-invalid" end
+        local h = parseFields(raw, 9, false, P.MAX_SNAPSHOT); if not h or h[1] ~= "1" or h[2] ~= "S" then return nil, "bank-sync-message-invalid" end
+        local b = parseFields(h[9], 7, true); if not b then return nil, "bank-sync-snapshot-invalid" end
         local count = tonumber(b[7]); if not int(count, 0, 98) then return nil, "bank-sync-snapshot-invalid" end
         local all = parseFields(h[9], 7 + count * 4); if not all then return nil, "bank-sync-snapshot-invalid" end
         local snapshot = { observedSlotCount=tonumber(all[1]), id=tonumber(all[2]), name=all[3], numSlots=tonumber(all[4]), capturedAt=tonumber(all[5]), status=all[6], slots={} }
         local last=0
         for i=1,count do local j=8+(i-1)*4; local id,item,cnt=tonumber(all[j]),tonumber(all[j+1]),tonumber(all[j+2]); if not int(id,1,98) or id<=last or not int(item,1,9007199254740991) or not int(cnt,1,9007199254740991) or not str(all[j+3],1024) then return nil,"bank-sync-slot-invalid" end; last=id; snapshot.slots[id]={itemID=item,count=cnt,itemLink=all[j+3]} end
         if snapshot.observedSlotCount~=98 or snapshot.numSlots~=98 or not int(snapshot.id,1,8) or not int(snapshot.capturedAt,0,9007199254740991) or snapshot.status~="cached" or not str(snapshot.name,128) then return nil,"bank-sync-snapshot-invalid" end
-        for i=3,8 do if not str(h[i], i==4 and 160 or 80) then return nil,"bank-sync-request-invalid" end end
-        if not str(h[7],32) or not int(tonumber(h[8]),1,8) or snapshot.id~=tonumber(h[8]) then return nil,"bank-sync-request-invalid" end
+        if not str(h[3],80) or not str(h[4],160) or not str(h[5],64) or not str(h[6],64)
+            or not str(h[7],32) or not int(tonumber(h[8]),1,8) or snapshot.id~=tonumber(h[8]) then return nil,"bank-sync-request-invalid" end
         local v={}; for i=3,8 do v[#v+1]=h[i] end; v[7]=snapshot
         if channel~="WHISPER" then return nil,"bank-sync-channel-invalid" end
         return { type=kind, fields=v }
     end
     local count=schemas[kind]; local f
     if kind=="M" then
-        for n=8,17 do local candidate=parseFields(raw,n); if candidate then f=candidate; break end end
+        for _,n in ipairs({7,10,13,16}) do local candidate=parseFields(raw,n); if candidate then f=candidate; break end end
         if not f or (#f-7)%3~=0 then return nil,"bank-sync-fields-invalid" end
     else f=parseFields(raw,count+2) end
     if not f then return nil,"bank-sync-fields-invalid" end
