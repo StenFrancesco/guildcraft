@@ -585,4 +585,3 @@ function GGM.GetBankSyncStatus(sync)
     if type(sync) ~= "table" then return "Bank sync unavailable" end
     return sync.status or (sync.available and "Waiting for guild bank access" or "Bank sync unavailable")
 end
-
