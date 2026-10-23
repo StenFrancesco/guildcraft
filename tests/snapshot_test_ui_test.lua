@@ -1733,6 +1733,10 @@ T.test("Guild self-crafting places Whisper above both craft buttons and refreshe
     local details = browser.recipeDetailsFrame
     T.assertTrue(details.whisperButton.point.y > details.createButton.point.y)
     T.assertTrue(details.createButton.point.y > details.createAllButton.point.y)
+    T.assertTrue(details.createAllButton.point.y >= 30, "Create All should clear the lower border")
+    T.assertTrue(details.createButton.point.y >= details.createAllButton.point.y + 32)
+    T.assertTrue(details.whisperButton.point.y >= details.createButton.point.y + 32)
+    T.assertTrue(details.crafterStatus.point.y >= details.whisperButton.point.y + 34)
     T.assertTrue(details.createButton.enabled)
 
     craftable = false
