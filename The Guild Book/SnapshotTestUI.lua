@@ -917,6 +917,9 @@ local function openSelectedProfessionContext(frame, skillLineID)
     end
     local openOK, opened = pcall(trade.OpenTradeSkill, skillLineID)
     if not openOK or opened == false then return false end
+    -- Opening a profession for the first time can create ProfessionsFrame.
+    -- Resolve it again so the frame created by OpenTradeSkill is hidden too.
+    professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame or professionFrame
     frame.craftingContextSkillLineID = skillLineID
     frame.craftingContextOpenedByGuildBook = not frameWasShown
     if professionFrame then
