@@ -105,7 +105,11 @@ local function liveRecipeKnown(details)
     local ok, info = pcall(trade.GetRecipeInfo, details.recipeID)
     if not ok or not isPublic(api, info) or type(info) ~= "table" then return false end
     local learned = rawget(info, "learned")
-    return isPublic(api, learned) and learned == true
+    if not isPublic(api, learned) or learned ~= true then return false end
+    local spellBook = api.C_SpellBook
+    if type(spellBook) ~= "table" or type(spellBook.IsSpellKnown) ~= "function" then return false end
+    local knownOK, known = pcall(spellBook.IsSpellKnown, details.recipeID)
+    return knownOK and isPublic(api, known) and known == true
 end
 
 local function openGuildCraftingContext(details)
