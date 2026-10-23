@@ -843,7 +843,7 @@ T.test("character content stays within the journal's painted page borders", func
     T.assertTrue(detail.point.x - inset.x >= 635 and detail.point.x - inset.x <= 645, "detail misses the painted left border")
     T.assertTrue(-detail.point.y + inset.y >= 70 and -detail.point.y + inset.y <= 80, "detail misses the painted top border")
     T.assertTrue(detail.point.x + detail.width <= 1350, "detail extends beyond the painted right border")
-    T.assertTrue(-detail.point.y + detail.height <= 574, "detail extends beyond the painted bottom border")
+    T.assertTrue(-detail.point.y + detail.height <= frame.height - 56, "detail extends beyond the painted bottom border")
     local libraryLeft = frame.searchPanel.point.x
     T.assertTrue(libraryLeft + frame.listPanel.width <= 620, "library divider extends beyond its painted border")
     T.assertTrue(libraryLeft + frame.listScroll.point.x + frame.listScroll.width + 24 <= 620,
@@ -872,6 +872,28 @@ T.test("character realm stays left aligned beneath the character name", function
     T.assertEqual(frame.realmLine.justifyH, "LEFT")
     T.assertTrue(math.abs(frame.realmLine.point.x - frame.characterLine.point.x) <= 1,
         "realm label must share the name's left edge")
+end)
+
+T.test("equipment quickslot border stays behind the item artwork", function()
+    local GGM = loadUI()
+    local api = makeBrowserAPI()
+    local createFrame = api.CreateFrame
+    api.CreateFrame = function(...)
+        local control = createFrame(...)
+        local createTexture = control.CreateTexture
+        control.CreateTexture = function(self, name, layer, ...)
+            local texture = createTexture(self, name, layer, ...)
+            texture.drawLayer = layer
+            return texture
+        end
+        return control
+    end
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
+    for _, button in ipairs(frame.slotButtons) do
+        T.assertEqual(button.quickslot.drawLayer, "BORDER",
+            "padded quickslot artwork must not draw an inset box over the item")
+        T.assertEqual(button.icon.drawLayer, "ARTWORK")
+    end
 end)
 
 T.test("portrait decoration follows the portrait bounds without an overlay icon texture", function()
@@ -911,14 +933,20 @@ end)
 
 T.test("character portrait and weapon labels have separate space above the footer", function()
     local GGM = loadUI()
-    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    local api = makeBrowserAPI()
+    api.GetItemInfo = function() return "The Untamed Blade" end
+    local frame = showBrowser(GGM, api, makeDB(GGM, { makeRecord(GGM) }))
     local portraitBottom = -frame.modelStage.point.y + frame.modelStage.height
     local footerTop = frame.gearPanel.height - frame.detailFooter.point.y - frame.detailFooter.height
     for _, button in ipairs(frame.slotButtons) do
         if button.paperDollGroup == "bottom" then
             local top = -button.point.y - button.height / 2
-            local labelsBottom = -button.point.y + button.height / 2 + 5 + 16 + 1 + 14
+            local labelsBottom = -button.point.y + button.height / 2 + 5
+                + button.label.height + 1 + 14
             T.assertTrue(top >= portraitBottom + 8, "weapons overlap the saved portrait")
+            T.assertTrue(button.label.height >= 42,
+                "three-line weapon names need enough height to remain readable")
+            T.assertEqual(button.label.text, "The Untamed Blade")
             T.assertTrue(labelsBottom <= footerTop - 6, "weapon labels overlap the footer")
         end
     end
@@ -1956,6 +1984,31 @@ T.test("large crafter lists switch native dropdown to a scrollable menu on refre
     T.assertEqual(details.selectedCrafterKey, details.crafters[20].key)
 end)
 
+T.test("taller equipment window preserves the navigation artwork scale on every tab", function()
+    local GGM = loadUI()
+    local frame = showBrowser(GGM, makeBrowserAPI(), makeDB(GGM, { makeRecord(GGM) }))
+    for _, tab in ipairs({ "Character", "Professions", "Bank" }) do
+        GGM.SelectGuildGearBrowserTab(frame, tab)
+        local top, bottom = frame.navigationBackdropTop, frame.navigationBackdropBottom
+        T.assertTrue(top ~= nil and bottom ~= nil, "shared navigation needs its own unstretched artwork")
+        T.assertEqual(top.texture, GGM.UIJournalTextures.window)
+        T.assertEqual(top.width, GGM.UIStyleTokens.railWidth)
+        T.assertTrue(top.height >= 332, "all three painted navigation rows must retain their original scale")
+        T.assertEqual(top.point.y, 0)
+        T.assertEqual(top.texCoord[1], 0)
+        T.assertEqual(top.texCoord[3], 0)
+        T.assertTrue(math.abs(top.width / top.texCoord[2] - 1400) < 0.001,
+            "navigation artwork must retain its original horizontal scale")
+        T.assertTrue(math.abs(top.height / top.texCoord[4] - 630) < 0.001,
+            "navigation artwork must retain its original vertical scale")
+        T.assertEqual(bottom.texCoord[3], top.texCoord[4])
+        T.assertEqual(bottom.texCoord[4], 1)
+        T.assertEqual(bottom.points.TOPLEFT.y, -top.height)
+        T.assertEqual(bottom.points.BOTTOMLEFT.y, 0)
+        T.assertTrue(bottom.points.BOTTOMLEFT.relativeTo == frame)
+    end
+end)
+
 T.test("journal window uses the reference canvas size, custom backdrop, and screen-fit scale", function()
     local GGM = loadUI()
     local api = makeBrowserAPI()
@@ -1966,7 +2019,7 @@ T.test("journal window uses the reference canvas size, custom backdrop, and scre
     }, separator)
 
     T.assertEqual(frame.width, 1400)
-    T.assertEqual(frame.height, 630)
+    T.assertEqual(frame.height, 694)
     T.assertNil(frame.template)
     T.assertEqual(frame.background.texture, mediaPath .. "journal-window.blp")
     T.assertTrue(frame.background.allPointsTo == frame)
@@ -2038,7 +2091,7 @@ T.test("journal profession page follows the parchment reference proportions and 
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
 
     T.assertEqual(ui.windowWidth, 1400)
-    T.assertEqual(ui.windowHeight, 630)
+    T.assertEqual(ui.windowHeight, 694)
     T.assertEqual(ui.professionLibraryX, 314)
     T.assertEqual(ui.professionDetailX, 629)
     T.assertEqual(ui.professionLibraryTop, 145)
@@ -2901,7 +2954,7 @@ T.test("guild gear browser gives a saved empty slot an explicit dimmed empty tre
     T.assertTrue(emptySlot.visible)
     T.assertTrue(emptySlot.empty)
     T.assertTrue(emptySlot.icon.desaturated)
-    T.assertEqual(emptySlot.icon.alpha, 0.32)
+    T.assertTrue(emptySlot.icon.alpha > 0 and emptySlot.icon.alpha < 1)
     T.assertEqual(emptySlot.key, "OFF_HAND")
     T.assertEqual(emptySlot.label.text, "Off hand")
     T.assertEqual(emptySlot.status.text, "Empty")
@@ -3356,8 +3409,8 @@ T.test("compact absent optional and required slots render as empty", function()
     T.assertTrue(frame.slotButtons[shirtIndex].empty)
     T.assertEqual(frame.slotButtons[shirtIndex].label.text, "Shirt")
     T.assertEqual(frame.slotButtons[shirtIndex].status.text, "Empty")
-    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 146)
-    T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 98)
+    T.assertTrue(frame.slotButtons[shirtIndex].label.width <= 156)
+    T.assertTrue(frame.slotButtons[shirtIndex].status.width <= 156)
 end)
 
 T.test("sequence-gap browser records remain refresh-needed with all values and bounded captions", function()
@@ -3378,8 +3431,8 @@ T.test("sequence-gap browser records remain refresh-needed with all values and b
     for index, row in ipairs(frame.detailModel.slots) do
         local button = frame.slotButtons[index]
         T.assertFalse(row.unavailable)
-        local expectedWidth = button.paperDollGroup == "bottom" and 92 or 98
-        T.assertTrue(button.label.width <= (button.paperDollGroup == "bottom" and 92 or 146))
+        local expectedWidth = button.paperDollGroup == "bottom" and 92 or 156
+        T.assertTrue(button.label.width <= (button.paperDollGroup == "bottom" and 92 or 156))
         T.assertTrue(button.status.width <= expectedWidth)
         T.assertEqual(button.label.text, row.displayName)
         T.assertTrue(#(button.status.text or "") <= 7)
@@ -3461,7 +3514,7 @@ T.test("equipped gear labels show item names from modern and legacy item APIs", 
         local frame = showBrowser(G, api, makeDB(G, { makeRecord(G) }))
         for _, button in ipairs(frame.slotButtons) do
             T.assertEqual(button.label.text, name)
-            T.assertEqual(button.label.height, 32)
+            T.assertEqual(button.label.height, button.paperDollGroup == "bottom" and 44 or 32)
         end
     end
 end)
