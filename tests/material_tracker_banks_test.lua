@@ -4,6 +4,10 @@ local function fixture()
     local G = {}
     T.loadAddonFile("The Guild Book/MaterialTracker.lua", G)
     T.loadAddonFile("The Guild Book/MaterialTrackerBanks.lua", G)
+    G.IsLocalCharacterGUID = function(db, guid)
+        return type(db) == "table" and type(db.localCharacterGUIDs) == "table"
+            and type(guid) == "string" and db.localCharacterGUIDs[guid] == true
+    end
     local api = { issecretvalue = function() return false end,
         UnitGUID = function() return "Player-1-ABC" end }
     local snapshot = assert(G.CreateMaterialTrackingSnapshot(api, 1, "Recipe", 1,
@@ -13,13 +17,17 @@ local function fixture()
             { quantity = 1, choices = { { currencyID = 101, name = "Token" } } },
         } }))
     local function record(name, count)
-        return { identity = { key = name .. "-Realm", name = name, realm = "Realm" },
+        return { identity = { key = name .. "-Realm", name = name, realm = "Realm",
+                guid = "Player-1234-" .. name },
             status = "cached", capturedAt = 100,
             tabs = { [1] = { id = 1, name = "Bank", numSlots = 2, status = "cached", capturedAt = 100,
                 slots = { [1] = { itemID = 101, count = count }, [2] = { itemID = 102, count = 2 } } } } }
     end
     local db = { schemaVersion = 1, characters = { ["Zed-Realm"] = record("Zed", 8),
-        ["Alice-Realm"] = record("Alice", 3) } }
+        ["Alice-Realm"] = record("Alice", 3) }, localCharacterGUIDs = {
+        ["Player-1234-Zed"] = true, ["Player-1234-Alice"] = true,
+    } }
+    G.db = db
     setmetatable(db, { __index = function(_, key)
         if key == "guilds" then error("tracker must never read guild banks") end
     end })
