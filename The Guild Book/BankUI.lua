@@ -575,9 +575,6 @@ local function refreshPage(page, db, bankDB)
         setScroll(page.tabScroll, tabPosition)
         setScroll(page.itemScroll, itemPosition)
     end
-    if page.syncStatus then
-        setText(page.syncStatus, GGM.GetBankSyncStatus and GGM.GetBankSyncStatus(GGM.bankSync) or "Bank sync unavailable")
-    end
     return true
 end
 
@@ -683,22 +680,6 @@ function GGM.CreateBankPage(api, frame)
     page.detailTitle:SetHeight(32)
     if page.detailTitle.SetWordWrap then page.detailTitle:SetWordWrap(false) end
     page.detailTitle:SetJustifyH("LEFT")
-    page.bankSyncButton = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    page.bankSyncButton:SetSize(116, 24)
-    page.bankSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -28, -24)
-    page.bankSyncButton:SetText("Sync bank")
-    page.bankSyncButton:SetScript("OnClick", function()
-        local accepted, err
-        if GGM.RequestBankSyncFromButton then accepted, err = GGM.RequestBankSyncFromButton(GGM.bankSync) end
-        if not accepted and err then page.syncStatus:SetText(err) end
-        if GGM.RefreshVisibleBankView then GGM.RefreshVisibleBankView() end
-    end)
-    page.syncStatus = label(panel, "Bank sync unavailable", 11)
-    page.syncStatus:SetPoint("TOPRIGHT", page.bankSyncButton, "BOTTOMRIGHT", 0, -4)
-    page.syncStatus:SetWidth(170)
-    page.syncStatus:SetHeight(26)
-    page.syncStatus:SetJustifyH("RIGHT")
-    if page.syncStatus.SetWordWrap then page.syncStatus:SetWordWrap(true) end
     page.detailSubtitle = label(panel, "Your storage ledger", 14)
     GGM.ApplyJournalFont(page.detailSubtitle, 14, "italic")
     page.detailSubtitle:SetPoint("TOPLEFT", panel, "TOPLEFT", 96, -56)
@@ -745,6 +726,23 @@ end
 _G.GuildGearMemoryBankChanged = function(reason, tabID)
     if type(GGM.RefreshMaterialTracker) == "function" then GGM.RefreshMaterialTracker() end
     if type(GGM.RefreshRecipeMaterialBankNotes) == "function" then GGM.RefreshRecipeMaterialBankNotes() end
+    local bankAPI = _G.DysbankMemoryAPI
+    local current = GGM.bankSync
+    if type(bankAPI) == "table" and type(GGM.CreateBankSync) == "function"
+        and type(GGM.RegisterBankSync) == "function" and (not current or not current.registered) then
+        local candidate, createErr = GGM.CreateBankSync(_G)
+        if candidate then
+            local registered, registerErr = GGM.RegisterBankSync(candidate)
+            if registered then
+                GGM.bankSync = candidate
+                GGM.lastBankSyncError = nil
+            else
+                GGM.lastBankSyncError = registerErr or createErr
+            end
+        else
+            GGM.lastBankSyncError = createErr
+        end
+    end
     if type(GGM.OnBankMemoryChanged) == "function" then
         GGM.OnBankMemoryChanged(GGM.bankSync, reason, tabID)
     end

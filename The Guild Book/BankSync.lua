@@ -55,6 +55,8 @@ local function cancelTimer(sync, key)
     sync[key] = nil
 end
 
+local drive, buildPeerQueue
+
 local function schedule(sync, key, delay, callback)
     cancelTimer(sync, key)
     local timerAPI = sync.api.C_Timer
@@ -80,10 +82,9 @@ end
 
 local function setStatus(sync, value)
     sync.status = value
-    if type(GGM.RefreshVisibleBankView) == "function" then pcall(GGM.RefreshVisibleBankView) end
 end
 
-local function clearWork(sync)
+local function clearWork(sync, clearManual)
     cancelTimer(sync, "captureTimer")
     cancelTimer(sync, "responseTimer")
     sync.pending = {}
@@ -92,18 +93,27 @@ local function clearWork(sync)
     sync.peerQueue = {}
     sync.peerIndex = 1
     sync.peersInWindow = 0
+    if clearManual then
+        sync.manualPending = false
+        sync.manualActive = false
+    end
 end
 
 local function expirePeers(sync)
     local ok, now = apiCall(sync.api.GetTime)
-    if not ok or type(now) ~= "number" then return end
+    if not ok or type(now) ~= "number" then return false end
+    local selectedExpired = false
     for key, peer in pairs(sync.peers) do
         if now - peer.lastSeen > PEER_TTL then
             sync.peers[key] = nil
             sync.peerCount = math.max(0, sync.peerCount - 1)
-            if sync.selectedPeer == key then clearWork(sync) end
+            if sync.selectedPeer == key then
+                selectedExpired = true
+                clearWork(sync, false)
+            end
         end
     end
+    return selectedExpired
 end
 
 local function peerExpiryDelay(sync)
@@ -122,7 +132,15 @@ local function schedulePeerExpiry(sync)
     if not delay then return end
     if delay < 0 then delay = 0 end
     schedule(sync, "peerExpiryTimer", delay + 0.01, function()
-        expirePeers(sync)
+        local selectedExpired = expirePeers(sync)
+        if selectedExpired and sync.sessionActive then
+            buildPeerQueue(sync)
+            if #sync.peerQueue > 0 then drive(sync) else
+                sync.manualPending = false
+                sync.manualActive = false
+                setStatus(sync, "Waiting for guild caches")
+            end
+        end
         schedulePeerExpiry(sync)
     end)
 end
@@ -172,9 +190,7 @@ local function manifestSignature(manifest)
     return table.concat(pieces, "|")
 end
 
-local drive
-
-local function buildPeerQueue(sync)
+buildPeerQueue = function(sync)
     expirePeers(sync)
     local keys = {}
     for key, peer in pairs(sync.peers) do
@@ -216,7 +232,7 @@ local function finishPeer(sync)
     sync.peersInWindow = sync.peersInWindow + 1
     if sync.manualPending then
         sync.manualPending = false
-        sync.manualWindow = true
+        sync.manualActive = true
         buildPeerQueue(sync)
         drive(sync)
         return
@@ -224,7 +240,11 @@ local function finishPeer(sync)
     sync.peerIndex = sync.peerIndex + 1
     if sync.peersInWindow >= MAX_PEERS_PER_WINDOW then
         buildPeerQueue(sync)
-        if #sync.peerQueue == 0 then setStatus(sync, "Compared available guild snapshots"); return end
+        if #sync.peerQueue == 0 then
+            sync.manualActive = false
+            setStatus(sync, "Compared available guild snapshots")
+            return
+        end
     end
     drive(sync)
 end
@@ -248,13 +268,21 @@ local function advanceAfterRequest(sync)
         sync.pending[requestID] = entry
         sync.current = entry
         setStatus(sync, "Requesting guild tab " .. tabID)
-        schedule(sync, "responseTimer", RESPONSE_TIMEOUT, function()
+        local timeoutScheduled = schedule(sync, "responseTimer", RESPONSE_TIMEOUT, function()
             if sync.current == entry then
                 sync.pending[requestID] = nil
                 sync.error = "bank-sync-no-response"
                 advanceAfterRequest(sync)
             end
         end)
+        if not timeoutScheduled then
+            sync.pending[requestID] = nil
+            sync.current = nil
+            sync.error = "bank-sync-timeout-unavailable"
+            setStatus(sync, "Guild sync timer unavailable")
+            finishPeer(sync)
+            return
+        end
         local sent, err = sendMessage(sync, "Q", { sync.senderKey, sync.guildKey, sync.sessionToken,
             peer.sessionToken, requestID, tostring(tabID) }, peer.senderKey, "WHISPER", function(success)
                 if sync.generation ~= entry.generation or sync.current ~= entry then return end
@@ -274,19 +302,15 @@ end
 
 drive = function(sync)
     if not sync.sessionActive or sync.current then return end
-    if sync.manualPending and sync.peersInWindow >= MAX_PEERS_PER_WINDOW then
+    if sync.manualPending then
         sync.manualPending = false
-        sync.manualWindow = true
+        sync.manualActive = true
         buildPeerQueue(sync)
     elseif #sync.peerQueue == 0 or sync.peerIndex > #sync.peerQueue then
-        if sync.manualPending then
-            sync.manualPending = false
-            sync.manualWindow = true
-            buildPeerQueue(sync)
-        else
-            setStatus(sync, sync.manualWindow and "Compared available guild snapshots" or "Waiting for guild caches")
-            return
-        end
+        local completedManual = sync.manualActive
+        sync.manualActive = false
+        setStatus(sync, completedManual and "Compared available guild snapshots" or "Waiting for guild caches")
+        return
     end
     while sync.peerIndex <= #sync.peerQueue do
         local peerKey = sync.peerQueue[sync.peerIndex]
@@ -299,6 +323,8 @@ drive = function(sync)
         sync.peerIndex = sync.peerIndex + 1
     end
     sync.peerQueue = {}
+    sync.manualPending = false
+    sync.manualActive = false
     setStatus(sync, "Compared available guild snapshots")
 end
 
@@ -329,7 +355,7 @@ local function handleManifest(sync, message, sender)
     sync.assembler.sets = sync.assembler.sets or {}
     schedulePeerExpiry(sync)
     if sync.selectedPeer == peerKey and sync.current and sync.current.peerToken ~= complete.sessionToken then
-        clearWork(sync)
+        clearWork(sync, false)
     end
     buildPeerQueue(sync)
     if sync.current then return true end
@@ -365,7 +391,15 @@ local function handleMessage(sync, message, sender, channel)
         local key = normalized(fields[1]); local peer = sync.peers[key]
         if peer and peer.sessionToken == fields[3] then
             sync.peers[key] = nil; sync.peerCount = math.max(0, sync.peerCount - 1); sync.processed[key] = nil
-            if sync.selectedPeer == key then clearWork(sync); drive(sync) end
+            if sync.selectedPeer == key then
+                clearWork(sync, false)
+                buildPeerQueue(sync)
+                if #sync.peerQueue > 0 then drive(sync) else
+                    sync.manualPending = false
+                    sync.manualActive = false
+                    setStatus(sync, "Waiting for guild caches")
+                end
+            end
         end
         return true
     end
@@ -408,7 +442,7 @@ function GGM.CreateBankSync(api)
     local sync = { api = api, bankAPI = supported and bankAPI or nil, available = supported,
         status = supported and "Waiting for guild bank access" or "Bank sync unavailable",
         peers = {}, peerCount = 0, processed = {}, pending = {}, peerQueue = {}, peerIndex = 1,
-        manualPending = false, manualWindow = false, requestSequence = 0, generation = 0,
+        manualPending = false, manualActive = false, requestSequence = 0, generation = 0,
         sessionActive = false, assembler = P and P.NewManifestAssembler(function() return api.GetTime() end) }
     if not supported then sync.error = "bank-companion-unavailable"; return sync, sync.error end
     local transport, err = GGM.CreateBankSyncTransport(api, function(message, sender, channel)
@@ -434,7 +468,7 @@ function GGM.CancelBankSync(sync, reason)
     local oldToken, oldGuild, oldSender = sync.sessionToken, sync.guildKey, sync.senderKey
     local wasActive = sync.sessionActive
     sync.generation = sync.generation + 1
-    clearWork(sync)
+    clearWork(sync, true)
     cancelTimer(sync, "peerExpiryTimer")
     sync.peers, sync.peerCount, sync.processed, sync.assembler = {}, 0, {}, P.NewManifestAssembler(function() return sync.api.GetTime() end)
     sync.sessionActive = false
@@ -488,7 +522,17 @@ function GGM.HandleBankSyncEvent(sync, event)
         end
         return false
     end
-    if event == "GUILD_ROSTER_UPDATE" then expirePeers(sync); return true end
+    if event == "GUILD_ROSTER_UPDATE" then
+        if expirePeers(sync) and sync.sessionActive then
+            buildPeerQueue(sync)
+            if #sync.peerQueue > 0 then drive(sync) else
+                sync.manualPending = false
+                sync.manualActive = false
+                setStatus(sync, "Waiting for guild caches")
+            end
+        end
+        return true
+    end
     return false
 end
 
@@ -512,13 +556,12 @@ end
 function GGM.RequestBankSyncFromButton(sync)
     if type(sync) ~= "table" or not sync.available then return false, sync and sync.error or "bank-sync-unavailable" end
     if not sync.sessionActive then return false, "Open an accessible guild bank tab first" end
-    if sync.manualPending or sync.manualWindow then return true, nil end
+    if sync.manualPending or sync.manualActive then return true, nil end
     sync.processed = {}
-    sync.manualPending = true
-    sync.manualWindow = true
+    sync.manualPending = sync.current ~= nil
+    sync.manualActive = sync.current == nil
     publishManifest(sync)
     if not sync.current then
-        sync.manualPending = false
         buildPeerQueue(sync)
         drive(sync)
     else
