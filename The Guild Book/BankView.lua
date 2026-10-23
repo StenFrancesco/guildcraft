@@ -106,6 +106,23 @@ local function identityFromGGMRecord(record, key)
     end
 end
 
+local function isLocalCharacter(db, key, record)
+    if type(db) ~= "table" or type(GGM.IsLocalCharacterGUID) ~= "function" then return false end
+    local identity = identityFromGGMRecord(record, key)
+    local guid = identity and identity.guid
+    if not guid then
+        local bankIdentity = type(record) == "table" and record.identity or nil
+        if type(bankIdentity) == "table" and validIdentity(bankIdentity, key) then
+            guid = bankIdentity.guid
+        end
+    end
+    if not guid and type(db.characters) == "table" then
+        local sharedIdentity = identityFromGGMRecord(rawget(db.characters, key), key)
+        guid = sharedIdentity and sharedIdentity.guid
+    end
+    return GGM.IsLocalCharacterGUID(db, guid)
+end
+
 local function inventoryOnlyRecord(record)
     return type(record) == "table" and type(record.inventory) == "table"
         and type(record.tabs) == "table" and next(record.tabs) == nil
@@ -116,13 +133,15 @@ local function characterEntries(db, bankDB)
     if type(db) == "table" and db.schemaVersion == GGM.SCHEMA_VERSION and type(db.characters) == "table" then
         for key, record in pairs(db.characters) do
             local identity = identityFromGGMRecord(record, key)
-            if identity then byKey[key] = { key = key, identity = identity } end
+            if identity and isLocalCharacter(db, key, record) then
+                byKey[key] = { key = key, identity = identity }
+            end
         end
     end
     if validBankDatabase(bankDB) then
         for key, record in pairs(bankDB.characters) do
             local identity = identityFromGGMRecord(record, key)
-            if identity then
+            if identity and isLocalCharacter(db, key, record) then
                 local entry = byKey[key]
                 if inventoryOnlyRecord(record) then
                     if entry then entry.record = nil end

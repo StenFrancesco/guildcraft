@@ -172,6 +172,7 @@ Existing bank records and schema version 1 remain compatible. Inventory is saved
 locally and is not added to the bank browser or synchronization messages.
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
+- Personal bank details are shown only for characters whose GUIDs are recorded as belonging to this account. The guild bank remains shared with addon users in the current guild.
 - Profession browsing and sharing support Alchemy, Blacksmithing, Cooking, Enchanting, Engineering, First Aid, Fishing, Leatherworking, and Tailoring. First Aid is mainly relevant to the legacy client. Profession sharing uses protocol P5 (`GC_PROF5`); participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.

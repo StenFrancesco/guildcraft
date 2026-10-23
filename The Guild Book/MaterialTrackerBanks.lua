@@ -76,6 +76,21 @@ local function characterBank(api, record, key)
     return result
 end
 
+local function isLocalCharacter(key, record)
+    local db = GGM.db
+    if type(db) ~= "table" or type(GGM.IsLocalCharacterGUID) ~= "function" then return false end
+
+    local identity = type(record) == "table" and record.identity or nil
+    local guid = type(identity) == "table" and identity.guid or nil
+    if type(guid) ~= "string" or guid == "" then
+        local sharedCharacters = db.characters
+        local sharedRecord = type(sharedCharacters) == "table" and rawget(sharedCharacters, key) or nil
+        local sharedIdentity = type(sharedRecord) == "table" and sharedRecord.identity or nil
+        guid = type(sharedIdentity) == "table" and sharedIdentity.guid or nil
+    end
+    return GGM.IsLocalCharacterGUID(db, guid)
+end
+
 local function readBanks(api, bankDB)
     local characters = field(api, bankDB, "characters")
     if field(api, bankDB, "schemaVersion") ~= 1 or type(characters) ~= "table" then
@@ -85,8 +100,10 @@ local function readBanks(api, bankDB)
     -- Deliberately read only the local characters bucket; guild bank contents
     -- and guild membership have no role in this view.
     for key, record in pairs(characters) do
-        local bank = characterBank(api, record, key)
-        if bank then banks[#banks + 1] = bank else malformed = true end
+        if isLocalCharacter(key, record) then
+            local bank = characterBank(api, record, key)
+            if bank then banks[#banks + 1] = bank else malformed = true end
+        end
     end
     table.sort(banks, function(a, b) return a.key < b.key end)
     return banks, malformed and "partial" or (#banks > 0 and "available" or "empty")
