@@ -1629,6 +1629,37 @@ T.test("Guild recipe details expose self-crafting from live learned data, not ca
     T.assertFalse(details.createAllButton:IsShown())
 end)
 
+T.test("Guild Engineering self-crafting uses the current base profession API", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local activeProfessionID = 202
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function(skillLineID)
+            T.assertEqual(skillLineID, 202)
+            return true
+        end,
+        GetBaseProfessionInfo = function() return { professionID = activeProfessionID } end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function() return 2 end,
+        CraftRecipe = function() return true end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Engineering")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    T.assertTrue(details.whisperButton:IsShown())
+    T.assertTrue(details.createButton:IsShown())
+    T.assertTrue(details.createAllButton:IsShown())
+    T.assertTrue(details.createButton.enabled)
+    T.assertTrue(details.createAllButton.enabled)
+    activeProfessionID = 164
+    details.rosterEventFrame.scripts.OnEvent(details.rosterEventFrame, "TRADE_SKILL_LIST_UPDATE")
+    T.assertFalse(details.createButton:IsShown())
+    T.assertFalse(details.createAllButton:IsShown())
+end)
+
 T.test("Guild recipe details ignore cached self ownership when live learned data disagrees", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     recipes[1].knownBy[1].key = "Player-Realm"

@@ -88,9 +88,19 @@ local function liveRecipeKnown(details)
     if details.ownMode then return true end
     local trade = api.C_TradeSkillUI
     if type(trade) ~= "table" or type(trade.GetRecipeInfo) ~= "function" then return false end
-    if type(trade.GetTradeSkillLine) ~= "function" then return false end
-    local lineOK, activeSkillLineID = pcall(trade.GetTradeSkillLine)
-    if not lineOK or not isPublic(api, activeSkillLineID)
+    local activeSkillLineID
+    if type(trade.GetBaseProfessionInfo) == "function" then
+        local lineOK, info = pcall(trade.GetBaseProfessionInfo)
+        if not lineOK or not isPublic(api, info) or type(info) ~= "table" then return false end
+        activeSkillLineID = rawget(info, "professionID")
+    elseif type(trade.GetTradeSkillLine) == "function" then
+        local lineOK
+        lineOK, activeSkillLineID = pcall(trade.GetTradeSkillLine)
+        if not lineOK then return false end
+    else
+        return false
+    end
+    if not isPublic(api, activeSkillLineID)
         or activeSkillLineID ~= browser.selectedProfessionID then return false end
     local ok, info = pcall(trade.GetRecipeInfo, details.recipeID)
     if not ok or not isPublic(api, info) or type(info) ~= "table" then return false end
