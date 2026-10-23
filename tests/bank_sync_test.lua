@@ -130,7 +130,7 @@ end)
 
 T.test("bank sync stops after two requests per peer tab and manifest", function()
     local G, api, sync = setup({ senderKey = "Alice-Silvermoon", localToken = "alice-local-token", localSnapshot = false,
-        roster = { { "Alice-Silvermoon", "Officer", 1 }, { "Bob-Silvermoon", "Member", 2 } } })
+        roster = { { "Alice-Silvermoon", "Member", 2 }, { "Bob-Silvermoon", "Member", 2 } } })
     sync.transport.onMessage(manifest(G, "Bob-Silvermoon", "bob-token"), "Bob-Silvermoon", "GUILD")
 
     local attempts = 0
@@ -151,7 +151,7 @@ end)
 T.test("bank sync bounds immediate send failures as well as response timeouts", function()
     local G, api, sync = setup({ senderKey = "Alice-Silvermoon", localToken = "alice-local-token",
         localSnapshot = false, failRequests = true,
-        roster = { { "Alice-Silvermoon", "Officer", 1 }, { "Bob-Silvermoon", "Member", 2 } } })
+        roster = { { "Alice-Silvermoon", "Member", 2 }, { "Bob-Silvermoon", "Member", 2 } } })
 
     sync.transport.onMessage(manifest(G, "Bob-Silvermoon", "bob-token"), "Bob-Silvermoon", "GUILD")
 
