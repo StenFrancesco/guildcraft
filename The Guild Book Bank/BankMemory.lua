@@ -1035,6 +1035,7 @@ local function copyGuildTab(tab)
         numSlots = tab.numSlots,
         capturedAt = tab.capturedAt,
         status = tab.status,
+        observedSlotCount = GUILD_TAB_SLOTS,
         slots = {},
     }
     for slotID, slot in pairs(tab.slots) do
@@ -1048,7 +1049,7 @@ local function copyGuildTab(tab)
     return copy
 end
 
-local function validateGuildSnapshot(api, tabID, snapshot, descriptor)
+local function validateGuildSnapshot(api, tabID, snapshot, descriptor, requireObservedSlotCount)
     local snapshotOk, snapshotErr = safeValue(api, snapshot)
     if not snapshotOk or type(snapshot) ~= "table" then
         return nil, snapshotErr or "snapshot-invalid"
@@ -1059,12 +1060,17 @@ local function validateGuildSnapshot(api, tabID, snapshot, descriptor)
     local countOk, numSlots, countErr = safeField(api, snapshot, "numSlots")
     local timeOk, capturedAt, timeErr = safeField(api, snapshot, "capturedAt")
     local statusOk, status, statusErr = safeField(api, snapshot, "status")
+    local observedOk, observedSlotCount, observedErr = safeField(api, snapshot, "observedSlotCount")
     if not idOk then return nil, idErr end
     if not nameOk then return nil, nameErr end
     if not slotsOk then return nil, slotsErr end
     if not countOk then return nil, countErr end
     if not timeOk then return nil, timeErr end
     if not statusOk then return nil, statusErr end
+    if not observedOk then return nil, observedErr end
+    if requireObservedSlotCount and observedSlotCount ~= GUILD_TAB_SLOTS then
+        return nil, "snapshot-slot-count-incomplete"
+    end
     if id ~= tabID or name ~= descriptor.name or numSlots ~= GUILD_TAB_SLOTS
         or status ~= "cached" or not isInteger(capturedAt, 0, 9007199254740991)
         or type(slots) ~= "table" then
@@ -1172,7 +1178,7 @@ local function mergeGuildSyncSnapshot(controller, guildKey, sessionToken, tabID,
     end
     local descriptor = controller.guildMetadata.tabs[tabID]
     if not descriptor or descriptor.viewable ~= true then return false, "guild-tab-metadata-invalid" end
-    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, snapshot, descriptor)
+    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, snapshot, descriptor, true)
     if not validated then return false, validationErr end
     local identity = controller.lastGuildIdentity
     if not validIdentity(identity) or identity.key ~= guildKey then return false, "guild-identity-invalid" end
