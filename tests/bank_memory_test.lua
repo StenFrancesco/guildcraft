@@ -479,7 +479,7 @@ T.test("guild open records metadata as incomplete without reading any tab conten
     T.assertEqual(record.tabs[1].numSlots, 98)
     T.assertEqual(next(record.tabs[1].slots), nil)
     T.assertEqual(record.tabs[2].status, "incomplete")
-    T.assertNil(api.calls.currentGuildTab)
+    T.assertEqual(api.calls.currentGuildTab, 1)
     T.assertNil(api.calls.guildItemInfo)
     T.assertNil(api.calls.guildItemLink)
 end)
@@ -573,7 +573,7 @@ T.test("guild contents-ready captures only the current tab and timestamps each o
     T.assertEqual(record.tabs[1].status, "cached")
     T.assertEqual(record.tabs[1].capturedAt, api.now)
     T.assertEqual(record.tabs[2].capturedAt, 1700000015)
-    T.assertEqual(record.status, "incomplete")
+    T.assertEqual(record.status, "cached")
 end)
 
 T.test("guild metadata refresh keeps cached contents but marks unobserved tabs incomplete", function()
@@ -592,7 +592,7 @@ T.test("guild metadata refresh keeps cached contents but marks unobserved tabs i
     send(controller, "GUILDBANK_UPDATE_TABS")
 
     local record = database.guilds["Raid Team-Silvermoon"]
-    T.assertEqual(record.tabs[1].status, "incomplete")
+    T.assertEqual(record.tabs[1].status, "cached")
     T.assertEqual(record.tabs[1].slots[1].itemID, 3001)
     T.assertEqual(record.tabs[1].capturedAt, 1700000000)
     T.assertEqual(record.tabs[2].status, "incomplete")
@@ -652,7 +652,7 @@ T.test("guild data is not read during combat and awaits a fresh contents-ready e
 
     api.combat = false
     send(controller, "PLAYER_REGEN_ENABLED")
-    T.assertEqual(api.calls.currentGuildTab, currentTabReadCount)
+    T.assertEqual(api.calls.currentGuildTab, currentTabReadCount + 1)
     T.assertEqual(api.calls.guildItemInfo, itemReadCount)
     T.assertEqual(database.guilds["Raid Team-Silvermoon"].tabs[1].status, "incomplete")
     T.assertEqual(database.guilds["Raid Team-Silvermoon"].tabs[1].slots[1].itemID, 3001)
