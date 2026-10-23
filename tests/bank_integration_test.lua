@@ -51,7 +51,7 @@ local function fixture(saved)
     return api, frame, GGM, function() return reads, changes end
 end
 
-T.test("companion startup captures only after bank open and main addon reads same SavedVariables", function()
+T.test("companion captures bank on open and carried inventory with bank closed in the same SavedVariables", function()
     local saved = { schemaVersion = 1, characters = {}, guilds = {} }
     local api, frame, GGM, counts = fixture(saved)
     local event = assert(frame.scripts.OnEvent)
@@ -76,8 +76,28 @@ T.test("companion startup captures only after bank open and main addon reads sam
     T.assertEqual(detail.tabs[1].slots[1].count, 8)
     T.assertTrue(detail.tabs[1].slots[2].empty)
     event(frame, "BANKFRAME_CLOSED")
+    local bank = saved.characters["Alice-Silvermoon"].tabs[6]
     event(frame, "BAG_UPDATE_DELAYED")
-    T.assertEqual(counts(), reads)
+    T.assertTrue(counts() > reads)
+    T.assertEqual(saved.characters["Alice-Silvermoon"].tabs[6], bank)
+    local inventory = assert(saved.characters["Alice-Silvermoon"].inventory)
+    T.assertEqual(inventory.bags[0].slots[1].count, 8)
+    T.assertEqual(inventory.status, "cached")
+    T.assertNil(inventory.bags[6])
+    local reloaded, reloadFrame = fixture(saved)
+    reloadFrame.scripts.OnEvent(reloadFrame, "ADDON_LOADED", "The Guild Book Bank")
+    T.assertEqual(reloaded.TheGuildBookBankDB.characters["Alice-Silvermoon"].inventory, inventory)
+end)
+
+T.test("companion login routes carried inventory capture without opening a bank", function()
+    local api, frame = fixture(nil)
+    local event = frame.scripts.OnEvent
+    event(frame, "ADDON_LOADED", "The Guild Book Bank")
+    event(frame, "PLAYER_LOGIN")
+    local record = assert(api.TheGuildBookBankDB.characters["Alice-Silvermoon"])
+    T.assertNotNil(record.inventory)
+    T.assertNil(next(record.tabs))
+    T.assertNil(record.capturedAt)
 end)
 
 T.test("main installs OnUpdate only for pending work and batches bank event bursts", function()
@@ -97,7 +117,7 @@ T.test("main installs OnUpdate only for pending work and batches bank event burs
     T.assertEqual(counts(), readsBefore)
     local update = assert(frame.scripts.OnUpdate, "pending work did not install OnUpdate")
     update(frame, 0)
-    T.assertEqual(counts(), readsBefore + 2)
+    T.assertEqual(counts(), readsBefore + 12)
     T.assertEqual(select(2, counts()), changesBefore + 1)
     T.assertNil(frame.scripts.OnUpdate)
 end)

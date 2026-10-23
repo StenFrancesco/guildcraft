@@ -1,6 +1,6 @@
 ## Interface: 120000, 16001
 ## Title: The Guild Book Bank
-## Notes: Local, last-known character and guild bank snapshots
+## Notes: Local, last-known carried inventory, character and guild bank snapshots
 ## Author: The Guild Book contributors
 ## Version: 1.0.0
 ## SavedVariables: TheGuildBookBankDB

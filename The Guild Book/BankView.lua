@@ -106,6 +106,11 @@ local function identityFromGGMRecord(record, key)
     end
 end
 
+local function inventoryOnlyRecord(record)
+    return type(record) == "table" and type(record.inventory) == "table"
+        and type(record.tabs) == "table" and next(record.tabs) == nil
+end
+
 local function characterEntries(db, bankDB)
     local byKey = {}
     if type(db) == "table" and db.schemaVersion == GGM.SCHEMA_VERSION and type(db.characters) == "table" then
@@ -118,10 +123,15 @@ local function characterEntries(db, bankDB)
         for key, record in pairs(bankDB.characters) do
             local identity = identityFromGGMRecord(record, key)
             if identity then
-                local entry = byKey[key] or { key = key, identity = identity }
-                entry.identity = entry.identity or identity
-                entry.record = validRecord(record, key) and record or nil
-                byKey[key] = entry
+                local entry = byKey[key]
+                if inventoryOnlyRecord(record) then
+                    if entry then entry.record = nil end
+                else
+                    entry = entry or { key = key, identity = identity }
+                    entry.identity = entry.identity or identity
+                    entry.record = validRecord(record, key) and record or nil
+                    byKey[key] = entry
+                end
             end
         end
     end

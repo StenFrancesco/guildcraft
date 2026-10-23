@@ -8,7 +8,7 @@ The Guild Book is a World of Warcraft addon suite for browsing saved guild profe
 | --- | --- | --- |
 | `The Guild Book` | `TheGuildBookDB` | Main addon and `/ggm` browser. Stores professions, the recipe index, and profession character metadata. |
 | `The Guild Book gear` | `TheGuildBookGearDB` | Captures and synchronizes gear, and owns the gear backend used by the main addon's browser. |
-| `The Guild Book Bank` | `TheGuildBookBankDB` | Stores last-known personal and guild bank snapshots. |
+| `The Guild Book Bank` | `TheGuildBookBankDB` | Stores last-known carried inventory, personal bank and guild bank snapshots. |
 
 Install matching versions of all three folders. `The Guild Book gear` runs gear capture and synchronization independently, but the main addon uses it to show the gear browser. The profession and bank features remain available if the gear companion is missing or disabled.
 
@@ -126,6 +126,24 @@ an additive
 `materialTracking` field of `TheGuildBookDB`; sharing protocols are unchanged.
 
 ## Data and synchronization
+
+The Bank companion also saves each character's backpack and equipped bags,
+including the reagent bag on clients that support it. Capture runs on login,
+entering the world and after bag updates, without opening a bank or changing the
+UI. Log into each character to refresh its last-known inventory; offline
+characters retain their previous snapshot. WoW writes the SavedVariables file
+when you log out or reload.
+
+Carried items are stored in
+`TheGuildBookBankDB.characters["Name-Realm"].inventory.bags[bagID].slots[slotID]`.
+Bag 0 is the backpack. Each item stores `itemID`, `count`, and the available
+`itemLink` and `icon`; empty slots have no item entry. Each bag records `numSlots`,
+`capturedAt` and `status`, and `inventory` has its own `capturedAt` and `status`.
+Unequipped bags have zero slots. Failed or protected reads preserve the previous
+snapshot and mark its inventory status `incomplete`; combat-blocked captures retry
+after combat. Before the first successful capture, `inventory` can be absent.
+Existing bank records and schema version 1 remain compatible. Inventory is saved
+locally and is not added to the bank browser or synchronization messages.
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
 - Profession browsing and sharing support Alchemy, Blacksmithing, Cooking, Enchanting, Engineering, First Aid, Fishing, Leatherworking, and Tailoring. First Aid is mainly relevant to the legacy client. Profession sharing uses protocol P5 (`GC_PROF5`); participating clients need compatible versions.

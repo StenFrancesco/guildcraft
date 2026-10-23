@@ -391,7 +391,7 @@ local function capturePersonalTab(api, descriptor)
     if not slotsOk then
         return nil, numSlots
     end
-    if not isInteger(numSlots, 1, MAX_PERSONAL_SLOTS) then
+    if not isInteger(numSlots, descriptor.allowEmpty and 0 or 1, MAX_PERSONAL_SLOTS) then
         return nil, "container-slot-count-invalid"
     end
 
@@ -452,6 +452,62 @@ local function capturePersonalTab(api, descriptor)
         status = "cached",
         slots = slots,
     }, nil
+end
+
+-- Carried inventory is independent of the bank's tabs, status and capture time.
+local function captureInventory(controller)
+    local api = controller.api
+    local function failed(err)
+        local identity = controller.lastInventoryIdentity
+        local record = identity and rawget(controller.database.characters, identity.key)
+        if type(record) == "table" and type(record.inventory) == "table" then
+            if setIncomplete(record.inventory) then notifyChanged(controller) end
+        end
+        return false, err
+    end
+
+    local identity, identityErr = getPlayerIdentity(api)
+    if not identity then return failed(identityErr) end
+    controller.lastInventoryIdentity = identity
+    local outOfCombat, combatErr = combatState(api)
+    if outOfCombat ~= true then
+        controller.inventoryPending = true
+        return failed(combatErr)
+    end
+
+    -- The total includes the reagent bag on clients that support it. On legacy
+    -- clients container 5 can be a bank bag, so only use their normal bag range.
+    local lastBag = rawget(api, "NUM_TOTAL_EQUIPPED_BAG_SLOTS")
+    local readable, readErr = safeValue(api, lastBag)
+    if not readable then return failed(readErr) end
+    if lastBag == nil then
+        lastBag = rawget(api, "NUM_BAG_SLOTS")
+        readable, readErr = safeValue(api, lastBag)
+        if not readable then return failed(readErr) end
+        if lastBag == nil then lastBag = 4 end
+    end
+    if not isInteger(lastBag, 0, 5) then return failed("inventory-bag-range-invalid") end
+
+    local bags = {}
+    for bagID = 0, lastBag do
+        local bag, err = capturePersonalTab(api, {
+            id = bagID,
+            name = bagID == 0 and "Backpack" or ("Bag " .. tostring(bagID)),
+            allowEmpty = bagID ~= 0,
+        })
+        if not bag then return failed(err) end
+        bags[bagID] = bag
+    end
+    local record, _, recordErr = ensureRecord(controller.database, "characters", identity)
+    if not record then return false, recordErr end
+    record.inventory = {
+        status = "cached",
+        capturedAt = bags[0].capturedAt,
+        bags = bags,
+    }
+    controller.inventoryPending = false
+    notifyChanged(controller)
+    return true, nil
 end
 
 local function validatePersonalTabData(api, tabData)
@@ -917,6 +973,7 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
         requestFlush = requestFlush,
         personalOpen = false,
         guildOpen = false,
+        inventoryPending = false,
         personalPending = false,
         guildMetadataPending = false,
         guildReadinessDeferred = false,
@@ -928,6 +985,15 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
         self.batching = true
         cancelQueue(self, "personal")
         cancelQueue(self, "guild")
+        if self.inventoryPending then
+            local identity = self.lastInventoryIdentity
+            local record = identity and rawget(self.database.characters, identity.key)
+            if type(record) == "table" and type(record.inventory) == "table"
+                and setIncomplete(record.inventory) then
+                notifyChanged(self)
+            end
+            self.inventoryPending = false
+        end
         self.personalOpen, self.guildOpen = false, false
         self.personalPending, self.guildMetadataPending, self.guildReadinessDeferred = false, false, false
         self.batching = false
@@ -941,6 +1007,7 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
         self.batching = true
         local personal, guild = self.personalQueue, self.guildQueue
         self.personalQueue, self.guildQueue = nil, nil
+        if self.inventoryPending then captureInventory(self) end
         local function validSession(queue, identity)
             return queue.database == self.database and validIdentity(queue.identity)
                 and identity and queue.identity.key == identity.key
@@ -972,22 +1039,44 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
     end
 
     function controller:HandleEvent(event, ...)
+        if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+            return captureInventory(self)
+        end
         if event == "BANKFRAME_OPENED" then
+            self.batching = true
             cancelQueue(self, "personal")
             self.personalOpen = true
             self.personalPending = false
-            return capturePersonal(self)
+            local ok, err = capturePersonal(self)
+            if self.inventoryPending then captureInventory(self) end
+            self.batching = false
+            if self.batchChanged then
+                self.batchChanged = false
+                notifyChanged(self)
+            end
+            return ok, err
         end
         if event == "BANKFRAME_CLOSED" then
+            self.batching = true
             cancelQueue(self, "personal")
             self.personalOpen = false
             self.personalPending = false
             self.personalContainerIDs = {}
+            if self.inventoryPending then captureInventory(self) end
+            self.batching = false
+            if self.batchChanged then
+                self.batchChanged = false
+                notifyChanged(self)
+            end
             return true, nil
         end
 
         if event == "PLAYER_REGEN_ENABLED" then
             local changed = false
+            if self.inventoryPending then
+                local ok = captureInventory(self)
+                if ok then changed = true end
+            end
             if self.personalPending then
                 self.personalPending = false
                 if self.personalOpen then
@@ -1004,7 +1093,20 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
             return changed, nil
         end
 
-        if event == "PLAYERBANKSLOTS_CHANGED" or event == "BAG_UPDATE_DELAYED" then
+        if event == "BAG_UPDATE_DELAYED" then
+            if self.personalOpen then
+                local queued, queueErr = queueCapture(self, "personal")
+                if queued then
+                    self.inventoryPending = true
+                    return true, nil
+                end
+                local inventoryOk, inventoryErr = captureInventory(self)
+                if not inventoryOk then return false, inventoryErr or queueErr end
+                return false, queueErr
+            end
+            return captureInventory(self)
+        end
+        if event == "PLAYERBANKSLOTS_CHANGED" then
             if self.personalOpen then return queueCapture(self, "personal") end
             return false, "personal-bank-closed"
         end
