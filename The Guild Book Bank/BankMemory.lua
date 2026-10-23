@@ -1060,16 +1060,18 @@ local function validateGuildSnapshot(api, tabID, snapshot, descriptor, requireOb
     local countOk, numSlots, countErr = safeField(api, snapshot, "numSlots")
     local timeOk, capturedAt, timeErr = safeField(api, snapshot, "capturedAt")
     local statusOk, status, statusErr = safeField(api, snapshot, "status")
-    local observedOk, observedSlotCount, observedErr = safeField(api, snapshot, "observedSlotCount")
     if not idOk then return nil, idErr end
     if not nameOk then return nil, nameErr end
     if not slotsOk then return nil, slotsErr end
     if not countOk then return nil, countErr end
     if not timeOk then return nil, timeErr end
     if not statusOk then return nil, statusErr end
-    if not observedOk then return nil, observedErr end
-    if requireObservedSlotCount and observedSlotCount ~= GUILD_TAB_SLOTS then
-        return nil, "snapshot-slot-count-incomplete"
+    if requireObservedSlotCount then
+        local observedOk, observedSlotCount, observedErr = safeField(api, snapshot, "observedSlotCount")
+        if not observedOk then return nil, observedErr end
+        if observedSlotCount ~= GUILD_TAB_SLOTS then
+            return nil, "snapshot-slot-count-incomplete"
+        end
     end
     if id ~= tabID or name ~= descriptor.name or numSlots ~= GUILD_TAB_SLOTS
         or status ~= "cached" or not isInteger(capturedAt, 0, 9007199254740991)
