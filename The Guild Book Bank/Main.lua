@@ -3,6 +3,7 @@ local addon = _G
 
 local frame = CreateFrame("Frame")
 local controller
+local flushGeneration = 0
 
 local events = {
     "ADDON_LOADED",
@@ -47,6 +48,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
             return
         end
 
+        if controller then
+            flushGeneration = flushGeneration + 1
+            frame:SetScript("OnUpdate", nil)
+            controller:CancelPending()
+            controller = nil
+        end
         local database, err = BankMemory.InitializeDatabase(addon.TheGuildBookBankDB)
         if not database then
             addon.DysbankMemoryError = err
@@ -59,7 +66,17 @@ frame:SetScript("OnEvent", function(_, event, ...)
         local newController, controllerErr = BankMemory.CreateController(
             addon,
             database,
-            notifyMainAddon
+            notifyMainAddon,
+            function()
+                flushGeneration = flushGeneration + 1
+                local generation, owner = flushGeneration, controller
+                frame:SetScript("OnUpdate", function()
+                    if generation ~= flushGeneration or owner ~= controller then return end
+                    flushGeneration = flushGeneration + 1
+                    frame:SetScript("OnUpdate", nil)
+                    owner:FlushPending()
+                end)
+            end
         )
         if not newController then
             addon.DysbankMemoryError = controllerErr
@@ -74,5 +91,9 @@ frame:SetScript("OnEvent", function(_, event, ...)
 
     if controller then
         controller:HandleEvent(event, ...)
+        if not controller.personalQueue and not controller.guildQueue then
+            flushGeneration = flushGeneration + 1
+            frame:SetScript("OnUpdate", nil)
+        end
     end
 end)

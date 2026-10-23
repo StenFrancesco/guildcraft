@@ -244,6 +244,10 @@ local function recordForFailure(controller, bucketName, identity)
 end
 
 local function notifyChanged(controller)
+    if controller.batching then
+        controller.batchChanged = true
+        return
+    end
     if type(controller.onChanged) == "function" then
         pcall(controller.onChanged)
     end
@@ -257,11 +261,11 @@ local function markCaptureFailure(controller, bucketName, identity, err)
     return false, err
 end
 
-local function markKnownRecordIncomplete(controller, bucketName, identity)
+local function markKnownRecordIncomplete(controller, bucketName, identity, database)
     if not validIdentity(identity) then
         return false
     end
-    local bucket = controller.database[bucketName]
+    local bucket = (database or controller.database)[bucketName]
     if type(bucket) ~= "table" then
         return false
     end
@@ -530,7 +534,7 @@ local function failPersonalRecord(controller, identity, err)
     return markCaptureFailure(controller, "characters", identity, err)
 end
 
-local function capturePersonal(controller)
+local function capturePersonal(controller, dirtyIDs)
     local api = controller.api
     local outOfCombat, combatErr = combatState(api)
     if outOfCombat ~= true then
@@ -590,11 +594,13 @@ local function capturePersonal(controller)
     local failures = {}
     for _, descriptor in ipairs(descriptors) do
         controller.personalContainerIDs[descriptor.id] = true
-        local tab, tabErr = capturePersonalTab(api, descriptor)
-        if tab then
-            captured[#captured + 1] = tab
-        else
-            failures[#failures + 1] = { id = descriptor.id, name = descriptor.name, err = tabErr }
+        if not dirtyIDs or dirtyIDs[descriptor.id] then
+            local tab, tabErr = capturePersonalTab(api, descriptor)
+            if tab then
+                captured[#captured + 1] = tab
+            else
+                failures[#failures + 1] = { id = descriptor.id, name = descriptor.name, err = tabErr }
+            end
         end
     end
 
@@ -782,7 +788,7 @@ local function captureGuildTab(api, tabID, descriptor)
     }, nil
 end
 
-local function captureGuildReady(controller)
+local function captureGuildReady(controller, readyTab)
     local api = controller.api
     if not controller.guildOpen then
         return false, "guild-bank-closed"
@@ -795,11 +801,6 @@ local function captureGuildReady(controller)
         end
         markKnownRecordIncomplete(controller, "guilds", controller.lastGuildIdentity)
         return false, combatErr
-    end
-
-    local metadataOk, metadataErr = refreshGuildMetadata(controller)
-    if not metadataOk then
-        return false, metadataErr
     end
 
     local identity, identityErr = getGuildIdentity(api)
@@ -818,6 +819,8 @@ local function captureGuildReady(controller)
         if changed then notifyChanged(controller) end
         return false, currentTab
     end
+    -- Readiness belongs to the selected tab at event time, never a later selection.
+    if readyTab ~= currentTab then return false, "guild-ready-tab-changed" end
     local metadata = controller.guildMetadata
     local descriptor = metadata and metadata.tabs[currentTab]
     if not isInteger(currentTab, 1, metadata and metadata.count or 0) or not descriptor then
@@ -859,7 +862,46 @@ local function captureGuildReady(controller)
     return true, nil
 end
 
-function BankMemory.CreateController(api, database, onChanged)
+-- Pending work belongs to this controller and open session, outside SavedVariables.
+local function cancelQueue(controller, kind)
+    local queue = controller[kind .. "Queue"]
+    controller[kind .. "Queue"] = nil
+    if queue then
+        markKnownRecordIncomplete(controller, kind == "personal" and "characters" or "guilds", queue.identity, queue.database)
+    end
+end
+
+local function queueCapture(controller, kind, id)
+    local bucket = kind == "personal" and "characters" or "guilds"
+    local identity = kind == "personal" and controller.lastPersonalIdentity or controller.lastGuildIdentity
+    local outOfCombat, err = combatState(controller.api)
+    if outOfCombat ~= true then
+        if kind == "personal" then controller.personalPending = true
+        else controller.guildReadinessDeferred = true end
+        cancelQueue(controller, kind)
+        markKnownRecordIncomplete(controller, bucket, identity)
+        return false, err
+    end
+    if not validIdentity(identity) then
+        if kind == "personal" then identity = getPlayerIdentity(controller.api)
+        else identity = getGuildIdentity(controller.api) end
+    end
+    local key = kind .. "Queue"
+    local queue = controller[key]
+    if not queue then
+        queue = { ids = {}, identity = identity, database = controller.database }
+        controller[key] = queue
+    end
+    if kind == "personal" then
+        if id == nil then queue.full = true else queue.ids[id] = true end
+    elseif id then
+        queue.ids[id] = true
+    end
+    if type(controller.requestFlush) == "function" then controller.requestFlush() end
+    return true, nil
+end
+
+function BankMemory.CreateController(api, database, onChanged, requestFlush)
     if type(api) ~= "table" then
         return nil, "api-invalid"
     end
@@ -872,6 +914,7 @@ function BankMemory.CreateController(api, database, onChanged)
         api = api,
         database = database,
         onChanged = onChanged,
+        requestFlush = requestFlush,
         personalOpen = false,
         guildOpen = false,
         personalPending = false,
@@ -881,13 +924,62 @@ function BankMemory.CreateController(api, database, onChanged)
         guildMetadata = nil,
     }
 
+    function controller:CancelPending()
+        self.batching = true
+        cancelQueue(self, "personal")
+        cancelQueue(self, "guild")
+        self.personalOpen, self.guildOpen = false, false
+        self.personalPending, self.guildMetadataPending, self.guildReadinessDeferred = false, false, false
+        self.batching = false
+        if self.batchChanged then
+            self.batchChanged = false
+            notifyChanged(self)
+        end
+    end
+
+    function controller:FlushPending()
+        self.batching = true
+        local personal, guild = self.personalQueue, self.guildQueue
+        self.personalQueue, self.guildQueue = nil, nil
+        local function validSession(queue, identity)
+            return queue.database == self.database and validIdentity(queue.identity)
+                and identity and queue.identity.key == identity.key
+        end
+        if personal and self.personalOpen then
+            local identity = getPlayerIdentity(self.api)
+            if validSession(personal, identity) then
+                capturePersonal(self, not personal.full and personal.ids or nil)
+            else
+                markKnownRecordIncomplete(self, "characters", personal.identity, personal.database)
+            end
+        end
+        if guild and self.guildOpen then
+            local identity = getGuildIdentity(self.api)
+            if validSession(guild, identity) then
+                local ok = refreshGuildMetadata(self)
+                if ok then
+                    for tabID in pairs(guild.ids) do captureGuildReady(self, tabID) end
+                end
+            else
+                markKnownRecordIncomplete(self, "guilds", guild.identity, guild.database)
+            end
+        end
+        self.batching = false
+        if self.batchChanged then
+            self.batchChanged = false
+            notifyChanged(self)
+        end
+    end
+
     function controller:HandleEvent(event, ...)
         if event == "BANKFRAME_OPENED" then
+            cancelQueue(self, "personal")
             self.personalOpen = true
             self.personalPending = false
             return capturePersonal(self)
         end
         if event == "BANKFRAME_CLOSED" then
+            cancelQueue(self, "personal")
             self.personalOpen = false
             self.personalPending = false
             self.personalContainerIDs = {}
@@ -899,21 +991,21 @@ function BankMemory.CreateController(api, database, onChanged)
             if self.personalPending then
                 self.personalPending = false
                 if self.personalOpen then
-                    local ok = capturePersonal(self)
+                    local ok = queueCapture(self, "personal")
                     if ok then changed = true end
                 end
             end
             if self.guildOpen and (self.guildMetadataPending or self.guildReadinessDeferred) then
                 self.guildMetadataPending = false
                 self.guildReadinessDeferred = false
-                local ok = refreshGuildMetadata(self)
+                local ok = queueCapture(self, "guild")
                 if ok then changed = true end
             end
             return changed, nil
         end
 
         if event == "PLAYERBANKSLOTS_CHANGED" or event == "BAG_UPDATE_DELAYED" then
-            if self.personalOpen then return capturePersonal(self) end
+            if self.personalOpen then return queueCapture(self, "personal") end
             return false, "personal-bank-closed"
         end
         if event == "BAG_UPDATE" then
@@ -921,7 +1013,8 @@ function BankMemory.CreateController(api, database, onChanged)
             local containerID = ...
             local idOk = safeValue(self.api, containerID)
             if not idOk then return false, "container-id-invalid" end
-            if self.personalContainerIDs[containerID] then return capturePersonal(self) end
+            if not isInteger(containerID, 1, MAX_PERSONAL_SLOTS) then return false, "container-id-invalid" end
+            if self.personalContainerIDs[containerID] then return queueCapture(self, "personal", containerID) end
             return false, "unrelated-container-update"
         end
         if event == "BANK_TABS_CHANGED" or event == "BANK_TAB_SETTINGS_UPDATED" then
@@ -932,15 +1025,17 @@ function BankMemory.CreateController(api, database, onChanged)
             if not bankTypeOk or characterBankType == nil or bankType ~= characterBankType then
                 return false, "unrelated-bank-update"
             end
-            return capturePersonal(self)
+            return queueCapture(self, "personal")
         end
 
         if event == "GUILDBANKFRAME_OPENED" then
+            cancelQueue(self, "guild")
             self.guildOpen = true
             self.guildReadinessDeferred = false
             return refreshGuildMetadata(self)
         end
         if event == "GUILDBANKFRAME_CLOSED" then
+            cancelQueue(self, "guild")
             self.guildOpen = false
             self.guildMetadataPending = false
             self.guildReadinessDeferred = false
@@ -948,12 +1043,19 @@ function BankMemory.CreateController(api, database, onChanged)
             return true, nil
         end
         if event == "GUILDBANK_UPDATE_TABS" then
-            if self.guildOpen then return refreshGuildMetadata(self) end
+            if self.guildOpen then return queueCapture(self, "guild") end
             return false, "guild-bank-closed"
         end
         if event == "GUILDBANKBAGSLOTS_CHANGED" then
             if not self.guildOpen then return false, "guild-bank-closed" end
-            return captureGuildReady(self)
+            local outOfCombat = combatState(self.api)
+            if outOfCombat ~= true then return queueCapture(self, "guild") end
+            local ok, tabID = safeCall(self.api, self.api.GetCurrentGuildBankTab, 1)
+            if not ok or not isInteger(tabID, 1, MAX_GUILD_TABS) then
+                markKnownRecordIncomplete(self, "guilds", self.lastGuildIdentity)
+                return false, "guild-current-tab-invalid"
+            end
+            return queueCapture(self, "guild", tabID)
         end
 
         return false, "event-unhandled"

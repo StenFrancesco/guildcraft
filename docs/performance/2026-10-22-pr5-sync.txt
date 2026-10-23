@@ -1,0 +1,36 @@
+Lua: Lua 5.1; five samples, median CPU; setup/prewarm/forced GC excluded
+10x500 baseline cold digest: 8.000 ms; hashes=10 captures=10 records=10 frames=0 bytes=0 codec=0.000 ms
+10x500 baseline cold manifest+digest: 16.000 ms; hashes=20 captures=20 records=20 frames=0 bytes=0 codec=0.000 ms
+10x500 baseline warm digest: 8.000 ms; hashes=10 captures=10 records=10 frames=0 bytes=0 codec=0.000 ms
+10x500 baseline warm manifest+digest: 16.000 ms; hashes=20 captures=20 records=20 frames=0 bytes=0 codec=0.000 ms
+10x500 cached cold digest: 7.000 ms; hashes=10 captures=10 records=10 frames=0 bytes=0 codec=0.000 ms
+10x500 cached cold manifest+digest: 8.000 ms; hashes=10 captures=10 records=10 frames=0 bytes=0 codec=0.000 ms
+10x500 cached warm digest: 2.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
+10x500 cached warm manifest+digest: 4.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
+50x1000 baseline cold digest: 81.000 ms; hashes=50 captures=50 records=50 frames=0 bytes=0 codec=0.000 ms
+50x1000 baseline cold manifest+digest: 163.000 ms; hashes=100 captures=100 records=100 frames=0 bytes=0 codec=0.000 ms
+50x1000 baseline warm digest: 81.000 ms; hashes=50 captures=50 records=50 frames=0 bytes=0 codec=0.000 ms
+50x1000 baseline warm manifest+digest: 170.000 ms; hashes=100 captures=100 records=100 frames=0 bytes=0 codec=0.000 ms
+50x1000 cached cold digest: 70.000 ms; hashes=50 captures=50 records=50 frames=0 bytes=0 codec=0.000 ms
+50x1000 cached cold manifest+digest: 88.000 ms; hashes=50 captures=50 records=50 frames=0 bytes=0 codec=0.000 ms
+50x1000 cached warm digest: 19.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
+50x1000 cached warm manifest+digest: 40.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
+100x2000 baseline cold digest: 440.000 ms; hashes=100 captures=100 records=100 frames=0 bytes=0 codec=0.000 ms
+100x2000 baseline cold manifest+digest: 772.000 ms; hashes=200 captures=200 records=200 frames=0 bytes=0 codec=0.000 ms
+100x2000 baseline warm digest: 383.000 ms; hashes=100 captures=100 records=100 frames=0 bytes=0 codec=0.000 ms
+100x2000 baseline warm manifest+digest: 721.000 ms; hashes=200 captures=200 records=200 frames=0 bytes=0 codec=0.000 ms
+100x2000 cached cold digest: 265.000 ms; hashes=100 captures=100 records=100 frames=0 bytes=0 codec=0.000 ms
+100x2000 cached cold manifest+digest: 336.000 ms; hashes=100 captures=100 records=100 frames=0 bytes=0 codec=0.000 ms
+100x2000 cached warm digest: 69.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
+100x2000 cached warm manifest+digest: 136.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
+sync baseline cold equal-10x500: 55.000 ms; hashes=70 captures=70 records=70 frames=3 bytes=187 codec=0.000 ms
+sync baseline cold record-2000: 53.000 ms; hashes=10 captures=12 records=8 frames=48 bytes=10165 codec=11.000 ms
+sync baseline warm equal-10x500: 54.000 ms; hashes=70 captures=70 records=70 frames=3 bytes=187 codec=0.000 ms
+sync baseline warm record-2000: 55.000 ms; hashes=10 captures=12 records=8 frames=48 bytes=10165 codec=12.000 ms
+sync cached cold equal-10x500: 19.000 ms; hashes=20 captures=20 records=20 frames=3 bytes=187 codec=0.000 ms
+sync cached cold record-2000: 39.000 ms; hashes=5 captures=7 records=3 frames=48 bytes=10165 codec=12.000 ms
+sync cached warm equal-10x500: 12.000 ms; hashes=0 captures=0 records=0 frames=3 bytes=187 codec=0.000 ms
+sync cached warm record-2000: 37.000 ms; hashes=4 captures=6 records=2 frames=48 bytes=10165 codec=12.000 ms
+codec payload: 37026 plain bytes -> 363 wire bytes
+codec encode: 3.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
+codec decode: 0.000 ms; hashes=0 captures=0 records=0 frames=0 bytes=0 codec=0.000 ms
