@@ -1106,7 +1106,7 @@ local function validateGuildSnapshot(api, tabID, snapshot, descriptor, requireOb
         if not itemCountOk then return nil, itemCountErr end
         if not iconOk then return nil, iconErr end
         if not isInteger(itemID, 1, 9007199254740991)
-            or type(itemLink) ~= "string" or parseItemID(itemLink) ~= itemID
+            or (itemLink ~= nil and (type(itemLink) ~= "string" or parseItemID(itemLink) ~= itemID))
             or not isInteger(itemCount, 1, 9007199254740991) then
             return nil, "snapshot-item-invalid"
         end

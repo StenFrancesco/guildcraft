@@ -3,6 +3,12 @@ local _, GGM = ...
 local P = { VERSION = 1, PREFIX = "GC_BANK1", MAX_FIELD = 4096, MAX_SNAPSHOT = 40000 }
 local function int(v, lo, hi) return type(v) == "number" and v == math.floor(v) and v >= lo and v <= hi end
 local function str(v, max) return type(v) == "string" and #v > 0 and #v <= max and not v:find("[%z\1-\31\127]") end
+local function validLink(link, itemID)
+    if link == nil then return true end
+    if not str(link, 1024) then return false end
+    local linkedID = link:match("item:(%d+)")
+    return linkedID ~= nil and tonumber(linkedID) == itemID
+end
 local function fields(values, maxField)
     local out = {}
     for i, v in ipairs(values) do
@@ -37,7 +43,7 @@ function P.Encode(kind, values)
         elseif #values~=schemas[kind] then return nil,"bank-sync-message-invalid" end
         local raw=packet(kind, values)
         local channel=(kind=="M" or kind=="E") and "GUILD" or "WHISPER"
-        if not raw or not P.Decode(raw,channel) then return nil,"bank-sync-message-invalid" end
+        if not raw or (kind=="M" and #raw>255) or not P.Decode(raw,channel) then return nil,"bank-sync-message-invalid" end
         return raw
     end
     if #values~=7 then return nil,"bank-sync-message-invalid" end
@@ -50,12 +56,12 @@ function P.Encode(kind, values)
     local ids, n = {}, 0
     for id, slot in pairs(snap.slots) do
         if not int(id, 1, 98) or type(slot) ~= "table" or not int(slot.itemID, 1, 9007199254740991)
-            or not int(slot.count, 1, 9007199254740991) or not str(slot.itemLink, 1024) then return nil, "bank-sync-slot-invalid" end
+            or not int(slot.count, 1, 9007199254740991) or not validLink(slot.itemLink, slot.itemID) then return nil, "bank-sync-slot-invalid" end
         n = n + 1; ids[n] = id
     end
     table.sort(ids)
     local vals = { "98", tostring(snap.id), snap.name, "98", tostring(snap.capturedAt), "cached", tostring(n) }
-    for _, id in ipairs(ids) do local slot = snap.slots[id]; vals[#vals+1]=tostring(id); vals[#vals+1]=tostring(slot.itemID); vals[#vals+1]=tostring(slot.count); vals[#vals+1]=slot.itemLink end
+    for _, id in ipairs(ids) do local slot = snap.slots[id]; vals[#vals+1]=tostring(id); vals[#vals+1]=tostring(slot.itemID); vals[#vals+1]=tostring(slot.count); vals[#vals+1]=slot.itemLink or "" end
     local body = fields(vals, P.MAX_SNAPSHOT); if not body then return nil, "bank-sync-snapshot-invalid" end
     h[#h + 1] = body
     local encoded = fields(h, P.MAX_SNAPSHOT)
@@ -74,7 +80,12 @@ function P.Decode(raw, channel)
         local all = parseFields(h[9], 7 + count * 4); if not all then return nil, "bank-sync-snapshot-invalid" end
         local snapshot = { observedSlotCount=tonumber(all[1]), id=tonumber(all[2]), name=all[3], numSlots=tonumber(all[4]), capturedAt=tonumber(all[5]), status=all[6], slots={} }
         local last=0
-        for i=1,count do local j=8+(i-1)*4; local id,item,cnt=tonumber(all[j]),tonumber(all[j+1]),tonumber(all[j+2]); if not int(id,1,98) or id<=last or not int(item,1,9007199254740991) or not int(cnt,1,9007199254740991) or not str(all[j+3],1024) then return nil,"bank-sync-slot-invalid" end; last=id; snapshot.slots[id]={itemID=item,count=cnt,itemLink=all[j+3]} end
+        for i=1,count do
+            local j=8+(i-1)*4; local id,item,cnt=tonumber(all[j]),tonumber(all[j+1]),tonumber(all[j+2])
+            local link=all[j+3]~="" and all[j+3] or nil
+            if not int(id,1,98) or id<=last or not int(item,1,9007199254740991) or not int(cnt,1,9007199254740991) or not validLink(link,item) then return nil,"bank-sync-slot-invalid" end
+            last=id; snapshot.slots[id]={itemID=item,count=cnt,itemLink=link}
+        end
         if snapshot.observedSlotCount~=98 or snapshot.numSlots~=98 or not int(snapshot.id,1,8) or not int(snapshot.capturedAt,0,9007199254740991) or snapshot.status~="cached" or not str(snapshot.name,128) then return nil,"bank-sync-snapshot-invalid" end
         if not str(h[3],80) or not str(h[4],160) or not str(h[5],64) or not str(h[6],64)
             or not str(h[7],32) or not int(tonumber(h[8]),1,8) or snapshot.id~=tonumber(h[8]) then return nil,"bank-sync-request-invalid" end
@@ -103,7 +114,7 @@ function P.Digest(tabID, snapshot)
     if not int(tabID,1,8) or type(snapshot)~="table" then return nil end
     local ids={}; for id in pairs(snapshot.slots or {}) do ids[#ids+1]=id end; table.sort(ids)
     local s={"B1|",tostring(tabID),"|",tostring(snapshot.capturedAt),"|"}
-    for _,id in ipairs(ids) do local x=snapshot.slots[id]; s[#s+1]=table.concat({id,"|",x.itemID,"|",x.count,"|",#x.itemLink,":",x.itemLink,";"}) end
+    for _,id in ipairs(ids) do local x=snapshot.slots[id]; local link=x.itemLink or ""; s[#s+1]=table.concat({id,"|",x.itemID,"|",x.count,"|",#link,":",link,";"}) end
     local text=table.concat(s); local a,b=5381,17; for i=1,#text do local c=text:byte(i); a=(a*33+c)%2147483647; b=(b*65599+c)%2147483647 end
     return string.format("%08x%08x",a,b)
 end
@@ -116,7 +127,7 @@ function P.BuildManifest(sender,guild,token,tabs)
     for page=1,total do
         local values={sender,guild,token,tostring(page),tostring(total)}
         for i=(page-1)*3+1,math.min(page*3,#rows) do local r=rows[i]; values[#values+1]=tostring(r.id); values[#values+1]=r.row.noComplete and "-" or tostring(r.row.capturedAt); values[#values+1]=r.row.noComplete and "-" or tostring(r.row.digest) end
-        local msg=packet("M",values); if not msg or #msg>255 then return nil,"bank-sync-manifest-page-too-large" end; pages[page]=msg
+        local msg=packet("M",values); if not msg or #msg>255 or not P.Encode("M",values) then return nil,"bank-sync-manifest-page-too-large" end; pages[page]=msg
     end
     return pages
 end

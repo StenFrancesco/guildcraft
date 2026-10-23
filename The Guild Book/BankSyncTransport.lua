@@ -161,6 +161,8 @@ function GGM.CancelBankSyncTransport(t,reason)
     t.generation=t.generation+1
     local timer=t.timer; t.timer=nil
     if type(timer)=="table" and type(timer.Cancel)=="function" then pcall(timer.Cancel,timer) end
+    -- This clears only addon-owned work. CTL cannot retract its one submitted
+    -- frame; the controller must reject any stale completed response by session/request.
     t.assemblies={}; clearAll(t,reason or "bank-sync-send-cancelled")
     return true
 end
