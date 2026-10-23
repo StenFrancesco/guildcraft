@@ -1899,6 +1899,37 @@ T.test("Guild Create rejects unavailable craft counts while Own keeps its fallba
     end
 end)
 
+T.test("Guild Create rejects invalid amounts and reports a failed craft request", function()
+    local GGM, api, browser, recipes = recipeDetailsFixture()
+    local attempts = 0
+    api.C_TradeSkillUI = {
+        OpenTradeSkill = function() return true end,
+        GetTradeSkillLine = function() return 164 end,
+        GetRecipeInfo = function(recipeID)
+            return { recipeID = recipeID, learned = true, craftable = true }
+        end,
+        GetCraftableCount = function() return 3 end,
+        CraftRecipe = function()
+            attempts = attempts + 1
+            return false
+        end,
+    }
+    api.issecretvalue = function() return false end
+    api.InCombatLockdown = function() return false end
+    GGM.SelectProfession(browser, "Blacksmithing")
+    GGM.ShowRecipeDetailsWindow(browser, recipes[1])
+    local details = browser.recipeDetailsFrame
+    details.amountInput:SetText("0")
+    T.assertFalse(details.createButton.enabled)
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(attempts, 0)
+
+    details.amountInput:SetText("1")
+    details.createButton.scripts.OnClick(details.createButton)
+    T.assertEqual(attempts, 1)
+    T.assertTrue(string.find(details.craftStatus.text, "could not be started", 1, true) ~= nil)
+end)
+
 T.test("own create remains available when Blizzard exposes craftability but not a maximum", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     browser.professionLibraryMode = "Own"
