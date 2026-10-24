@@ -13,7 +13,9 @@ SOURCE = ROOT / "tests" / "Source"
 BLP_SOURCES = {
     **{f"{name}-page": (f"{name}-page.png", (1024, 1024))
        for name in ("alchemy", "blacksmithing", "enchanting", "engineering",
-                    "leatherworking", "tailoring", "gear-journal", "recipe", "bank")},
+                    "leatherworking", "tailoring", "recipe")},
+    "gear-journal-page": ("gear-journal-page.png", (1024, 512)),
+    "bank-page": ("bank-page.png", (1024, 512)),
     "journal-window": ("journal-window-v2.png", (2048, 1024)),
 }
 

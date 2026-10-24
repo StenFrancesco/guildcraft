@@ -21,5 +21,5 @@ with ZipFile(target) as archive:
                 assert folder + "/" + line.strip() in archive.namelist()
     assert "The Guild Book/Media/ArtisanJournal/bank-page.blp" in archive.namelist()
 with Image.open(root / "The Guild Book/Media/ArtisanJournal/bank-page.blp") as image:
-    assert image.size == (1024, 1024) and image.mode == "RGB"
+    assert image.size == (1024, 512) and image.mode == "RGB"
 print(f"Verified {len(files)} files, all three manifests and bank artwork: {target}")
