@@ -6,6 +6,7 @@ local SCHEMA_VERSION = 1
 local GUILD_TAB_SLOTS = 98
 local MAX_PERSONAL_SLOTS = 200
 local MAX_GUILD_TABS = 8
+local nextGuildSessionID = 0
 
 local function safeValue(api, value)
     if type(api) ~= "table" or type(api.issecretvalue) ~= "function" then
@@ -249,14 +250,74 @@ local function recordForFailure(controller, bucketName, identity)
     return record, changed, nil
 end
 
-local function notifyChanged(controller)
+local function notifyChanged(controller, reason, tabID)
     if controller.batching then
         controller.batchChanged = true
+        local nextIsSessionTransition = reason == "guild-session-open" or reason == "guild-session-close"
+        local batchIsSessionTransition = controller.batchReason == "guild-session-open"
+            or controller.batchReason == "guild-session-close"
+        if reason and (nextIsSessionTransition or not batchIsSessionTransition) then
+            controller.batchReason = reason
+        end
+        if tabID then controller.batchTabID = tabID end
         return
     end
+    if reason == nil then reason = controller.batchReason end
+    if tabID == nil then tabID = controller.batchTabID end
+    controller.batchReason = nil
+    controller.batchTabID = nil
     if type(controller.onChanged) == "function" then
-        pcall(controller.onChanged)
+        pcall(controller.onChanged, reason, tabID)
     end
+end
+
+
+local function clearGuildSession(controller, notify)
+    local hadSession = controller.guildSessionToken ~= nil
+    controller.guildSessionToken = nil
+    controller.guildViewableTabIDs = {}
+    controller.guildMetadata = nil
+    if hadSession and notify then
+        notifyChanged(controller, "guild-session-close")
+    end
+end
+
+local function establishGuildSession(controller, identity, metadata, forceNew)
+    if controller.guildSessionGuildKey ~= identity.key then
+        clearGuildSession(controller, true)
+        controller.guildSessionGuildKey = identity.key
+        forceNew = true
+    end
+    local viewable = {}
+    for tabID, descriptor in pairs(metadata.tabs) do
+        if descriptor.viewable == true then viewable[tabID] = true end
+    end
+    if not next(viewable) then
+        clearGuildSession(controller, true)
+        controller.guildSessionEstablishPending = false
+        return false, "guild-no-viewable-tabs"
+    end
+    local currentOk, currentTab = safeCall(controller.api, controller.api.GetCurrentGuildBankTab, 1)
+    if not currentOk or not isInteger(currentTab, 1, metadata.count) or not viewable[currentTab] then
+        clearGuildSession(controller, true)
+        controller.guildSessionEstablishPending = controller.guildOpen
+        return false, currentOk and "guild-current-tab-invalid" or currentTab
+    end
+    if not controller.guildSessionToken and not controller.guildSessionEstablishPending then
+        controller.guildViewableTabIDs = {}
+        return false, "guild-session-unavailable"
+    end
+    if forceNew or not controller.guildSessionToken then
+        nextGuildSessionID = nextGuildSessionID + 1
+        controller.guildSessionToken = tostring({}) .. ":" .. tostring(nextGuildSessionID)
+        controller.guildSessionGuildKey = identity.key
+        controller.guildViewableTabIDs = viewable
+        controller.guildSessionEstablishPending = false
+        notifyChanged(controller, "guild-session-open")
+    else
+        controller.guildViewableTabIDs = viewable
+    end
+    return true, nil
 end
 
 local function markCaptureFailure(controller, bucketName, identity, err)
@@ -387,6 +448,13 @@ local function optionalIcon(api, icon)
         return nil, "icon-invalid"
     end
     return icon, nil
+end
+
+local function iconForItem(api, itemID)
+    local infoOK, fields = safeCallSelected(api, api.GetItemInfoInstant, { 5 }, itemID)
+    if not infoOK then return nil end
+    local icon = optionalIcon(api, fields[1])
+    return icon
 end
 
 local function capturePersonalTab(api, descriptor)
@@ -728,7 +796,7 @@ local function applyGuildMetadata(record, metadata)
         if old ~= nil and not validExistingTab(old, tabID) then
             return false, "existing-tab-invalid"
         end
-        local status = descriptor.viewable and "incomplete" or "unavailable"
+        local status = descriptor.viewable and (old and old.status == "cached" and "cached" or "incomplete") or "unavailable"
         if old then
             if old.name ~= descriptor.name then old.name = descriptor.name; changed = true end
             if old.numSlots ~= GUILD_TAB_SLOTS then old.numSlots = GUILD_TAB_SLOTS; changed = true end
@@ -769,7 +837,17 @@ local function refreshGuildMetadata(controller)
 
     local identity, identityErr = getGuildIdentity(api)
     if not identity then
+        clearGuildSession(controller, true)
+        if identityErr == "guild-name-unavailable" then
+            controller.guildSessionEstablishPending = false
+        elseif controller.guildOpen then
+            controller.guildSessionEstablishPending = true
+        end
         return false, identityErr
+    end
+    if controller.guildSessionGuildKey and controller.guildSessionGuildKey ~= identity.key then
+        clearGuildSession(controller, true)
+        controller.guildSessionGuildKey = identity.key
     end
     controller.lastGuildIdentity = identity
     local record, created, recordErr = ensureRecord(controller.database, "guilds", identity)
@@ -779,25 +857,33 @@ local function refreshGuildMetadata(controller)
 
     local metadata, metadataErr = readGuildMetadata(api)
     if not metadata then
+        clearGuildSession(controller, true)
+        controller.guildSessionEstablishPending = controller.guildOpen
         local changed = created or markAllTabsIncomplete(record)
-        if changed then notifyChanged(controller) end
+        if changed then notifyChanged(controller, "guild-metadata") end
         return false, metadataErr
     end
     local metadataChanged, applyErr = applyGuildMetadata(record, metadata)
     if applyErr then
+        clearGuildSession(controller, true)
+        controller.guildSessionEstablishPending = controller.guildOpen
         local changed = created or markAllTabsIncomplete(record)
-        if changed then notifyChanged(controller) end
+        if changed then notifyChanged(controller, "guild-metadata") end
         return false, applyErr
     end
 
-    controller.guildMetadata = {
+    local sessionOK, sessionErr = establishGuildSession(controller, identity, metadata, false)
+    if not sessionOK and controller.guildOpen then
+        clearGuildSession(controller, true)
+    end
+    controller.guildMetadata = sessionOK and {
         identityKey = identity.key,
         count = metadata.count,
         tabs = metadata.tabs,
-    }
+    } or nil
     local changed = created or metadataChanged
-    if changed then notifyChanged(controller) end
-    return true, nil
+    if changed then notifyChanged(controller, "guild-metadata") end
+    return sessionOK, sessionErr
 end
 
 local function parseItemID(itemLink)
@@ -922,7 +1008,7 @@ local function captureGuildReady(controller, readyTab)
     record.capturedAt = tab.capturedAt
     local changed = true
     if refreshRecordStatus(record) then changed = true end
-    if changed then notifyChanged(controller) end
+    if changed then notifyChanged(controller, "guild-capture", currentTab) end
     controller.guildReadinessDeferred = false
     return true, nil
 end
@@ -966,6 +1052,254 @@ local function queueCapture(controller, kind, id)
     return true, nil
 end
 
+
+local function copyGuildTab(tab)
+    local copy = {
+        id = tab.id,
+        name = tab.name,
+        numSlots = tab.numSlots,
+        capturedAt = tab.capturedAt,
+        status = tab.status,
+        observedSlotCount = GUILD_TAB_SLOTS,
+        slots = {},
+    }
+    for slotID, slot in pairs(tab.slots) do
+        copy.slots[slotID] = {
+            itemID = slot.itemID,
+            itemLink = slot.itemLink,
+            icon = slot.icon,
+            count = slot.count,
+        }
+    end
+    return copy
+end
+
+local function validateGuildSnapshot(api, tabID, snapshot, descriptor, requireObservedSlotCount)
+    local snapshotOk, snapshotErr = safeValue(api, snapshot)
+    if not snapshotOk or type(snapshot) ~= "table" then
+        return nil, snapshotErr or "snapshot-invalid"
+    end
+    local idOk, id, idErr = safeField(api, snapshot, "id")
+    local nameOk, name, nameErr = safeField(api, snapshot, "name")
+    local slotsOk, slots, slotsErr = safeField(api, snapshot, "slots")
+    local countOk, numSlots, countErr = safeField(api, snapshot, "numSlots")
+    local timeOk, capturedAt, timeErr = safeField(api, snapshot, "capturedAt")
+    local statusOk, status, statusErr = safeField(api, snapshot, "status")
+    if not idOk then return nil, idErr end
+    if not nameOk then return nil, nameErr end
+    if not slotsOk then return nil, slotsErr end
+    if not countOk then return nil, countErr end
+    if not timeOk then return nil, timeErr end
+    if not statusOk then return nil, statusErr end
+    if requireObservedSlotCount then
+        local observedOk, observedSlotCount, observedErr = safeField(api, snapshot, "observedSlotCount")
+        if not observedOk then return nil, observedErr end
+        if observedSlotCount ~= GUILD_TAB_SLOTS then
+            return nil, "snapshot-slot-count-incomplete"
+        end
+    end
+    if id ~= tabID or name ~= descriptor.name or numSlots ~= GUILD_TAB_SLOTS
+        or status ~= "cached" or not isInteger(capturedAt, 0, 9007199254740991)
+        or type(slots) ~= "table" then
+        return nil, "snapshot-invalid"
+    end
+
+    local clone = {
+        id = tabID,
+        name = name,
+        numSlots = GUILD_TAB_SLOTS,
+        capturedAt = capturedAt,
+        status = "cached",
+        slots = {},
+    }
+    for slotID, slot in pairs(slots) do
+        local keyOk, keyErr = safeValue(api, slotID)
+        if not keyOk then return nil, keyErr end
+        if not isInteger(slotID, 1, GUILD_TAB_SLOTS) then
+            return nil, "snapshot-slot-id-invalid"
+        end
+        local slotOk, slotErr = safeValue(api, slot)
+        if not slotOk or type(slot) ~= "table" then
+            return nil, slotErr or "snapshot-slot-invalid"
+        end
+        local itemIDOk, itemID, itemIDErr = safeField(api, slot, "itemID")
+        local linkOk, itemLink, linkErr = safeField(api, slot, "itemLink")
+        local itemCountOk, itemCount, itemCountErr = safeField(api, slot, "count")
+        local iconOk, iconValue, iconErr = safeField(api, slot, "icon")
+        if not itemIDOk then return nil, itemIDErr end
+        if not linkOk then return nil, linkErr end
+        if not itemCountOk then return nil, itemCountErr end
+        if not iconOk then return nil, iconErr end
+        if not isInteger(itemID, 1, 9007199254740991)
+            or (itemLink ~= nil and (type(itemLink) ~= "string" or parseItemID(itemLink) ~= itemID))
+            or not isInteger(itemCount, 1, 9007199254740991) then
+            return nil, "snapshot-item-invalid"
+        end
+        local safeIcon, safeIconErr = optionalIcon(api, iconValue)
+        if safeIconErr then return nil, safeIconErr end
+        if safeIcon == nil and requireObservedSlotCount then
+            safeIcon = iconForItem(api, itemID)
+        end
+        clone.slots[slotID] = {
+            itemID = itemID,
+            itemLink = itemLink,
+            icon = safeIcon,
+            count = itemCount,
+        }
+    end
+    return clone, nil
+end
+
+local function guildSyncContext(controller)
+    if not controller.guildOpen or not controller.guildSessionToken then
+        return nil, "guild-session-unavailable"
+    end
+    local refreshed, refreshErr = refreshGuildMetadata(controller)
+    if not refreshed then return nil, refreshErr end
+    if not controller.guildOpen or not controller.guildSessionToken or not controller.guildMetadata then
+        return nil, "guild-session-unavailable"
+    end
+    local viewable = {}
+    for tabID, descriptor in pairs(controller.guildMetadata.tabs) do
+        if descriptor.viewable == true then viewable[tabID] = true end
+    end
+    controller.guildViewableTabIDs = viewable
+    local publicViewable = {}
+    for tabID in pairs(viewable) do publicViewable[tabID] = true end
+    return {
+        guildKey = controller.guildMetadata.identityKey,
+        sessionToken = controller.guildSessionToken,
+        viewableTabIDs = publicViewable,
+    }, nil
+end
+
+local function getGuildSyncSnapshot(controller, tabID, sessionToken)
+    local context, contextErr = guildSyncContext(controller)
+    if not context then return nil, contextErr end
+    if sessionToken ~= context.sessionToken then return nil, "guild-session-token-mismatch" end
+    if not isInteger(tabID, 1, MAX_GUILD_TABS) or not context.viewableTabIDs[tabID] then
+        return nil, "guild-tab-not-viewable"
+    end
+    local record = rawget(controller.database.guilds, context.guildKey)
+    if type(record) ~= "table" or type(record.tabs) ~= "table" then
+        return nil, "guild-record-unavailable"
+    end
+    local tab = rawget(record.tabs, tabID)
+    local descriptor = controller.guildMetadata.tabs[tabID]
+    if not validExistingTab(tab, tabID) or tab.status ~= "cached"
+        or tab.numSlots ~= GUILD_TAB_SLOTS
+        or not isInteger(tab.capturedAt, 0, 9007199254740991)
+        or tab.name ~= descriptor.name then
+        return nil, "guild-tab-snapshot-unavailable"
+    end
+    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, tab, descriptor)
+    if not validated then return nil, validationErr end
+    return copyGuildTab(validated), nil
+end
+
+local function mergeGuildSyncSnapshot(controller, guildKey, sessionToken, tabID, snapshot)
+    local context, contextErr = guildSyncContext(controller)
+    if not context then return false, contextErr end
+    if guildKey ~= context.guildKey or sessionToken ~= context.sessionToken then
+        return false, "guild-session-mismatch"
+    end
+    if not isInteger(tabID, 1, MAX_GUILD_TABS) or not context.viewableTabIDs[tabID] then
+        return false, "guild-tab-not-viewable"
+    end
+    local descriptor = controller.guildMetadata.tabs[tabID]
+    if not descriptor or descriptor.viewable ~= true then return false, "guild-tab-metadata-invalid" end
+    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, snapshot, descriptor, true)
+    if not validated then return false, validationErr end
+    local identity = controller.lastGuildIdentity
+    if not validIdentity(identity) or identity.key ~= guildKey then return false, "guild-identity-invalid" end
+    local record, _, recordErr = ensureRecord(controller.database, "guilds", identity)
+    if not record then return false, recordErr end
+    local old = rawget(record.tabs, tabID)
+    if old ~= nil and not validExistingTab(old, tabID) then return false, "existing-tab-invalid" end
+    if old and isInteger(old.capturedAt, 0, 9007199254740991)
+        and validated.capturedAt <= old.capturedAt then
+        return false, nil
+    end
+    record.tabs[tabID] = validated
+    record.capturedAt = validated.capturedAt
+    refreshRecordStatus(record)
+    notifyChanged(controller, "remote-merge", tabID)
+    return true, nil
+end
+
+-- City synchronization uses only data already saved by a normal bank capture.
+-- These helpers deliberately do not query guild-bank tab metadata or read bank APIs.
+local function guildCacheSyncContext(controller)
+    local identity, identityErr = getGuildIdentity(controller.api)
+    if not identity then return nil, identityErr end
+    return { guildKey = identity.key }, nil
+end
+
+local function getGuildCacheSyncManifest(controller, guildKey)
+    local context, contextErr = guildCacheSyncContext(controller)
+    if not context then return nil, contextErr end
+    if guildKey ~= context.guildKey then return nil, "guild-identity-invalid" end
+    local record = rawget(controller.database.guilds, context.guildKey)
+    local tabs = {}
+    if type(record) ~= "table" or type(record.tabs) ~= "table" then return tabs, nil end
+    for tabID, tab in pairs(record.tabs) do
+        if isInteger(tabID, 1, MAX_GUILD_TABS) and validExistingTab(tab, tabID)
+            and tab.status == "cached" and tab.numSlots == GUILD_TAB_SLOTS
+            and isInteger(tab.capturedAt, 0, 9007199254740991) then
+            tabs[tabID] = { capturedAt = tab.capturedAt }
+        end
+    end
+    return tabs, nil
+end
+
+local function getGuildCacheSyncSnapshot(controller, guildKey, tabID)
+    local context, contextErr = guildCacheSyncContext(controller)
+    if not context then return nil, contextErr end
+    if guildKey ~= context.guildKey then return nil, "guild-identity-invalid" end
+    if not isInteger(tabID, 1, MAX_GUILD_TABS) then return nil, "guild-tab-invalid" end
+    local record = rawget(controller.database.guilds, context.guildKey)
+    local tab = type(record) == "table" and type(record.tabs) == "table" and rawget(record.tabs, tabID) or nil
+    if not validExistingTab(tab, tabID) or tab.status ~= "cached"
+        or tab.numSlots ~= GUILD_TAB_SLOTS
+        or not isInteger(tab.capturedAt, 0, 9007199254740991) then
+        return nil, "guild-tab-snapshot-unavailable"
+    end
+    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, tab, { name = tab.name })
+    if not validated then return nil, validationErr end
+    return copyGuildTab(validated), nil
+end
+
+local function mergeGuildCacheSyncSnapshot(controller, guildKey, tabID, snapshot)
+    local context, contextErr = guildCacheSyncContext(controller)
+    if not context then return false, contextErr end
+    if guildKey ~= context.guildKey then return false, "guild-identity-invalid" end
+    if not isInteger(tabID, 1, MAX_GUILD_TABS) then return false, "guild-tab-invalid" end
+    local identity, identityErr = getGuildIdentity(controller.api)
+    if not identity or identity.key ~= guildKey then return false, identityErr or "guild-identity-invalid" end
+    local record = rawget(controller.database.guilds, guildKey)
+    local old = type(record) == "table" and type(record.tabs) == "table" and rawget(record.tabs, tabID) or nil
+    if old ~= nil and not validExistingTab(old, tabID) then return false, "existing-tab-invalid" end
+    local descriptorName = old and old.name or (type(snapshot) == "table" and snapshot.name)
+    if not nonEmptyString(descriptorName) then return false, "guild-tab-metadata-invalid" end
+    local validated, validationErr = validateGuildSnapshot(controller.api, tabID, snapshot,
+        { name = descriptorName }, true)
+    if not validated then return false, validationErr end
+    if old and isInteger(old.capturedAt, 0, 9007199254740991)
+        and validated.capturedAt <= old.capturedAt then
+        return false, nil
+    end
+    if not record then
+        local createdRecord, _, recordErr = ensureRecord(controller.database, "guilds", identity)
+        if not createdRecord then return false, recordErr end
+        record = createdRecord
+    end
+    record.tabs[tabID] = validated
+    record.capturedAt = validated.capturedAt
+    refreshRecordStatus(record)
+    notifyChanged(controller, "remote-merge", tabID)
+    return true, nil
+end
+
 function BankMemory.CreateController(api, database, onChanged, requestFlush)
     if type(api) ~= "table" then
         return nil, "api-invalid"
@@ -988,6 +1322,10 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
         guildReadinessDeferred = false,
         personalContainerIDs = {},
         guildMetadata = nil,
+        guildSessionToken = nil,
+        guildSessionGuildKey = nil,
+        guildSessionEstablishPending = false,
+        guildViewableTabIDs = {},
     }
 
     function controller:CancelPending()
@@ -1005,6 +1343,7 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
         end
         self.personalOpen, self.guildOpen = false, false
         self.personalPending, self.guildMetadataPending, self.guildReadinessDeferred = false, false, false
+        self.guildSessionEstablishPending = false
         self.batching = false
         if self.batchChanged then
             self.batchChanged = false
@@ -1045,6 +1384,34 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
             self.batchChanged = false
             notifyChanged(self)
         end
+    end
+
+    function controller:GetGuildBankSyncContext()
+        return guildSyncContext(self)
+    end
+
+    function controller:GetGuildBankSyncSnapshot(tabID, sessionToken)
+        return getGuildSyncSnapshot(self, tabID, sessionToken)
+    end
+
+    function controller:MergeGuildBankSyncSnapshot(guildKey, sessionToken, tabID, snapshot)
+        return mergeGuildSyncSnapshot(self, guildKey, sessionToken, tabID, snapshot)
+    end
+
+    function controller:GetGuildBankCachedSyncContext()
+        return guildCacheSyncContext(self)
+    end
+
+    function controller:GetGuildBankCachedSyncManifest(guildKey)
+        return getGuildCacheSyncManifest(self, guildKey)
+    end
+
+    function controller:GetGuildBankCachedSyncSnapshot(guildKey, tabID)
+        return getGuildCacheSyncSnapshot(self, guildKey, tabID)
+    end
+
+    function controller:MergeGuildBankCachedSyncSnapshot(guildKey, tabID, snapshot)
+        return mergeGuildCacheSyncSnapshot(self, guildKey, tabID, snapshot)
     end
 
     function controller:HandleEvent(event, ...)
@@ -1143,6 +1510,9 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
             cancelQueue(self, "guild")
             self.guildOpen = true
             self.guildReadinessDeferred = false
+            clearGuildSession(self, true)
+            self.guildSessionGuildKey = nil
+            self.guildSessionEstablishPending = true
             return refreshGuildMetadata(self)
         end
         if event == "GUILDBANKFRAME_CLOSED" then
@@ -1150,7 +1520,30 @@ function BankMemory.CreateController(api, database, onChanged, requestFlush)
             self.guildOpen = false
             self.guildMetadataPending = false
             self.guildReadinessDeferred = false
-            self.guildMetadata = nil
+            clearGuildSession(self, true)
+            self.guildSessionGuildKey = nil
+            self.guildSessionEstablishPending = false
+            return true, nil
+        end
+        if event == "PLAYER_GUILD_UPDATE" then
+            if self.guildOpen then
+                local identity, identityErr = getGuildIdentity(self.api)
+                if not identity or identity.key ~= self.guildSessionGuildKey then
+                    clearGuildSession(self, true)
+                    self.guildSessionGuildKey = identity and identity.key or nil
+                    if not identity then
+                        self.guildSessionEstablishPending = identityErr ~= "guild-name-unavailable"
+                    else
+                        self.guildSessionEstablishPending = false
+                    end
+                else
+                    return refreshGuildMetadata(self)
+                end
+            else
+                clearGuildSession(self, false)
+                self.guildSessionGuildKey = nil
+                self.guildSessionEstablishPending = false
+            end
             return true, nil
         end
         if event == "GUILDBANK_UPDATE_TABS" then
