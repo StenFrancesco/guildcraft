@@ -184,6 +184,7 @@ local function clearWork(sync, clearManual)
     sync.current = nil
     sync.peerQueue = {}
     sync.peerIndex = 1
+    sync.peerQueueDirty = false
     sync.peersInWindow = 0
     if clearManual then
         sync.manualPending = false
@@ -314,6 +315,7 @@ buildPeerQueue = function(sync)
     table.sort(keys)
     sync.peerQueue = keys
     sync.peerIndex = 1
+    sync.peerQueueDirty = false
     sync.peersInWindow = 0
 end
 
@@ -361,6 +363,25 @@ local function finishPeer(sync)
         sync.manualPending = false
         sync.manualActive = true
         buildPeerQueue(sync)
+        drive(sync)
+        return
+    end
+    if sync.peerQueueDirty then
+        sync.peerQueueDirty = false
+        local peersInWindow = sync.peersInWindow
+        buildPeerQueue(sync)
+        sync.peersInWindow = peersInWindow
+        if peersInWindow >= MAX_PEERS_PER_WINDOW then
+            buildPeerQueue(sync)
+            if #sync.peerQueue == 0 then
+                local completedManual = sync.manualActive
+                sync.manualActive = false
+                local status = "Compared available guild snapshots"
+                if completedManual and not sync.comparedAny then status = "No compatible guild responder found" end
+                setStatus(sync, status)
+                return
+            end
+        end
         drive(sync)
         return
     end
@@ -516,8 +537,11 @@ local function handleManifest(sync, message, sender)
         sync.manifestReplies[peerKey] = complete.sessionToken
         publishManifest(sync)
     end
+    if sync.current then
+        sync.peerQueueDirty = true
+        return true
+    end
     buildPeerQueue(sync)
-    if sync.current then return true end
     drive(sync)
     return true
 end

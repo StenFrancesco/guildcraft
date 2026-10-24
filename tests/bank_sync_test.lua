@@ -179,4 +179,25 @@ T.test("bank sync replies to a late manifest once per peer session", function()
     T.assertEqual(afterDuplicate, afterFirst)
 end)
 
+T.test("bank sync keeps a newly earlier peer queued while the current request finishes", function()
+    local G, api, sync = setup({ senderKey = "Zed-Silvermoon", localSnapshot = false,
+        roster = {
+            { "Alice-Silvermoon", "Member", 2 },
+            { "Cara-Silvermoon", "Member", 2 },
+            { "Zed-Silvermoon", "Member", 2 },
+        } })
+    sync.transport.onMessage(manifest(G, "Cara-Silvermoon", "cara-token"), "Cara-Silvermoon", "GUILD")
+    T.assertEqual(api.sent[#api.sent].kind, "Q")
+    T.assertEqual(api.sent[#api.sent].target, "Cara-Silvermoon")
+
+    sync.transport.onMessage(manifest(G, "Alice-Silvermoon", "alice-token"), "Alice-Silvermoon", "GUILD")
+    T.assertEqual(sync.current.peer, "cara-silvermoon")
+    sync.responseTimer:Fire()
+    sync.responseTimer:Fire()
+    T.assertEqual(sync.peersInWindow, 1)
+
+    T.assertEqual(api.sent[#api.sent].kind, "Q")
+    T.assertEqual(api.sent[#api.sent].target, "Alice-Silvermoon")
+end)
+
 return true
