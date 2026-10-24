@@ -106,6 +106,7 @@ local function validIdentity(identity)
         and nonEmptyString(identity.key)
         and nonEmptyString(identity.name)
         and nonEmptyString(identity.realm)
+        and (identity.guid == nil or nonEmptyString(identity.guid))
         and identity.key == identity.name .. "-" .. identity.realm
 end
 
@@ -168,7 +169,7 @@ local function ensureRecord(database, bucketName, identity)
     local record = rawget(bucket, identity.key)
     if record == nil then
         record = {
-            identity = { key = identity.key, name = identity.name, realm = identity.realm },
+            identity = { key = identity.key, name = identity.name, realm = identity.realm, guid = identity.guid },
             capturedAt = nil,
             status = "incomplete",
             tabs = {},
@@ -180,6 +181,11 @@ local function ensureRecord(database, bucketName, identity)
     if not validExistingRecord(record, identity) then
         return nil, false, "record-invalid-or-identity-mismatch"
     end
+    local savedGUID = record.identity.guid
+    if savedGUID and identity.guid and savedGUID ~= identity.guid then
+        return nil, false, "record-invalid-or-identity-mismatch"
+    end
+    if not savedGUID and identity.guid then record.identity.guid = identity.guid end
     return record, false, nil
 end
 
@@ -314,7 +320,10 @@ local function getPlayerIdentity(api)
         return nil, "player-realm-unavailable"
     end
 
-    return { key = name .. "-" .. realm, name = name, realm = realm }, nil
+    local identity = { key = name .. "-" .. realm, name = name, realm = realm }
+    local guidOk, guid = safeCall(api, api.UnitGUID, 1, "player")
+    if guidOk and nonEmptyString(guid) then identity.guid = guid end
+    return identity, nil
 end
 
 local function getGuildIdentity(api)

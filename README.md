@@ -42,7 +42,8 @@ apply immediately and are saved across reloads. Both sizes default to 100%.
 Existing shared size preferences are used as the starting value for each;
 afterward the sizes are saved independently. Each window's actual size is
 capped separately to fit the screen. **Lock window position** prevents dragging
-the main window. **Center window** restores its center position, and **Reset
+the main window. Its dragged position is saved across reloads. **Center window**
+restores its center position and clears the saved position, and **Reset
 appearance** restores both sizes and opacity to 100% without changing the
 other settings.
 
@@ -51,8 +52,9 @@ its details line up with the top of the main browser, with a small gap on the
 right. If there is no room, they open on the left or stay within the screen.
 Both windows remain independently draggable after opening; background data
 refreshes do not reposition recipe details. Disable this option to retain the
-details window's last position within the session. Appearance and alignment
-preferences are account-wide; dragged window positions remain session-only.
+details window's last position within the session. Appearance, alignment
+preferences, and the main window position are account-wide; recipe details window
+positions remain session-only.
 
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
@@ -153,6 +155,10 @@ an additive
 
 ## Data and synchronization
 
+The Bank page lists a personal or current guild bank only after at least one
+bank tab has been observed and saved. Banks with no saved snapshot are omitted;
+partially captured snapshots remain visible when they contain an observed tab.
+
 The Bank companion also saves each character's backpack and equipped bags,
 including the reagent bag on clients that support it. Capture runs on login,
 entering the world and after bag updates, without opening a bank or changing the
@@ -172,6 +178,7 @@ Existing bank records and schema version 1 remain compatible. Inventory is saved
 locally and is not added to the bank browser or synchronization messages.
 
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
+- Personal bank details are shown only for characters whose GUIDs are recorded as belonging to this account. The guild bank remains shared with addon users in the current guild.
 - Profession browsing and sharing support Alchemy, Blacksmithing, Cooking, Enchanting, Engineering, First Aid, Fishing, Leatherworking, and Tailoring. First Aid is mainly relevant to the legacy client. Profession sharing uses protocol P5 (`GC_PROF5`); participating clients need compatible versions.
 - Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.

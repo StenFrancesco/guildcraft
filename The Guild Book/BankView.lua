@@ -78,6 +78,14 @@ local function validRecord(record, key)
     return record.status ~= "cached" or (hasObservedTab and recordTimeObserved)
 end
 
+local function hasObservedBankSnapshot(record, key)
+    if not validRecord(record, key) then return false end
+    for _, tab in pairs(record.tabs) do
+        if tab.status ~= "unavailable" and tab.capturedAt ~= nil then return true end
+    end
+    return false
+end
+
 local function coverageStatus(record)
     if not record or record.status ~= "cached" then return "incomplete" end
     for _, tab in pairs(record.tabs) do
@@ -106,6 +114,23 @@ local function identityFromGGMRecord(record, key)
     end
 end
 
+local function isLocalCharacter(db, key, record)
+    if type(db) ~= "table" or type(GGM.IsLocalCharacterGUID) ~= "function" then return false end
+    local identity = identityFromGGMRecord(record, key)
+    local guid = identity and identity.guid
+    if not guid then
+        local bankIdentity = type(record) == "table" and record.identity or nil
+        if type(bankIdentity) == "table" and validIdentity(bankIdentity, key) then
+            guid = bankIdentity.guid
+        end
+    end
+    if not guid and type(db.characters) == "table" then
+        local sharedIdentity = identityFromGGMRecord(rawget(db.characters, key), key)
+        guid = sharedIdentity and sharedIdentity.guid
+    end
+    return GGM.IsLocalCharacterGUID(db, guid)
+end
+
 local function inventoryOnlyRecord(record)
     return type(record) == "table" and type(record.inventory) == "table"
         and type(record.tabs) == "table" and next(record.tabs) == nil
@@ -116,20 +141,22 @@ local function characterEntries(db, bankDB)
     if type(db) == "table" and db.schemaVersion == GGM.SCHEMA_VERSION and type(db.characters) == "table" then
         for key, record in pairs(db.characters) do
             local identity = identityFromGGMRecord(record, key)
-            if identity then byKey[key] = { key = key, identity = identity } end
+            if identity and isLocalCharacter(db, key, record) then
+                byKey[key] = { key = key, identity = identity }
+            end
         end
     end
     if validBankDatabase(bankDB) then
         for key, record in pairs(bankDB.characters) do
             local identity = identityFromGGMRecord(record, key)
-            if identity then
+            if identity and isLocalCharacter(db, key, record) then
                 local entry = byKey[key]
                 if inventoryOnlyRecord(record) then
                     if entry then entry.record = nil end
                 else
                     entry = entry or { key = key, identity = identity }
                     entry.identity = entry.identity or identity
-                    entry.record = validRecord(record, key) and record or nil
+                    entry.record = hasObservedBankSnapshot(record, key) and record or nil
                     byKey[key] = entry
                 end
             end
@@ -138,10 +165,12 @@ local function characterEntries(db, bankDB)
 
     local entries = {}
     for _, entry in pairs(byKey) do
-        entry.kind = "character"
-        entry.name = entry.identity.name
-        entry.realm = entry.identity.realm
-        table.insert(entries, entry)
+        if entry.record then
+            entry.kind = "character"
+            entry.name = entry.identity.name
+            entry.realm = entry.identity.realm
+            table.insert(entries, entry)
+        end
     end
     table.sort(entries, function(left, right)
         local leftName, rightName = string.lower(left.name), string.lower(right.name)
@@ -170,19 +199,20 @@ function GGM.BuildBankEntries(db, bankDB, guildIdentity)
         guildEntry.guildKey = guildIdentity.key
         if validBankDatabase(bankDB) then
             local candidate = bankDB.guilds[guildIdentity.key]
-            if validRecord(candidate, guildIdentity.key) then guildEntry.record = candidate end
+            if hasObservedBankSnapshot(candidate, guildIdentity.key) then guildEntry.record = candidate end
         end
     end
     guildEntry.status = guildEntry.record and coverageStatus(guildEntry.record)
         or (databaseState == "available" and "no-data" or databaseState)
 
-    local entries = { guildEntry }
+    local entries = {}
+    if guildEntry.record then entries[#entries + 1] = guildEntry end
     for _, entry in ipairs(characterEntries(db, bankDB)) do
         entry.companionState = companionState
         entry.databaseState = databaseState
         entry.status = entry.record and coverageStatus(entry.record)
             or (databaseState == "available" and "no-data" or databaseState)
-        table.insert(entries, entry)
+        if entry.record then table.insert(entries, entry) end
     end
     return entries
 end

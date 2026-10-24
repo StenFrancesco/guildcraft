@@ -274,8 +274,8 @@ local function renderEntries(page, listScroll, listContent)
     setText(page.listCount, tostring(#entries) .. (#entries == 1 and " entry" or " entries"))
     if page.listEmpty then
         local query = page.searchBox and page.searchBox:GetText() or ""
-        if #entries == 0 and query ~= "" then
-            setText(page.listEmpty, "No bank items match this search.")
+        if #entries == 0 then
+            setText(page.listEmpty, query ~= "" and "No bank items match this search." or "No saved bank snapshots.")
         else
             page.listEmpty:Hide()
         end
@@ -445,7 +445,7 @@ local function updateDetail(page)
             setText(page.detailStatus, "")
         else
             setText(page.detailTitle, entry and (entry.kind == "guild" and "Guild Bank" or entry.name) or "Bank snapshots")
-            setText(page.detailStatus, "No saved snapshot")
+            setText(page.detailStatus, "No saved bank snapshots")
         end
         setText(page.tabStatus, "")
         page.selectedTabID, page.selectedSlotID = nil, nil
