@@ -713,9 +713,9 @@ renderMaterials = function(details, model, preserveScroll)
     for _, group in ipairs(model.materials) do
         if #group.choices == 1 then
             local choice = group.choices[1]
-            addRow(choice.name .. "  ×" .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false, choice.itemID)
+            addRow(choice.name .. "  × " .. group.quantity .. (group.optional and "  · Optional" or "  · Required"), choice.icon, false, choice.itemID)
         else
-            local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " ×" .. group.quantity
+            local label = (group.optional and "Optional: " or "Required: ") .. group.name .. " × " .. group.quantity
             if #group.choices > 1 then label = label .. " (choose one)" end
             addRow(label, nil, true)
             for _, choice in ipairs(group.choices) do addRow(choice.name, choice.icon, false, choice.itemID) end
