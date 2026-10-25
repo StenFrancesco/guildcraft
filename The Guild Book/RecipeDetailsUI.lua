@@ -116,9 +116,12 @@ local function openGuildCraftingContext(details)
     local browser = details.browser
     local trade = browser.api.C_TradeSkillUI
     if browser.professionLibraryMode ~= "All"
-        or browser.craftingContextSkillLineID == browser.selectedProfessionID
         or type(trade) ~= "table" or type(trade.GetRecipeInfo) ~= "function"
         or type(GGM.OpenSelectedProfessionContext) ~= "function" then return false end
+    if browser.craftingContextSkillLineID == browser.selectedProfessionID then
+        details.openedCraftingContext = browser.craftingContextOpenedByGuildBook == true
+        return true
+    end
     local opened = GGM.OpenSelectedProfessionContext(browser, browser.selectedProfessionID, true)
     details.openedCraftingContext = opened and browser.craftingContextOpenedByGuildBook == true
     return opened

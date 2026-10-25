@@ -223,6 +223,22 @@ T.test("profession recipe filter returns a dense result and does not mutate inpu
     T.assertEqual(entries[2], false)
 end)
 
+T.test("unknown learning state remains visible only when both learning filters are included", function()
+    local GGM = loadFilters()
+    local unknown = entry("Guild-only recipe", nil, false)
+    local allLearningStates = GGM.FilterProfessionRecipeEntries({ unknown }, "", {
+        showLearned = true, showUnlearned = true, haveMaterials = false,
+        categoryIDs = {}, slotKeys = {},
+    })
+    T.assertEqual(#allLearningStates, 1, "including both learning states leaves unknown guild entries visible")
+
+    local learnedOnly = GGM.FilterProfessionRecipeEntries({ unknown }, "", {
+        showLearned = true, showUnlearned = false, haveMaterials = false,
+        categoryIDs = {}, slotKeys = {},
+    })
+    T.assertEqual(#learnedOnly, 0, "unknown learning data cannot satisfy an explicit learned-only filter")
+end)
+
 T.test("profession recipe filter model reads current learned state and material availability", function()
     local GGM = loadFilters()
     local api = modelAPI(171, {
@@ -454,6 +470,58 @@ T.test("unlearned live recipes absent from the saved catalog appear when Have Ma
     T.assertEqual(#filtered, 2)
     T.assertFalse(filtered[2].learned)
     T.assertEqual(filtered[2].name, "Unlearned Potion")
+end)
+
+T.test("All-mode filter models preserve guild recipes and add selected-character metadata", function()
+    local GGM = loadFilters()
+    local outputItems = {
+        [340] = 301, [342] = 302,
+        items = {
+            [301] = { itemType = "Weapon", itemSubType = "Maces", itemEquipLoc = "INVTYPE_2HWEAPON", classID = 2, subClassID = 5 },
+            [302] = { itemType = "Armor", itemSubType = "Cloth", itemEquipLoc = "INVTYPE_HEAD", classID = 4, subClassID = 1 },
+        },
+    }
+    local api = modelAPI(171, {
+        [340] = { recipeID = 340, name = "Known Potion", categoryID = 10, learned = true, craftable = true },
+        [341] = { recipeID = 341, name = "Local Only", categoryID = 10, learned = false, craftable = false },
+        [342] = { recipeID = 342, name = "Guild Only", categoryID = 10, learned = false, craftable = false },
+    }, { [340] = 1 }, { [10] = { categoryID = 10, name = "Potions" } }, outputItems)
+    api.C_TradeSkillUI.GetAllRecipeIDs = function() return { 340, 341 } end
+    local knownBy = { { key = "Crafter-Realm", name = "Crafter", realm = "Realm" } }
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 340, name = "Known Potion", knownBy = knownBy },
+        { recipeID = 342, name = "Guild Only", knownBy = knownBy },
+    }, true, true)
+
+    T.assertEqual(#model.recipes, 2, "All mode keeps the guild catalog instead of replacing it with local recipe IDs")
+    T.assertEqual(model.recipes[1].recipeID, 340)
+    T.assertTrue(model.recipes[1].learned)
+    T.assertTrue(model.recipes[1].craftable)
+    T.assertEqual(model.recipes[1].categoryIDs[1], 10)
+    T.assertEqual(model.recipes[1].knownBy, knownBy, "guild crafter data remains attached")
+    T.assertEqual(model.recipes[2].recipeID, 342, "a recipe absent from GetAllRecipeIDs stays in the guild catalog")
+    T.assertFalse(model.recipes[2].learned, "queryable guild recipes receive selected-character learning state")
+    T.assertEqual(model.recipes[2].categoryIDs[1], 10, "selected-character categories enrich guild recipes")
+    T.assertEqual(model.recipes[2].slotKeys[1], "armor:1:INVTYPE_HEAD",
+        "selected-character output metadata enriches guild recipe slots")
+
+    local filtered = GGM.FilterProfessionRecipeEntries(model.recipes, "", {
+        showLearned = true, showUnlearned = true, haveMaterials = true,
+        categoryIDs = {}, slotKeys = {},
+    })
+    T.assertEqual(#filtered, 1)
+    T.assertEqual(filtered[1].recipeID, 340, "Have Materials uses the selected character's current inventory")
+    local categoryFiltered = GGM.FilterProfessionRecipeEntries(model.recipes, "", {
+        showLearned = true, showUnlearned = true, haveMaterials = false,
+        categoryIDs = { [10] = true }, slotKeys = {},
+    })
+    T.assertEqual(#categoryFiltered, 2)
+    local slotFiltered = GGM.FilterProfessionRecipeEntries(model.recipes, "", {
+        showLearned = true, showUnlearned = true, haveMaterials = false,
+        categoryIDs = {}, slotKeys = { ["armor:1:INVTYPE_HEAD"] = true },
+    })
+    T.assertEqual(#slotFiltered, 1)
+    T.assertEqual(slotFiltered[1].recipeID, 342)
 end)
 
 T.test("profession recipe filter model marks secret recipe fields unavailable", function()

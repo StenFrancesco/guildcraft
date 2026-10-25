@@ -507,7 +507,7 @@ local function recipeCraftableFromMaterials(api, recipe, includeBank, noMaterial
     return true, 1, true
 end
 
-function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes, bankVerified)
+function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes, bankVerified, preserveCatalog)
     local model = newFilterModel(professionID)
     if type(api) ~= "table" or not positiveInteger(api, professionID) or type(catalogRecipes) ~= "table" then
         return model
@@ -605,7 +605,7 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
                 end
             end
         end
-        model.recipes, recipesByID = liveRecipes, liveRecipesByID
+        if preserveCatalog ~= true then model.recipes, recipesByID = liveRecipes, liveRecipesByID end
         model.liveRecipeListAvailable = model.state ~= "partial"
     else
         model.state = "partial"
@@ -632,7 +632,7 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
         checkpoint()
         local info = liveRecipeInfoByID[recipe.recipeID]
         local recipeOK = info ~= nil
-        if not recipeOK and liveRecipeCount == nil then
+        if not recipeOK and (liveRecipeCount == nil or preserveCatalog == true) then
             recipeOK, info = call(api, trade.GetRecipeInfo, recipe.recipeID)
         end
         if not recipeOK or type(info) ~= "table" then
@@ -738,6 +738,7 @@ function GGM.FilterProfessionRecipeEntries(entries, query, state)
             local learned = entry.learned
             local learningMatches = (learned == true and state.showLearned == true)
                 or (learned == false and state.showUnlearned == true)
+                or (learned == nil and state.showLearned == true and state.showUnlearned == true)
             local materialsMatch = state.haveMaterials ~= true
                 or (learned == true and hasCraftableItem(entry))
             local categoryMatches = not filterCategories

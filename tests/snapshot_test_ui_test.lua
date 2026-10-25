@@ -18,6 +18,7 @@ local function loadUI()
     T.loadAddonFile("The Guild Book/MaterialTracker.lua", GGM)
     T.loadAddonFile("The Guild Book/MaterialTrackerBanks.lua", GGM)
     T.loadAddonFile("The Guild Book/ProfessionRecipeFilters.lua", GGM)
+    GGM.__testBuiltInRecipeFilterModelBuilder = GGM.BuildProfessionRecipeFilterModel
     T.loadAddonFile("The Guild Book/MaterialTrackerUI.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetailsUI.lua", GGM)
     local bankView = loadfile("The Guild Book/BankView.lua")
@@ -631,7 +632,35 @@ local function makeDB(GGM, records)
     return db
 end
 
+local function installCatalogOnlyFilterFixture(GGM, api)
+    local builtInBuilder = GGM.__testBuiltInRecipeFilterModelBuilder
+    local trade = api.C_TradeSkillUI
+    if GGM.BuildProfessionRecipeFilterModel ~= builtInBuilder
+        or type(GGM.BuildProfessionRecipeFilterModel) ~= "function"
+        or (type(trade) == "table" and type(trade.IsTradeSkillReady) == "function"
+            and type(trade.IsTradeSkillLinked) == "function" and type(trade.GetBaseProfessionInfo) == "function") then
+        return
+    end
+    local buildLiveModel = GGM.BuildProfessionRecipeFilterModel
+    GGM.BuildProfessionRecipeFilterModel = function(liveAPI, professionID, catalog, bankVerified, preserveCatalog)
+        if preserveCatalog ~= true then
+            return buildLiveModel(liveAPI, professionID, catalog, bankVerified, preserveCatalog)
+        end
+        local recipes = {}
+        for _, entry in ipairs(catalog or {}) do
+            local copy = {}
+            for key, value in pairs(entry) do copy[key] = value end
+            copy.learned, copy.craftable, copy.categoryIDs, copy.slotKeys = true, false, {}, {}
+            recipes[#recipes + 1] = copy
+        end
+        return { state = "ready", professionID = professionID, recipes = recipes, categories = {}, slots = {},
+            availability = { profession = "unavailable", materials = "available", bank = "verified",
+                categories = "available", slots = "available" } }
+    end
+end
+
 local function showBrowser(GGM, api, db)
+    installCatalogOnlyFilterFixture(GGM, api)
     -- Gear fixtures explicitly open Characters; the default-view case uses the
     -- public opening function directly so it exercises the real initial tab.
     if not GGM.guildGearBrowserFrame then
@@ -639,14 +668,22 @@ local function showBrowser(GGM, api, db)
         GGM.guildGearBrowserFrame.professionLibraryMode = "All"
         GGM.SelectGuildGearBrowserTab(GGM.guildGearBrowserFrame, "Character")
     end
+    GGM.guildGearBrowserFrame.professionRecipeFilterState = GGM.guildGearBrowserFrame.professionRecipeFilterState
+        or GGM.CreateProfessionRecipeFilterState()
+    -- These fixtures exercise catalog behavior, not selected-character filters.
+    GGM.guildGearBrowserFrame.professionRecipeFilterState.haveMaterials = false
     GGM.ShowGuildGearBrowserWindow(api, db)
     return GGM.guildGearBrowserFrame
 end
 
 local function showAllProfessionsBrowser(GGM, api, db)
+    installCatalogOnlyFilterFixture(GGM, api)
     local frame = GGM.CreateGuildGearBrowserWindow(api)
     frame.professionLibraryMode = "All"
     GGM.guildGearBrowserFrame = frame
+    frame.professionRecipeFilterState = frame.professionRecipeFilterState or GGM.CreateProfessionRecipeFilterState()
+    -- Keep generic saved-catalog tests independent of live character metadata.
+    frame.professionRecipeFilterState.haveMaterials = false
     GGM.ShowGuildGearBrowserWindow(api, db)
     return frame
 end
@@ -1929,7 +1966,8 @@ T.test("closing Guild recipe details releases only its own crafting context", fu
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
     T.assertEqual(browser.craftingContextSkillLineID, 164)
     browser.recipeDetailsFrame:Hide()
-    T.assertEqual(closed, 1)
+    T.assertEqual(closed, 1, "close should follow details ownership: details=" .. tostring(browser.recipeDetailsFrame.openedCraftingContext)
+        .. ", browser=" .. tostring(browser.craftingContextOpenedByGuildBook))
     T.assertNil(browser.craftingContextSkillLineID)
 end)
 
@@ -3189,23 +3227,29 @@ T.test("profession messages preserve unavailable and empty base states and disti
     local frame = showBrowser(GGM, makeBrowserAPI(), { schemaVersion = GGM.SCHEMA_VERSION, characters = {} })
 
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
-    T.assertEqual(frame.professionStatus.text, "Current guild membership could not be confirmed.")
+    T.assertEqual(frame.professionStatus.text,
+        "Current guild membership could not be confirmed. Live profession data is unavailable.")
     mode = "identities"; GGM.SelectProfession(frame, "Alchemy")
-    T.assertEqual(frame.professionStatus.text, "Current guild member identities could not be confirmed.")
+    T.assertEqual(frame.professionStatus.text,
+        "Current guild member identities could not be confirmed. Live profession data is unavailable.")
     mode = "incomplete"; GGM.SelectProfession(frame, "Alchemy")
-    T.assertEqual(frame.professionStatus.text, "Some saved profession data is incomplete.")
+    T.assertEqual(frame.professionStatus.text,
+        "Some saved profession data is incomplete. Live profession data is unavailable.")
     mode = "no-snapshot"; GGM.SelectProfession(frame, "Alchemy")
-    T.assertEqual(frame.professionStatus.text, "No saved Alchemy snapshots for current guild members.")
+    T.assertEqual(frame.professionStatus.text,
+        "No saved Alchemy snapshots for current guild members. Live profession data is unavailable.")
     mode = "no-recipes"; GGM.SelectProfession(frame, "Alchemy")
-    T.assertEqual(frame.professionStatus.text, "Saved Alchemy snapshots contain no learned recipes.")
+    T.assertEqual(frame.professionStatus.text,
+        "Saved Alchemy snapshots contain no learned recipes. Live profession data is unavailable.")
     mode = "incomplete-safe"; GGM.SelectProfession(frame, "Alchemy")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     frame.professionSearchBox:SetText("missing")
     T.assertEqual(frame.professionStatus.text,
-        "Some saved profession data is incomplete. No recipes match this search.")
+        "Some saved profession data is incomplete. Live profession data is unavailable. No recipes match the current filters.")
     mode = "ready"; GGM.SelectProfession(frame, "Alchemy")
     frame.professionSearchBox:SetText("missing")
-    T.assertEqual(frame.professionStatus.text, "No recipes match this search.")
+    T.assertEqual(frame.professionStatus.text,
+        "Live profession data is unavailable; the selected character's recipes cannot be verified. No recipes match the current filters.")
 end)
 
 T.test("visible profession catalog refreshes locally after roster reconciliation succeeds or fails", function()
@@ -3235,7 +3279,8 @@ T.test("visible profession catalog refreshes locally after roster reconciliation
     -- A failed reconciliation clears stale owners by rebuilding the fail-closed unavailable model.
     GGM.professionRosterMembershipCurrent = false
     T.assertTrue(GGM.RefreshVisibleProfessionCatalog())
-    T.assertEqual(frame.professionStatus.text, "Current guild membership could not be confirmed.")
+    T.assertEqual(frame.professionStatus.text,
+        "Current guild membership could not be confirmed. Live profession data is unavailable.")
     T.assertEqual(#frame.filteredProfessionRecipes, 0)
 end)
 
@@ -4321,6 +4366,7 @@ end)
 
 T.test("PR1 hidden profession events build nothing and opening consumes latest data once", function()
     local G, api = loadUI(), makeBrowserAPI()
+    installCatalogOnlyFilterFixture(G, api)
     local calls, revision = {}, 1
     installProfessionCatalogStub(G, function()
         return professionCatalog("ready", { { recipeID = 1, name = "Revision " .. revision, knownBy = {} } })
@@ -4328,6 +4374,7 @@ T.test("PR1 hidden profession events build nothing and opening consumes latest d
     local db = makeDB(G)
     local frame = G.CreateGuildGearBrowserWindow(api)
     frame.professionLibraryMode = "All"
+    frame.professionRecipeFilterState.haveMaterials = false
     G.guildGearBrowserFrame, frame.db = frame, db
     for i = 1, 5 do T.assertFalse(G.RefreshVisibleProfessionCatalog()) end
     T.assertEqual(#calls, 0, "an initialized hidden browser must build no catalog")
@@ -4544,11 +4591,12 @@ T.test("large recipe lists recycle a bounded viewport pool and keep the last rec
     end
     T.assertNotNil(last)
     last.scripts.OnClick(last)
-    T.assertTrue(opened == recipes[4096])
+    T.assertEqual(opened and opened.recipeID, recipes[4096].recipeID,
+        "All-mode filter entries preserve catalog recipe identity")
     frame.professionSearchBox:SetText("Recipe 4096")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0)
-    T.assertTrue(frame.professionRecipeRows[1].recipe == recipes[4096])
+    T.assertEqual(frame.professionRecipeRows[1].recipe.recipeID, recipes[4096].recipeID)
     for i = 2, pool do T.assertNil(frame.professionRecipeRows[i].recipe) end
     frame.professionSearchBox:SetText("")
     T.assertEqual(#frame.professionRecipeRows, pool)
@@ -4784,11 +4832,12 @@ local function professionFilterFixture()
     local frame = showAllProfessionsBrowser(G, api, makeDB(G))
     local categoryRoot = model.categories[1]
     for _, child in ipairs(categoryRoot.children) do child.parent = categoryRoot end
+    frame.professionRecipeFilterState.haveMaterials = true
     frame.professionLibraryToggle.ownRadio.scripts.OnClick(frame.professionLibraryToggle.ownRadio)
     return G, api, frame, model
 end
 
-T.test("profession recipe filter dropdown is available only for the selected Own profession", function()
+T.test("profession recipe filters work for the selected profession in Own and All modes", function()
     local G, api, frame = professionFilterFixture()
     local trigger = frame.professionFiltersButton
     T.assertNotNil(trigger, "Own profession page needs its filter dropdown trigger")
@@ -4803,12 +4852,17 @@ T.test("profession recipe filter dropdown is available only for the selected Own
     T.assertTrue(frame.professionFilterControls.materials:GetChecked())
     T.assertEqual(#frame.filteredProfessionRecipes, 1, "Have Materials starts enabled for the selected character")
     frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
-    T.assertFalse(trigger:IsShown(), "All mode must hide profession-only filters")
     T.assertFalse(frame.professionFiltersMenu:IsShown(), "switching library mode dismisses the filter menu")
+    T.assertTrue(trigger:IsShown(), "All mode should expose the same filter menu for the selected profession")
+    trigger.scripts.OnClick(trigger)
+    T.assertTrue(frame.professionFiltersMenu:IsShown())
+    T.assertEqual(#frame.filteredProfessionRecipes, 1, "All mode applies selected-character Have Materials to guild recipes")
+    frame.professionFilterControls.materials.scripts.OnClick(frame.professionFilterControls.materials)
+    T.assertEqual(#frame.filteredProfessionRecipes, 3, "All mode can disable Have Materials and browse guild recipes")
     G.SelectGuildGearBrowserTab(frame, "Character")
     T.assertFalse(trigger:IsShown(), "filters are hidden outside the Professions page")
     G.SelectGuildGearBrowserTab(frame, "Professions")
-    T.assertFalse(trigger:IsShown(), "filters remain hidden in All mode after returning to Professions")
+    T.assertTrue(trigger:IsShown(), "filters remain available in All mode after returning to Professions")
 end)
 
 T.test("profession filter checkboxes keep a square outline and only toggle the checkmark", function()
@@ -4971,6 +5025,23 @@ T.test("bag and personal bank changes refresh Have Materials for the selected ch
     T.assertTrue(string.find(frame.professionFilterModelLabel.text, "Live material availability is unavailable", 1, true) ~= nil)
 end)
 
+T.test("bag updates refresh Have Materials in All using the selected character model", function()
+    local _, _, frame, model = professionFilterFixture()
+    frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
+
+    model.recipes[1].craftable = false
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
+    T.assertEqual(#frame.filteredProfessionRecipes, 0,
+        "All must refresh selected-character material availability after bag changes")
+    T.assertTrue(frame.professionFiltersMenu:IsShown(), "a bag refresh does not dismiss the filter menu")
+
+    model.recipes[1].craftable = true
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+end)
+
 T.test("filter metadata jobs cannot publish after switching profession or Own/All mode", function()
     local G, _, frame, model = professionFilterFixture()
     G.CPUManualDriver = true
@@ -5007,7 +5078,9 @@ T.test("filter metadata jobs cannot publish after switching profession or Own/Al
     T.assertTrue(G.GetCPUJobCount() > 0)
     frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
     for _ = 1, 300 do G.RunCPUFrame() end
-    T.assertNil(frame.professionRecipeFilterModel, "All mode must not retain asynchronous Own filter data")
+    T.assertNotNil(frame.professionRecipeFilterModel, "All mode must build its own catalog-preserving filter model")
+    T.assertEqual(frame.professionRecipeFilterModelMode, "All", "a pending Own result cannot publish into All mode")
+    T.assertEqual(frame.professionRecipeFilterModel.professionID, 197)
     T.assertEqual(frame.professionLibraryMode, "All")
     T.assertEqual(G.GetCPUJobCount(), 0)
 end)

@@ -1120,10 +1120,11 @@ function GGM.SelectProfession(frame, selectedKey)
     if changed and frame.professionSearchBox then frame.professionSearchBox:SetText("") end
     frame.professionDirty = true
     if flushProfessionCatalog then flushProfessionCatalog(frame) end
-    if browserVisible(frame) and frame.professionLibraryMode == "Own" and frame.db and frame.activeTab == "Professions" then
+    if browserVisible(frame) and frame.db and frame.activeTab == "Professions"
+        and (frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All") then
         frame.craftingContextSkillLineID = nil
         frame.craftingContextOpenedByGuildBook = nil
-        openSelectedProfessionContext(frame, selectedProfession.professionID)
+        openSelectedProfessionContext(frame, selectedProfession.professionID, frame.professionLibraryMode == "All")
         if refreshProfessionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame) end
     end
     if browserVisible(frame) and frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
@@ -1402,7 +1403,15 @@ local function createProfessionsPage(api, frame)
         elseif changed then
             frame.professionRecipeFilterModel = nil
             frame.professionRecipeFilterModelCatalog = nil
-            if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
+            frame.professionRecipeFilterModelMode = nil
+            if frame.selectedProfessionID then
+                openSelectedProfessionContext(frame, frame.selectedProfessionID, true)
+            end
+            if refreshProfessionRecipeFilterModel then
+                refreshProfessionRecipeFilterModel(frame, true)
+            elseif updateProfessionRecipeBrowser then
+                updateProfessionRecipeBrowser(frame)
+            end
         end
     end
     toggle.allRadio:SetScript("OnClick", function() selectProfessionLibraryMode("All") end)
@@ -1547,24 +1556,26 @@ end
 updateProfessionRecipeBrowser = function(frame, prepared)
     frame.recipeSearchGeneration = (frame.recipeSearchGeneration or 0) + 1
     local catalog = frame.professionCatalog or { state = "unavailable", recipes = {}, message = nil }
-    local ownMode = frame.professionLibraryMode == "Own"
-    local filterModel = ownMode and frame.professionRecipeFilterModel or nil
-    local recipes = ownMode and filterModel and filterModel.recipes
-        or (not ownMode and type(catalog.recipes) == "table" and catalog.recipes or {})
+    local mode = frame.professionLibraryMode
+    local ownMode = mode == "Own"
+    local filterModel = frame.professionRecipeFilterModelMode == mode and frame.professionRecipeFilterModel or nil
+    local recipes = filterModel and filterModel.recipes
+        or (type(catalog.recipes) == "table" and catalog.recipes or {})
     recipes = type(recipes) == "table" and recipes or {}
     local query = frame.professionSearchBox:GetText() or ""
     local function filterEntries()
-        if ownMode then
+        if filterModel then
             return GGM.FilterProfessionRecipeEntries(recipes, query, frame.professionRecipeFilterState)
         end
         return GGM.FilterProfessionRecipeBrowserEntries(recipes, query)
     end
-    if ownMode and not filterModel then
+    if not filterModel then
         frame.filteredProfessionRecipes = {}
         if frame.professionRecipeHeading then frame.professionRecipeHeading:Hide() end
         frame.professionCount:SetText("0 recipes")
-        frame.professionStatus:SetText(catalog.message
-            or "Waiting for live data from the selected character's profession.")
+        frame.professionStatus:SetText(catalog.message or
+            (ownMode and "Waiting for live data from the selected character's profession."
+                or "Waiting for live data to filter the guild recipe catalog for this character."))
         frame.professionStatus:Show()
         renderProfessionRows(frame)
         if GGM.RefreshRecipeDetailsWindow then GGM.RefreshRecipeDetailsWindow(frame) end
@@ -1593,29 +1604,29 @@ updateProfessionRecipeBrowser = function(frame, prepared)
     frame.professionCount:SetText(#filtered .. (#filtered == 1 and " recipe" or " recipes"))
 
     local status = catalog.message
-    if ownMode and filterModel and filterModel.availability
+    if filterModel and filterModel.availability
         and filterModel.availability.profession ~= "available" then
         status = status and (status .. " Live profession data is unavailable.")
             or "Live profession data is unavailable; the selected character's recipes cannot be verified."
-    elseif ownMode and filterModel and filterModel.availability
+    elseif filterModel and filterModel.availability
         and filterModel.availability.materials == "unavailable" then
         status = status and (status .. " Live material availability is unavailable.")
             or "Live material availability is unavailable; Have Materials excludes unverified recipes."
-    elseif ownMode and filterModel and filterModel.availability
+    elseif filterModel and filterModel.availability
         and filterModel.availability.bank == "unverified" then
         status = status and (status .. " Personal bank data has not been verified this session; Have Materials currently counts bags only.")
             or "Personal bank data has not been verified this session; Have Materials currently counts bags only. Open your character bank to include its materials."
-    elseif ownMode and filterModel and filterModel.availability
+    elseif filterModel and filterModel.availability
         and filterModel.availability.materials == "partial" then
         status = status and (status .. " Some live material counts are unavailable.")
             or "Some live material counts are unavailable; Have Materials excludes those recipes."
-    elseif ownMode and filterModel and filterModel.state == "partial" then
+    elseif filterModel and filterModel.state == "partial" then
         status = status and (status .. " Live recipe filter data is incomplete.")
             or "Live recipe filter data is incomplete; some recipes may be missing."
     end
     if (catalog.state == "ready" or catalog.state == "incomplete")
         and #recipes > 0 and #filtered == 0 then
-        local noMatch = ownMode and "No recipes match the current filters."
+        local noMatch = filterModel and "No recipes match the current filters."
             or "No recipes match this search."
         status = status and (status .. " " .. noMatch) or noMatch
     elseif catalog.state == "ready" and #recipes == 0 then
@@ -2023,13 +2034,13 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
     eventFrame:SetScript("OnEvent", function(_, event)
         if event == "BANKFRAME_OPENED" then frame.professionFilterBankVerified = true end
         if not browserVisible(frame) or frame.activeTab ~= "Professions"
-            or frame.professionLibraryMode ~= "Own" then return end
+            or (frame.professionLibraryMode ~= "Own" and frame.professionLibraryMode ~= "All") then return end
         if frame.professionFilterRefreshPending then return end
         frame.professionFilterRefreshPending = true
         local function refresh()
             frame.professionFilterRefreshPending = nil
             if browserVisible(frame) and frame.activeTab == "Professions"
-                and frame.professionLibraryMode == "Own" then
+                and (frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All") then
                 refreshProfessionRecipeFilterModel(frame, true)
             end
         end
@@ -2041,7 +2052,8 @@ end
 
 refreshProfessionFilterVisibility = function(frame)
     if not frame or not frame.professionFiltersButton then return false end
-    local shown = frame.professionLibraryMode == "Own" and frame.activeTab == "Professions"
+    local shown = (frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All")
+        and frame.activeTab == "Professions"
         and frame.selectedProfession ~= nil
         and frame.professionDetailPanel and frame.professionDetailPanel:IsShown()
     if shown then
@@ -2054,34 +2066,42 @@ refreshProfessionFilterVisibility = function(frame)
 end
 
 refreshProfessionRecipeFilterModel = function(frame, force)
-    if not frame or frame.professionLibraryMode ~= "Own" or not frame.selectedProfessionID
+    if not frame or (frame.professionLibraryMode ~= "Own" and frame.professionLibraryMode ~= "All")
+        or not frame.selectedProfessionID
         or frame.activeTab ~= "Professions" or not browserVisible(frame) then return false end
+    local mode = frame.professionLibraryMode
     local catalog = frame.professionCatalog
     if type(catalog) ~= "table" or type(catalog.recipes) ~= "table" then
         frame.professionRecipeFilterModel = nil
+        frame.professionRecipeFilterModelCatalog = nil
+        frame.professionRecipeFilterModelMode = nil
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
         return false
     end
     if not force and frame.professionRecipeFilterModel
         and frame.professionRecipeFilterModelCatalog == catalog
+        and frame.professionRecipeFilterModelMode == mode
         and frame.professionRecipeFilterModel.professionID == frame.selectedProfessionID then
         return false
     end
     if type(GGM.BuildProfessionRecipeFilterModel) ~= "function" then
         frame.professionRecipeFilterModel = nil
+        frame.professionRecipeFilterModelCatalog = nil
+        frame.professionRecipeFilterModelMode = nil
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
         return false
     end
     local selectedID, recipes = frame.selectedProfessionID, catalog.recipes
     local function build()
         return GGM.BuildProfessionRecipeFilterModel(frame.api, selectedID, recipes,
-            frame.professionFilterBankVerified == true)
+            frame.professionFilterBankVerified == true, mode == "All")
     end
     return browserRead(frame, "recipeFilterModel", "Professions", build, function(model)
-        if frame.professionCatalog ~= catalog or frame.professionLibraryMode ~= "Own"
+        if frame.professionCatalog ~= catalog or frame.professionLibraryMode ~= mode
             or frame.selectedProfessionID ~= selectedID then return end
         frame.professionRecipeFilterModel = type(model) == "table" and model or nil
         frame.professionRecipeFilterModelCatalog = catalog
+        frame.professionRecipeFilterModelMode = mode
         if frame.professionFiltersMenu and frame.professionFiltersMenu:IsShown() then
             renderProfessionFilterOptions(frame)
         end
@@ -2123,7 +2143,7 @@ flushProfessionCatalog = function(frame)
     end, function(catalog)
         frame.professionCatalog = catalog
         frame.professionDirty = nil
-        if frame.professionLibraryMode == "Own" and refreshProfessionRecipeFilterModel then
+        if refreshProfessionRecipeFilterModel then
             refreshProfessionRecipeFilterModel(frame, true)
         else
             updateProfessionRecipeBrowser(frame)
@@ -2193,8 +2213,9 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
         frame.professionLibraryToggle:Show()
         flushProfessionCatalog(frame)
         if browserVisible(frame) and frame.db then
-            if frame.professionLibraryMode == "Own" then
-                openSelectedProfessionContext(frame, frame.selectedProfessionID)
+            if frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All" then
+                openSelectedProfessionContext(frame, frame.selectedProfessionID,
+                    frame.professionLibraryMode == "All")
                 if refreshProfessionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame, true) end
             end
             GGM.SyncSelectedProfession(frame, false)
