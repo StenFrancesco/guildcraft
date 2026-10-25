@@ -70,6 +70,25 @@ T.test("appearance applies to main and independent recipe windows without changi
     T.assertEqual(b.recipeDetailsFrame.points[1][1], "CENTER")
 end)
 
+T.test("recipe details appearance helper leaves main and details positions alone", function()
+    local G, b, db = fixture({scale=0.85, recipeScale=1.2, opacity=0.7,
+        positionX=0.25, positionY=0.75})
+    b:SetScale(0.9)
+    b:SetPoint("TOPLEFT")
+    b.recipeDetailsFrame:SetScale(0.8)
+    b.recipeDetailsFrame:SetPoint("CENTER")
+    local browserPoint = b.points[1]
+    local detailsPoint = b.recipeDetailsFrame.points[1]
+
+    G.ApplyRecipeDetailsWindowSettings(b)
+
+    T.assertEqual(b.scale, 0.9, "details-only settings must not change main-window appearance")
+    T.assertEqual(b.recipeDetailsFrame.scale, 1.2)
+    T.assertEqual(b.recipeDetailsFrame.alpha, 0.7)
+    T.assertTrue(b.points[1] == browserPoint)
+    T.assertTrue(b.recipeDetailsFrame.points[1] == detailsPoint)
+end)
+
 T.test("actual window size fits the screen without erasing requested size", function()
     local G, b, db = fixture({scale=1.25}, 1000, 600)
     G.ApplyBrowserWindowSettings(b, db)

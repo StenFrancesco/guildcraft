@@ -66,6 +66,14 @@ function GGM.ApplyBrowserWindowSettings(browser, db)
         end
     end
     if saved.locked and browser.StopMovingOrSizing then browser:StopMovingOrSizing() end
+    GGM.ApplyRecipeDetailsWindowSettings(browser, db)
+end
+
+function GGM.ApplyRecipeDetailsWindowSettings(browser, db)
+    if not browser then return end
+    local saved = GGM.ReadBrowserWindowSettings(db or browser.db)
+    if not saved then return end
+    local root = browser.api and browser.api.UIParent
     local details = browser.recipeDetailsFrame
     if details then
         if details.SetScale then details:SetScale(fittedScale(details, root, saved.recipeScale)) end

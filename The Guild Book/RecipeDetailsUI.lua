@@ -1081,6 +1081,7 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     if browser.activeTab ~= "Professions" or type(recipe) ~= "table" then return nil end
     local canonical = findProfessionRecipe(browser, recipe.recipeID)
     if not canonical then return nil end
+    local firstDisplay = browser.recipeDetailsFrame == nil
     local details = browser.recipeDetailsFrame or createWindow(browser, canonical)
     local preserveSelection = details.recipeID == canonical.recipeID
     if not preserveSelection then details.amountInput:SetText("1") end
@@ -1093,8 +1094,8 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     details.professionName:SetText(browser.selectedProfession or "Profession")
     updateCrafters(details, canonical, preserveSelection)
     renderMaterials(details, GGM.BuildRecipeMaterialDetails(browser.api, canonical.recipeID))
-    if GGM.ApplyBrowserWindowSettings then GGM.ApplyBrowserWindowSettings(browser, browser.db) end
-    if GGM.PositionRecipeDetailsWindow then GGM.PositionRecipeDetailsWindow(browser, details) end
+    if GGM.ApplyRecipeDetailsWindowSettings then GGM.ApplyRecipeDetailsWindowSettings(browser) end
+    if firstDisplay and GGM.PositionRecipeDetailsWindow then GGM.PositionRecipeDetailsWindow(browser, details) end
     details:Show()
     if details.SetFrameStrata then details:SetFrameStrata("TOOLTIP") end
     if details.Raise then details:Raise() end

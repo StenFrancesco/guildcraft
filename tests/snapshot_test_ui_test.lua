@@ -4325,8 +4325,13 @@ T.test("recipe opens align independently and background refresh preserves dragge
     local G, api, browser, recipes, _, db = recipeDetailsFixture()
     api.UIParent:SetSize(2560, 1440)
     browser.left, browser.top = 100, 1300
-    db.uiSettings = {window={scale=1,opacity=0.7,autoAlignRecipe=true}}
+    db.uiSettings = {window={scale=1,opacity=0.7,autoAlignRecipe=true,positionX=0.25,positionY=0.75}}
+    browser:ClearAllPoints()
+    browser:SetPoint("TOPLEFT", api.UIParent, "TOPLEFT", 123, -456)
+    local browserAnchor = browser.point
     local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+    T.assertTrue(browser.point == browserAnchor,
+        "opening a recipe cannot apply saved main-window coordinates again")
     T.assertEqual(details.scale, 1)
     T.assertEqual(details.alpha, 0.7)
     T.assertEqual(details.point.relativeTo, api.UIParent)
@@ -4341,13 +4346,38 @@ T.test("recipe opens align independently and background refresh preserves dragge
     T.assertEqual(details.point.point, "CENTER")
     browser.left = 50
     T.assertEqual(details.point.point, "CENTER", "main window movement cannot attach recipe details")
+
+    browser:ClearAllPoints()
+    browser:SetPoint("BOTTOMLEFT", api.UIParent, "BOTTOMLEFT", 222, 333)
+    browserAnchor = browser.point
+    details:ClearAllPoints()
+    details:SetPoint("CENTER", api.UIParent, "CENTER", 15, -20)
+    local detailsAnchor = details.point
+    db.uiSettings.window.recipeScale = 0.9
+    db.uiSettings.window.opacity = 0.6
     G.ShowRecipeDetailsWindow(browser, recipes[2])
-    T.assertEqual(details.point.x, 1458)
+    T.assertTrue(browser.point == browserAnchor, "later recipe selections retain a manually moved browser")
+    T.assertTrue(details.point == detailsAnchor, "later recipe selections retain a manually moved details window")
+    T.assertEqual(details.scale, 0.9, "recipe appearance settings still apply while changing selection")
+    T.assertEqual(details.alpha, 0.6)
     db.uiSettings.window.autoAlignRecipe = false
     details:SetPoint("CENTER", api.UIParent, "CENTER", 0, 0)
     G.ShowRecipeDetailsWindow(browser, recipes[1])
     T.assertEqual(details.point.point, "CENTER")
 end)
+
+T.test("first recipe details display keeps its default anchor when auto-align is disabled", function()
+    local G, api, browser, recipes, _, db = recipeDetailsFixture()
+    db.uiSettings = { window = { autoAlignRecipe = false } }
+
+    local details = G.ShowRecipeDetailsWindow(browser, recipes[1])
+
+    T.assertEqual(details.point.point, "CENTER")
+    T.assertEqual(details.point.relativeTo, api.UIParent)
+    T.assertEqual(details.point.x, 100)
+    T.assertEqual(details.point.y, 0)
+end)
+
 T.test("recipe opening and main reopening preserve separately saved sizes", function()
     local G, api, browser, recipes, _, db = recipeDetailsFixture()
     db.uiSettings = {window={scale=0.8,recipeScale=1.2}}

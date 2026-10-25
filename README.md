@@ -47,14 +47,14 @@ restores its center position and clears the saved position, and **Reset
 appearance** restores both sizes and opacity to 100% without changing the
 other settings.
 
-**Auto-align recipe details** is enabled by default. Each time you open a recipe,
-its details line up with the top of the main browser, with a small gap on the
-right. If there is no room, they open on the left or stay within the screen.
-Both windows remain independently draggable after opening; background data
-refreshes do not reposition recipe details. Disable this option to retain the
-details window's last position within the session. Appearance, alignment
-preferences, and the main window position are account-wide; recipe details window
-positions remain session-only.
+**Auto-align recipe details** is enabled by default. The first time you open a
+recipe, its details line up with the top of the main browser, with a small gap on
+the right. If there is no room, they open on the left or stay within the screen.
+Both windows remain independently draggable after opening; selecting another
+recipe and background data refreshes preserve their current positions. Disable
+auto-align to keep the details window at its initial position. Appearance,
+alignment preferences, and the main window position are account-wide; recipe
+details window positions remain session-only.
 
 The browser initially opens Professions after login or reload. The left navigation
 is ordered Professions, Characters, then Bank. Closing and reopening the browser
