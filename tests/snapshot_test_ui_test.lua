@@ -1897,12 +1897,16 @@ T.test("closing Guild recipe details releases only its own crafting context", fu
     T.assertNil(browser.craftingContextSkillLineID)
 end)
 
-T.test("opening a Guild recipe during combat never opens a crafting profession", function()
+T.test("opening a Guild recipe during combat waits for the Open profession click", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
     local opened = 0
     local inCombat = true
     api.C_TradeSkillUI = {
-        OpenTradeSkill = function() opened = opened + 1; return true end,
+        OpenTradeSkill = function()
+            T.assertFalse(inCombat, "profession opening must wait until combat ends")
+            opened = opened + 1
+            return true
+        end,
         GetTradeSkillLine = function() return 164 end,
         GetRecipeInfo = function(recipeID)
             return { recipeID = recipeID, learned = true, craftable = true }
@@ -1918,6 +1922,11 @@ T.test("opening a Guild recipe during combat never opens a crafting profession",
     inCombat = false
     browser.recipeDetailsFrame.rosterEventFrame.scripts.OnEvent(
         browser.recipeDetailsFrame.rosterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertEqual(opened, 0, "combat ending must not call the profession API")
+    T.assertTrue(browser.recipeDetailsFrame.openProfessionButton:IsShown())
+    T.assertTrue(browser.recipeDetailsFrame.openProfessionButton.enabled)
+    browser.recipeDetailsFrame.openProfessionButton.scripts.OnClick(
+        browser.recipeDetailsFrame.openProfessionButton)
     T.assertEqual(opened, 1)
     T.assertTrue(browser.recipeDetailsFrame.createButton:IsShown())
 end)

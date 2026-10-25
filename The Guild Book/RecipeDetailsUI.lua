@@ -124,6 +124,13 @@ local function openGuildCraftingContext(details)
     return opened
 end
 
+local function requestGuildCraftingContext(details)
+    if openGuildCraftingContext(details) then
+        details.craftingContextRecipeID = details.recipeID
+    end
+    setActionMode(details, details.browser.professionLibraryMode == "Own")
+end
+
 local function hideProfessionFrame(details)
     local frame = details.api.ProfessionsFrame or details.api.TradeSkillFrame
     if frame and type(GGM.HideBlizzardProfessionPanel) == "function" then
@@ -780,6 +787,12 @@ local function createWhisperControls(details)
     details.whisperButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 96)
     details.whisperButton:SetScript("OnClick", function() sendCrafterWhisper(details) end)
 
+    details.openProfessionButton = createUIPanelButton(api, details, "Open profession", 180, 30)
+    details.openProfessionButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 64)
+    details.openProfessionButton:SetScript("OnClick", function()
+        requestGuildCraftingContext(details)
+    end)
+
     details.createButton = createUIPanelButton(api, details, "Create", 180, 30)
     details.createButton:SetPoint("BOTTOMRIGHT", details, "BOTTOMRIGHT", -36, 106)
     details.createButton:SetScript("OnClick", function()
@@ -846,7 +859,6 @@ local function createWhisperControls(details)
             or event == "GET_ITEM_INFO_RECEIVED" then
             refreshMaterialDetails()
         end
-        if event == "PLAYER_REGEN_ENABLED" then openGuildCraftingContext(details) end
         if event == "TRADE_SKILL_CLOSE" then
             details.craftingContextRecipeID = nil
             details.openedCraftingContext = nil
@@ -911,6 +923,13 @@ setActionMode = function(details, ownMode)
     visible(details.whisperPresenceStatus, not details.ownMode)
     visible(details.whisperStatus, not details.ownMode)
     visible(details.whisperButton, not details.ownMode)
+    visible(details.openProfessionButton, not details.ownMode and not details.craftMode)
+    if details.openProfessionButton then
+        local combatOK, inCombat = pcall(details.api.InCombatLockdown)
+        local secretOK, secret = pcall(details.api.issecretvalue, inCombat)
+        details.openProfessionButton:SetEnabled(combatOK and secretOK and secret == false
+            and inCombat == false)
+    end
     visible(details.createButton, details.craftMode)
     visible(details.createAllButton, details.craftMode)
     visible(details.craftStatus, details.craftMode)

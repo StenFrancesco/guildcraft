@@ -77,8 +77,10 @@ In All, recipe details also show Create and Create All beneath Whisper crafter
 when the current character knows the recipe in the active profession. Live game
 recipe data controls whether crafting is available; a saved guild crafter entry
 alone never enables it. Crafting begins only after a click. Closing the recipe
-details releases a profession context opened for that Guild recipe. The Own
-filter retains its existing crafting controls.
+details releases a profession context opened for that Guild recipe. If that
+context is unavailable after opening a recipe during combat, click **Open
+profession** after combat to enable Guild crafting. The Own filter retains its
+existing crafting controls.
 
 The Characters page shows the selected character's Classic class icon in the
 portrait frame. It uses built-in game artwork and saves an optional `classToken`
