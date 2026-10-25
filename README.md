@@ -75,6 +75,21 @@ When Own has no captured professions, the recipe panel is hidden and no
 profession is selected. Switching from All to Own selects a listed profession
 or clears the previous selection when the list is empty.
 
+In Own, open **Filters** beside recipe search to filter the selected character's
+recipes. **Show learned**, **Show unlearned**, and **Have Materials** start
+checked. Have Materials shows learned recipes the current profession API reports
+that character can craft now; bag, personal-bank, and reagent-bank changes refresh
+the results. If live material availability cannot be verified, those recipes are
+excluded and the browser reports the unavailable data. This uses live character
+craftability, not another character's or a guild bank's saved stock. Categories
+come from the active profession's live headings, and Slots come from the
+profession's actual equipment outputs or
+Enchanting targets. Expand a group to choose individual options; checking a
+parent selects its children, and a partial selection is shown as mixed. Leaving
+Categories or Slots empty shows all values for that dimension. Multiple choices
+within one dimension match with OR; active filters and recipe search combine
+with AND. All keeps its existing catalog search behavior.
+
 In All, recipe details also show Create and Create All beneath Whisper crafter
 when the current character knows the recipe in the active profession. Live game
 recipe data controls whether crafting is available; a saved guild crafter entry
