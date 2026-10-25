@@ -4738,7 +4738,8 @@ local function professionFilterFixture()
             node("slot:mace", "Two-Handed Maces"),
             node("slot:sword", "One-Handed Swords"),
         }) },
-        availability = { profession = "available", materials = "available", categories = "available", slots = "available" },
+        availability = { profession = "available", materials = "available", bank = "verified",
+            categories = "available", slots = "available" },
     }
     G.BuildProfessionRecipeFilterModel = function() return model end
     installProfessionCatalogStub(G, function()
@@ -4822,12 +4823,17 @@ end)
 
 T.test("bag and personal bank changes refresh Have Materials for the selected character", function()
     local _, _, frame, model = professionFilterFixture()
+    T.assertFalse(frame.professionFilterBankVerified, "a new session starts with unverified bank contents")
     T.assertTrue(frame.professionFilterEventFrame.registeredEvents.BAG_UPDATE_DELAYED)
     T.assertTrue(frame.professionFilterEventFrame.registeredEvents.BANKFRAME_OPENED)
     T.assertTrue(frame.professionFilterEventFrame.registeredEvents.BANKFRAME_CLOSED)
     T.assertTrue(frame.professionFilterEventFrame.registeredEvents.PLAYERREAGENTBANKSLOTS_CHANGED)
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
+
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BANKFRAME_OPENED")
+    T.assertTrue(frame.professionFilterBankVerified, "opening the character bank verifies its current session contents")
+    T.assertTrue(frame.professionFiltersMenu:IsShown(), "bank refreshes do not dismiss the menu")
 
     model.recipes[1].craftable = false
     frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
@@ -4836,6 +4842,7 @@ T.test("bag and personal bank changes refresh Have Materials for the selected ch
 
     model.recipes[1].craftable = true
     frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BANKFRAME_CLOSED")
+    T.assertTrue(frame.professionFilterBankVerified, "closing the bank keeps this session's fresh snapshot usable")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
 
     model.recipes[1].craftable = false

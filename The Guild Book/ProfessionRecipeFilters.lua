@@ -87,6 +87,7 @@ local function newFilterModel(professionID)
         availability = {
             profession = "unavailable",
             materials = "unavailable",
+            bank = "unverified",
             categories = "unavailable",
             slots = "unavailable",
         },
@@ -457,7 +458,54 @@ local function sortSlotTree(roots)
     end
 end
 
-function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes)
+local function denseArraySize(api, value, maximum)
+    if not public(api, value) or type(value) ~= "table" then return nil end
+    local count, highest = 0, 0
+    for key, entry in pairs(value) do
+        checkpoint()
+        if not positiveInteger(api, key) or key > maximum or not public(api, entry) then return nil end
+        count, highest = count + 1, math.max(highest, key)
+    end
+    if count ~= highest then return nil end
+    return count
+end
+
+local function recipeCraftableFromMaterials(api, recipe, includeBank, noMaterialCraftable)
+    if type(GGM.BuildRecipeMaterialDetails) ~= "function"
+        or type(GGM.CreateMaterialTrackingSnapshot) ~= "function"
+        or type(GGM.BuildMaterialTrackingRows) ~= "function" then
+        return false, nil, false
+    end
+    local detailsOK, details = pcall(GGM.BuildRecipeMaterialDetails, api, recipe.recipeID)
+    if not detailsOK or type(details) ~= "table" or details.state ~= "ready"
+        or type(details.materials) ~= "table" then return false, nil, false end
+    local snapshot = GGM.CreateMaterialTrackingSnapshot(api, recipe.recipeID, recipe.name, 1, details)
+    if not snapshot then
+        for _, group in ipairs(details.materials) do
+            checkpoint()
+            if type(group) == "table" and group.optional ~= true then
+                return false, nil, false
+            end
+        end
+        local craftable = noMaterialCraftable == true
+        return craftable, craftable and 1 or 0, true
+    end
+    local rowsOK, rows = pcall(GGM.BuildMaterialTrackingRows, api, snapshot, includeBank == true)
+    if not rowsOK or type(rows) ~= "table" or #rows ~= #snapshot.materials then
+        return false, nil, false
+    end
+    for _, row in ipairs(rows) do
+        checkpoint()
+        if type(row) ~= "table" or type(row.complete) ~= "boolean" then return false, nil, false end
+        if not row.complete then
+            if row.unknown == true then return false, nil, false end
+            return false, 0, true
+        end
+    end
+    return true, 1, true
+end
+
+function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes, bankVerified)
     local model = newFilterModel(professionID)
     if type(api) ~= "table" or not positiveInteger(api, professionID) or type(catalogRecipes) ~= "table" then
         return model
@@ -508,6 +556,59 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes)
         end
     end
     model.availability.profession = "available"
+    bankVerified = bankVerified == true
+    model.availability.bank = bankVerified and "verified" or "unverified"
+
+    local savedRecipesByID = recipesByID
+    local liveRecipeInfoByID = {}
+    local liveRecipeIDsOK, liveRecipeIDs = call(api, trade.GetAllRecipeIDs)
+    local liveRecipeCount = liveRecipeIDsOK and denseArraySize(api, liveRecipeIDs, MAX_RECIPES) or nil
+    if liveRecipeCount ~= nil then
+        local liveRecipes, liveRecipesByID = {}, {}
+        for index = 1, liveRecipeCount do
+            checkpoint()
+            local recipeID = rawget(liveRecipeIDs, index)
+            if not positiveInteger(api, recipeID) or liveRecipesByID[recipeID] then
+                model.state = "partial"
+            else
+                local infoOK, info = call(api, trade.GetRecipeInfo, recipeID)
+                local learned
+                if infoOK then learned = field(api, info, "learned") end
+                local name = infoOK and field(api, info, "name") or nil
+                local saved = savedRecipesByID[recipeID]
+                if infoOK and type(info) == "table" then
+                    if type(name) ~= "string" or name == "" or #name > 512 then
+                        name = saved and saved.name or nil
+                    end
+                    if type(name) == "string" and name ~= "" and #name <= 512 then
+                        local icon = field(api, info, "icon")
+                        local recipe = cloneCatalogRecipe(api, {
+                            recipeID = recipeID,
+                            name = name,
+                            outputIcon = icon,
+                        })
+                        if recipe then
+                            liveRecipesByID[recipeID] = recipe
+                            liveRecipes[#liveRecipes + 1] = recipe
+                            liveRecipeInfoByID[recipeID] = info
+                            if type(learned) ~= "boolean" then model.state = "partial" end
+                        else
+                            model.state = "partial"
+                        end
+                    else
+                        model.state = "partial"
+                    end
+                else
+                    model.state = "partial"
+                end
+            end
+        end
+        model.recipes, recipesByID = liveRecipes, liveRecipesByID
+        model.liveRecipeListAvailable = model.state ~= "partial"
+    else
+        model.state = "partial"
+        model.liveRecipeListAvailable = false
+    end
 
     local categoryRoots, _, getCategoryPath, sortCategoryTree, getCategoryStatus = categoryNodeBuilder(api, trade, model)
     local categoryIncomplete = false
@@ -519,12 +620,19 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes)
     end
 
     local slotRoots = {}
-    local materialUnavailable, materialPartial = type(trade.GetCraftableCount) ~= "function", false
+    local materialUnavailable = type(GGM.BuildRecipeMaterialDetails) ~= "function"
+        or type(GGM.CreateMaterialTrackingSnapshot) ~= "function"
+        or type(GGM.BuildMaterialTrackingRows) ~= "function"
+    local materialPartial = false
     local metadataPartial = model.state == "partial"
     local slotMetadataPartial = false
     for _, recipe in ipairs(model.recipes) do
         checkpoint()
-        local recipeOK, info = call(api, trade.GetRecipeInfo, recipe.recipeID)
+        local info = liveRecipeInfoByID[recipe.recipeID]
+        local recipeOK = info ~= nil
+        if not recipeOK and liveRecipeCount == nil then
+            recipeOK, info = call(api, trade.GetRecipeInfo, recipe.recipeID)
+        end
         if not recipeOK or type(info) ~= "table" then
             metadataPartial = true
             materialPartial = true
@@ -545,17 +653,11 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes)
                 if positiveInteger(api, liveIcon) then recipe.outputIcon = liveIcon end
 
                 if learned then
-                    if field(api, info, "craftable") == true and type(trade.GetCraftableCount) == "function" then
-                        local countOK, count = call(api, trade.GetCraftableCount, recipe.recipeID)
-                        if countOK and nonnegativeInteger(api, count) then
-                            recipe.craftableCount = count
-                            recipe.craftable = count > 0
-                        else
-                            materialPartial = true
-                            recipe.metadataState = "partial"
-                        end
-                    elseif field(api, info, "craftable") == false then
-                        recipe.craftableCount = 0
+                    local craftable, count, materialOK = recipeCraftableFromMaterials(api, recipe,
+                        bankVerified, field(api, info, "craftable"))
+                    if materialOK then
+                        recipe.craftable = craftable
+                        recipe.craftableCount = count
                     else
                         materialPartial = true
                         recipe.metadataState = "partial"
@@ -599,10 +701,10 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes)
     model.availability.categories = categorySourceAvailable and not categoryIncomplete
         and "available" or (#categoryRoots > 0 and "partial" or "unavailable")
     model.availability.materials = materialUnavailable and "unavailable"
-        or (materialPartial and "partial" or "available")
+        or ((materialPartial or not bankVerified) and "partial" or "available")
     model.availability.slots = #slotRoots > 0 and (slotMetadataPartial and "partial" or "available")
         or (slotMetadataPartial and "partial" or "none")
-    model.state = (metadataPartial or categoryIncomplete or slotMetadataPartial or materialPartial)
+    model.state = (metadataPartial or categoryIncomplete or slotMetadataPartial or materialPartial or not bankVerified)
         and "partial" or "ready"
     if model.state == "ready" and materialUnavailable then model.state = "partial" end
     return model

@@ -110,12 +110,13 @@ function GGM.LoadMaterialTracking(api, db)
     return GGM.ValidateMaterialTrackingSnapshot(api, db.materialTracking[guid])
 end
 
-local function ownedCount(api, choice)
+local function ownedCount(api, choice, includeBank)
     local ok, value
     if choice.itemID then
         local fn = type(api.C_Item) == "table" and api.C_Item.GetItemCount or api.GetItemCount
         if type(fn) ~= "function" then return nil end
-        ok, value = pcall(fn, choice.itemID, false, false, false, false)
+        local bankItems = includeBank == true
+        ok, value = pcall(fn, choice.itemID, bankItems, false, bankItems, false)
     else
         local fn = type(api.C_CurrencyInfo) == "table" and api.C_CurrencyInfo.GetCurrencyInfo
         if type(fn) ~= "function" then return nil end
@@ -138,7 +139,7 @@ local function choiceName(api, choice)
     return choice.name
 end
 
-function GGM.BuildMaterialTrackingRows(api, snapshot)
+function GGM.BuildMaterialTrackingRows(api, snapshot, includeBank)
     local saved = GGM.ValidateMaterialTrackingSnapshot(api, snapshot)
     if not saved then return {} end
     local rows, edges, capacity, resources = {}, {}, {}, {}
@@ -160,7 +161,7 @@ function GGM.BuildMaterialTrackingRows(api, snapshot)
                 seen[key] = true
                 names[#names + 1] = choiceName(api, choice)
                 if resources[key] == nil then
-                    local count = ownedCount(api, choice)
+                    local count = ownedCount(api, choice, includeBank)
                     resources[key] = count or false
                     edge(key, sink, count or 0)
                 end

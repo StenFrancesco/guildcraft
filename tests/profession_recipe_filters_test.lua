@@ -2,6 +2,8 @@ local T = require("tests.testlib")
 
 local function loadFilters()
     local GGM = {}
+    T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
+    T.loadAddonFile("The Guild Book/MaterialTracker.lua", GGM)
     T.loadAddonFile("The Guild Book/ProfessionRecipeFilters.lua", GGM)
     return GGM
 end
@@ -18,12 +20,14 @@ end
 
 local SECRET = {}
 
-local function modelAPI(professionID, recipeInfo, craftableCounts, categories, outputItems, enchantTargets)
+local function modelAPI(professionID, recipeInfo, craftableCounts, categories, outputItems, enchantTargets, inventories)
     local categoryIDs = {}
     for id in pairs(categories or {}) do categoryIDs[#categoryIDs + 1] = id end
     table.sort(categoryIDs)
-    local api = {
+    local api
+    api = {
         issecretvalue = function(value) return value == SECRET end,
+        InCombatLockdown = function() return false end,
         C_TradeSkillUI = {
             IsTradeSkillReady = function() return true end,
             IsTradeSkillLinked = function() return false end,
@@ -31,10 +35,20 @@ local function modelAPI(professionID, recipeInfo, craftableCounts, categories, o
             GetCategories = function() return unpack(categoryIDs) end,
             GetCategoryInfo = function(categoryID) return (categories or {})[categoryID] end,
             GetRecipeInfo = function(recipeID) return (recipeInfo or {})[recipeID] end,
+            GetAllRecipeIDs = function()
+                local ids = {}
+                for recipeID in pairs(recipeInfo or {}) do ids[#ids + 1] = recipeID end
+                table.sort(ids)
+                return ids
+            end,
             GetCraftableCount = function(recipeID) return (craftableCounts or {})[recipeID] end,
             GetRecipeSchematic = function(recipeID)
                 local itemID = (outputItems or {})[recipeID]
-                return { outputItemID = itemID }
+                local schematic = (outputItems or {}).schematics and (outputItems or {}).schematics[recipeID]
+                schematic = schematic or {}
+                schematic.outputItemID = itemID or schematic.outputItemID
+                schematic.reagentSlotSchematics = schematic.reagentSlotSchematics or {}
+                return schematic
             end,
             GetRecipeOutputItemData = function(recipeID)
                 local itemID = (outputItems or {})[recipeID]
@@ -43,6 +57,21 @@ local function modelAPI(professionID, recipeInfo, craftableCounts, categories, o
             GetEnchantItems = function(recipeID) return (enchantTargets or {})[recipeID] or {} end,
         },
         C_Item = {
+            GetItemCount = function(itemID, includeBank, includeUses, includeReagentBank, includeAccountBank)
+                api.countScopes = api.countScopes or {}
+                api.countScopes[#api.countScopes + 1] = {
+                    includeBank = includeBank,
+                    includeUses = includeUses,
+                    includeReagentBank = includeReagentBank,
+                    includeAccountBank = includeAccountBank,
+                }
+                inventories = inventories or {}
+                local count = ((inventories.bags or {})[itemID] or 0)
+                if includeBank then count = count + ((inventories.bank or {})[itemID] or 0) end
+                if includeReagentBank then count = count + ((inventories.reagentBank or {})[itemID] or 0) end
+                if includeAccountBank then count = count + ((inventories.accountBank or {})[itemID] or 0) end
+                return count
+            end,
             GetItemInfoInstant = function(itemID)
                 local item = (outputItems or {}).items and outputItems.items[itemID]
                 if not item then return itemID, nil, nil, nil, nil, nil, nil end
@@ -194,7 +223,7 @@ T.test("profession recipe filter returns a dense result and does not mutate inpu
     T.assertEqual(entries[2], false)
 end)
 
-T.test("profession recipe filter model reads current learned state and craftable count", function()
+T.test("profession recipe filter model reads current learned state and material availability", function()
     local GGM = loadFilters()
     local api = modelAPI(171, {
         [101] = { recipeID = 101, name = "Known", categoryID = 10, learned = true, craftable = true },
@@ -204,11 +233,11 @@ T.test("profession recipe filter model reads current learned state and craftable
     local model = GGM.BuildProfessionRecipeFilterModel(api, 171, {
         { recipeID = 101, name = "Known" },
         { recipeID = 102, name = "Unknown" },
-    })
+    }, true)
 
     T.assertEqual(model.state, "ready")
     T.assertTrue(model.recipes[1].learned)
-    T.assertEqual(model.recipes[1].craftableCount, 2)
+    T.assertEqual(model.recipes[1].craftableCount, 1)
     T.assertTrue(model.recipes[1].craftable)
     T.assertFalse(model.recipes[2].learned)
     T.assertFalse(model.recipes[2].craftable)
@@ -287,36 +316,129 @@ T.test("profession recipe filter model derives Enchanting targets from matching 
     T.assertEqual(#model.recipes[1].slotKeys, 2)
 end)
 
-T.test("profession recipe filter model accepts the live craftable count for alternative reagents", function()
+T.test("profession recipe filter model allocates alternative reagents from bag counts", function()
     local GGM = loadFilters()
     local api = modelAPI(171, {
         [320] = { recipeID = 320, name = "Either reagent", categoryID = 10, learned = true, craftable = true },
     }, { [320] = 1 }, { [10] = { categoryID = 10, name = "Potions" } })
-    api.C_TradeSkillUI.GetRecipeSchematic = function()
+    api.C_TradeSkillUI.GetRecipeSchematic = function(recipeID)
         return { outputItemID = 501, reagentSlotSchematics = {
             { required = true, quantityRequired = 1, reagents = { { itemID = 601 }, { itemID = 602 } } },
         } }
     end
-
-    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, { { recipeID = 320, name = "Either reagent" } })
+    api.C_Item.GetItemCount = function(itemID) return itemID == 602 and 1 or 0 end
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, { { recipeID = 320, name = "Either reagent" } }, true)
 
     T.assertTrue(model.recipes[1].craftable)
     T.assertEqual(model.recipes[1].craftableCount, 1)
 end)
 
-T.test("profession recipe filter model fails closed when live bank craftability is unavailable", function()
+T.test("Have Materials excludes account-bank stock and uses only selected character inventory", function()
     local GGM = loadFilters()
     local api = modelAPI(171, {
         [330] = { recipeID = 330, name = "Bank-backed", categoryID = 10, learned = true, craftable = true },
-    }, nil, { [10] = { categoryID = 10, name = "Potions" } })
-    api.C_TradeSkillUI.GetCraftableCount = nil
-    api.savedMaterialBanks = { [500] = 999 }
+    }, nil, { [10] = { categoryID = 10, name = "Potions" } }, nil, nil, {
+        accountBank = { [500] = 99 },
+    })
+    api.C_TradeSkillUI.GetRecipeSchematic = function()
+        return { reagentSlotSchematics = {
+            { required = true, quantityRequired = 1, reagents = { { itemID = 500 } } },
+        } }
+    end
+    api.C_TradeSkillUI.GetCraftableCount = function()
+        error("must not use the profession window's broader inventory scope")
+    end
 
-    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, { { recipeID = 330, name = "Bank-backed" } })
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, { { recipeID = 330, name = "Bank-backed" } }, true)
+
+    T.assertFalse(model.recipes[1].craftable)
+    T.assertEqual(model.recipes[1].craftableCount, 0)
+    T.assertEqual(model.availability.materials, "available")
+    T.assertTrue(#api.countScopes > 0)
+    T.assertFalse(api.countScopes[1].includeAccountBank)
+    T.assertTrue(api.countScopes[1].includeBank)
+    T.assertTrue(api.countScopes[1].includeReagentBank)
+end)
+
+T.test("Have Materials reports unavailable inventory counts instead of treating them as empty", function()
+    local GGM = loadFilters()
+    local api = modelAPI(171, {
+        [332] = { recipeID = 332, name = "Unreadable reagents", categoryID = 10, learned = true, craftable = true },
+    }, nil, { [10] = { categoryID = 10, name = "Potions" } })
+    api.C_TradeSkillUI.GetRecipeSchematic = function()
+        return { reagentSlotSchematics = {
+            { required = true, quantityRequired = 1, reagents = { { itemID = 511 } } },
+        } }
+    end
+    api.C_Item.GetItemCount = nil
+
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 332, name = "Unreadable reagents" },
+    }, true)
 
     T.assertFalse(model.recipes[1].craftable)
     T.assertNil(model.recipes[1].craftableCount)
-    T.assertEqual(model.availability.materials, "unavailable")
+    T.assertEqual(model.availability.materials, "partial")
+end)
+
+T.test("unverified bank materials are excluded until this character's bank is opened", function()
+    local GGM = loadFilters()
+    local inventories = { bags = {}, bank = { [510] = 1 } }
+    local api = modelAPI(171, {
+        [331] = { recipeID = 331, name = "Personal bank recipe", categoryID = 10, learned = true, craftable = true },
+    }, nil, { [10] = { categoryID = 10, name = "Potions" } }, nil, nil, inventories)
+    api.C_TradeSkillUI.GetRecipeSchematic = function()
+        return { reagentSlotSchematics = {
+            { required = true, quantityRequired = 1, reagents = { { itemID = 510 } } },
+        } }
+    end
+
+    local unverified = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 331, name = "Personal bank recipe" },
+    }, false)
+    T.assertFalse(unverified.recipes[1].craftable)
+    T.assertEqual(unverified.availability.bank, "unverified")
+    T.assertEqual(unverified.availability.materials, "partial")
+    T.assertFalse(api.countScopes[1].includeBank)
+    T.assertFalse(api.countScopes[1].includeReagentBank)
+
+    inventories.bags[510] = 1
+    local bagsOnly = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 331, name = "Personal bank recipe" },
+    }, false)
+    T.assertTrue(bagsOnly.recipes[1].craftable, "bag materials remain usable before opening the bank")
+    T.assertFalse(api.countScopes[#api.countScopes].includeBank)
+    inventories.bags[510] = nil
+
+    local verified = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 331, name = "Personal bank recipe" },
+    }, true)
+    T.assertTrue(verified.recipes[1].craftable)
+    T.assertEqual(verified.availability.bank, "verified")
+    T.assertTrue(api.countScopes[#api.countScopes].includeBank)
+    T.assertFalse(api.countScopes[#api.countScopes].includeAccountBank)
+end)
+
+T.test("unlearned live recipes absent from the saved catalog appear when Have Materials is off", function()
+    local GGM = loadFilters()
+    local api = modelAPI(171, {
+        [340] = { recipeID = 340, name = "Known Potion", categoryID = 10, learned = true, craftable = true },
+        [341] = { recipeID = 341, name = "Unlearned Potion", categoryID = 10, learned = false, craftable = false },
+    }, nil, { [10] = { categoryID = 10, name = "Potions" } })
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 340, name = "Known Potion" },
+    }, true)
+    local filtered = GGM.FilterProfessionRecipeEntries(model.recipes, "", {
+        showLearned = true,
+        showUnlearned = true,
+        haveMaterials = false,
+        categoryIDs = {},
+        slotKeys = {},
+    })
+    T.assertEqual(#model.recipes, 2)
+    T.assertEqual(#filtered, 2)
+    T.assertFalse(filtered[2].learned)
+    T.assertEqual(filtered[2].name, "Unlearned Potion")
 end)
 
 T.test("profession recipe filter model marks secret recipe fields unavailable", function()

@@ -77,11 +77,14 @@ or clears the previous selection when the list is empty.
 
 In Own, open **Filters** beside recipe search to filter the selected character's
 recipes. **Show learned**, **Show unlearned**, and **Have Materials** start
-checked. Have Materials shows learned recipes the current profession API reports
-that character can craft now; bag, personal-bank, and reagent-bank changes refresh
-the results. If live material availability cannot be verified, those recipes are
-excluded and the browser reports the unavailable data. This uses live character
-craftability, not another character's or a guild bank's saved stock. Categories
+checked. Have Materials shows learned recipes whose required reagents the selected
+character currently has. It counts bags immediately. Open that character's bank
+once per session to verify and include personal-bank and reagent-bank items; until
+then, bank stock is excluded and the browser reports that only bags are counted.
+Shared account-bank, guild-bank, and other-character stock are excluded. If live
+material availability cannot be verified, those recipes are excluded and the
+browser reports the unavailable data. Bag and bank changes refresh the results.
+Categories
 come from the active profession's live headings, and Slots come from the
 profession's actual equipment outputs or
 Enchanting targets. Expand a group to choose individual options; checking a

@@ -1602,6 +1602,10 @@ updateProfessionRecipeBrowser = function(frame, prepared)
         status = status and (status .. " Live material availability is unavailable.")
             or "Live material availability is unavailable; Have Materials excludes unverified recipes."
     elseif ownMode and filterModel and filterModel.availability
+        and filterModel.availability.bank == "unverified" then
+        status = status and (status .. " Personal bank data has not been verified this session; Have Materials currently counts bags only.")
+            or "Personal bank data has not been verified this session; Have Materials currently counts bags only. Open your character bank to include its materials."
+    elseif ownMode and filterModel and filterModel.availability
         and filterModel.availability.materials == "partial" then
         status = status and (status .. " Some live material counts are unavailable.")
             or "Some live material counts are unavailable; Have Materials excludes those recipes."
@@ -1813,9 +1817,11 @@ renderProfessionFilterOptions = function(frame)
                 and "Selected character's live profession data is unavailable."
                 or (model.availability and model.availability.materials == "unavailable"
                     and "Live material availability is unavailable."
-                    or (model.availability and model.availability.materials == "partial"
-                        and "Some live material counts are unavailable; unverified recipes are hidden."
-                        or (model.state == "partial" and "Some live filter data is unavailable." or ""))))
+                    or (model.availability and model.availability.bank == "unverified"
+                        and "Personal bank unverified; Have Materials counts bags only."
+                        or (model.availability and model.availability.materials == "partial"
+                            and "Some live material counts are unavailable; unverified recipes are hidden."
+                            or (model.state == "partial" and "Some live filter data is unavailable." or "")))))
         frame.professionFilterModelLabel:SetText(message)
         if message ~= "" then frame.professionFilterModelLabel:Show() else frame.professionFilterModelLabel:Hide() end
     end
@@ -1935,6 +1941,7 @@ end
 createProfessionRecipeFilterUI = function(api, panel, frame)
     frame.professionRecipeFilterState = GGM.CreateProfessionRecipeFilterState()
     frame.professionRecipeFilterExpanded = { categories = {}, slots = {} }
+    frame.professionFilterBankVerified = false
     frame.professionFilterControls = { categories = {}, slots = {} }
     frame.professionFilterNodeControls = { categories = {}, slots = {} }
     frame.professionFilterSectionLabels, frame.professionFilterEmptyLabels = {}, {}
@@ -2006,7 +2013,8 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
         "TRADE_SKILL_DATA_SOURCE_CHANGED" }) do
         if eventFrame.RegisterEvent then pcall(eventFrame.RegisterEvent, eventFrame, event) end
     end
-    eventFrame:SetScript("OnEvent", function()
+    eventFrame:SetScript("OnEvent", function(_, event)
+        if event == "BANKFRAME_OPENED" then frame.professionFilterBankVerified = true end
         if not browserVisible(frame) or frame.activeTab ~= "Professions"
             or frame.professionLibraryMode ~= "Own" then return end
         if frame.professionFilterRefreshPending then return end
@@ -2059,7 +2067,8 @@ refreshProfessionRecipeFilterModel = function(frame, force)
     end
     local selectedID, recipes = frame.selectedProfessionID, catalog.recipes
     local function build()
-        return GGM.BuildProfessionRecipeFilterModel(frame.api, selectedID, recipes)
+        return GGM.BuildProfessionRecipeFilterModel(frame.api, selectedID, recipes,
+            frame.professionFilterBankVerified == true)
     end
     return browserRead(frame, "recipeFilterModel", "Professions", build, function(model)
         if frame.professionCatalog ~= catalog or frame.professionLibraryMode ~= "Own"

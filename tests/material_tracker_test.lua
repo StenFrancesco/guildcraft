@@ -8,7 +8,8 @@ local function fixture()
         issecretvalue = function() return false end,
         UnitGUID = function() return "Player-1-ABC" end,
         C_Item = { GetItemCount = function(id, bank, uses, reagentBank, accountBank)
-            T.assertFalse(bank); T.assertFalse(uses); T.assertFalse(reagentBank); T.assertFalse(accountBank)
+            T.assertFalse(uses); T.assertFalse(accountBank)
+            if bank then T.assertTrue(reagentBank) else T.assertFalse(reagentBank) end
             return counts[id] or 0
         end },
         C_CurrencyInfo = { GetCurrencyInfo = function() return { quantity = 3 } end },
@@ -19,6 +20,23 @@ local function fixture()
     } }
     return GGM, api, counts, model
 end
+
+T.test("material rows include personal bank and reagent bank only when the caller verifies them", function()
+    local GGM, api, _, model = fixture()
+    local saved = assert(GGM.CreateMaterialTrackingSnapshot(api, 123, "Bag", 1, model))
+    local sawBankScope = false
+    api.C_Item.GetItemCount = function(id, bank, uses, reagentBank, accountBank)
+        T.assertTrue(bank)
+        T.assertFalse(uses)
+        T.assertTrue(reagentBank)
+        T.assertFalse(accountBank)
+        sawBankScope = true
+        return id == 101 and 5 or 0
+    end
+    local rows = GGM.BuildMaterialTrackingRows(api, saved, true)
+    T.assertTrue(sawBankScope)
+    T.assertTrue(rows[1].complete)
+end)
 
 T.test("tracker snapshots required materials and multiplies craft quantity without changing source", function()
     local GGM, api, _, model = fixture()
