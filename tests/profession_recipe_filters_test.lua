@@ -262,6 +262,53 @@ T.test("profession recipe filter model reads current learned state and material 
     T.assertEqual(model.availability.materials, "available")
 end)
 
+T.test("profession filter model counts complete crafts from bags only", function()
+    local GGM = loadFilters()
+    local inventories = { bags = { [601] = 7, [602] = 10 }, bank = { [601] = 200, [602] = 300 } }
+    local api = modelAPI(171, {
+        [103] = { recipeID = 103, name = "Bag count", categoryID = 10, learned = true, craftable = true },
+    }, nil, { [10] = { categoryID = 10, name = "Potions" } }, nil, nil, inventories)
+    api.C_TradeSkillUI.GetRecipeSchematic = function()
+        return { reagentSlotSchematics = {
+            { required = true, quantityRequired = 2, reagents = { { itemID = 601 } } },
+            { required = true, quantityRequired = 3, reagents = { { itemID = 602 } } },
+        } }
+    end
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 103, name = "Bag count" },
+    }, true)
+
+    T.assertEqual(model.recipes[1].bagCraftableCount, 3,
+        "bag counts allow three crafts even though the verified bank holds more")
+    local bagScope
+    for _, scope in ipairs(api.countScopes) do
+        if scope.includeBank == false and scope.includeReagentBank == false then bagScope = scope end
+    end
+    T.assertNotNil(bagScope, "bag craft counts perform an inventory read without bank flags")
+    T.assertFalse(bagScope.includeAccountBank, "bag craft counts exclude account-bank contents")
+end)
+
+T.test("profession bag craft count allocates shared alternative materials only once", function()
+    local GGM = loadFilters()
+    local api = modelAPI(171, {
+        [104] = { recipeID = 104, name = "Shared choices", categoryID = 10, learned = true, craftable = true },
+    }, nil, { [10] = { categoryID = 10, name = "Potions" } }, nil, nil, {
+        bags = { [611] = 5, [612] = 2 },
+    })
+    api.C_TradeSkillUI.GetRecipeSchematic = function()
+        return { reagentSlotSchematics = {
+            { required = true, quantityRequired = 2, reagents = { { itemID = 611 }, { itemID = 612 } } },
+            { required = true, quantityRequired = 1, reagents = { { itemID = 611 } } },
+        } }
+    end
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, {
+        { recipeID = 104, name = "Shared choices" },
+    }, true)
+
+    T.assertEqual(model.recipes[1].bagCraftableCount, 2,
+        "shared stock is allocated across required groups instead of counted twice")
+end)
+
 T.test("profession recipe filter model builds category ancestry from live profession headings", function()
     local GGM = loadFilters()
     local categories = {
@@ -387,10 +434,14 @@ T.test("Have Materials excludes account-bank stock and uses only selected charac
     T.assertFalse(model.recipes[1].craftable)
     T.assertEqual(model.recipes[1].craftableCount, 0)
     T.assertEqual(model.availability.materials, "available")
-    T.assertTrue(#api.countScopes > 0)
-    T.assertFalse(api.countScopes[1].includeAccountBank)
-    T.assertTrue(api.countScopes[1].includeBank)
-    T.assertTrue(api.countScopes[1].includeReagentBank)
+    local personalBankScope
+    for _, scope in ipairs(api.countScopes) do
+        if scope.includeBank == true and scope.includeReagentBank == true then
+            personalBankScope = scope
+        end
+        T.assertFalse(scope.includeAccountBank, "material checks exclude account-bank stock")
+    end
+    T.assertNotNil(personalBankScope, "Have Materials checks the selected character's verified bank")
 end)
 
 T.test("Have Materials reports unavailable inventory counts instead of treating them as empty", function()

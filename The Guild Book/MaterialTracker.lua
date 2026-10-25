@@ -110,7 +110,15 @@ function GGM.LoadMaterialTracking(api, db)
     return GGM.ValidateMaterialTrackingSnapshot(api, db.materialTracking[guid])
 end
 
-local function ownedCount(api, choice, includeBank)
+local function materialChoiceKey(choice)
+    return choice.itemID and "item" .. choice.itemID or "currency" .. choice.currencyID
+end
+
+local function ownedCount(api, choice, includeBank, countCache)
+    local key = materialChoiceKey(choice)
+    if countCache and countCache[key] ~= nil then
+        return countCache[key] ~= false and countCache[key] or nil
+    end
     local ok, value
     if choice.itemID then
         local fn = type(api.C_Item) == "table" and api.C_Item.GetItemCount or api.GetItemCount
@@ -127,6 +135,7 @@ local function ownedCount(api, choice, includeBank)
     end
     if not ok or not public(api, value) or type(value) ~= "number" or value < 0
         or value > 2147483647 or value ~= math.floor(value) then return nil end
+    if countCache then countCache[key] = value end
     return value
 end
 
@@ -139,9 +148,13 @@ local function choiceName(api, choice)
     return choice.name
 end
 
-function GGM.BuildMaterialTrackingRows(api, snapshot, includeBank)
+function GGM.BuildMaterialTrackingRows(api, snapshot, includeBank, amount, countCache)
     local saved = GGM.ValidateMaterialTrackingSnapshot(api, snapshot)
     if not saved then return {} end
+    if amount ~= nil then
+        if not integer(api, amount, 2147483647) then return {} end
+        saved.amount = amount
+    end
     local rows, edges, capacity, resources = {}, {}, {}, {}
     local source, sink = "source", "sink"
     local function edge(a, b, amount)
@@ -156,12 +169,12 @@ function GGM.BuildMaterialTrackingRows(api, snapshot, includeBank)
         rows[index] = row
         edge(source, node, row.required)
         for _, choice in ipairs(group.choices) do
-            local key = choice.itemID and "item" .. choice.itemID or "currency" .. choice.currencyID
+            local key = materialChoiceKey(choice)
             if not seen[key] then
                 seen[key] = true
                 names[#names + 1] = choiceName(api, choice)
                 if resources[key] == nil then
-                    local count = ownedCount(api, choice, includeBank)
+                    local count = ownedCount(api, choice, includeBank, countCache)
                     resources[key] = count or false
                     edge(key, sink, count or 0)
                 end
@@ -207,4 +220,43 @@ function GGM.BuildMaterialTrackingRows(api, snapshot, includeBank)
         row.owned = (not row.unknown or row.complete) and assigned or nil
     end
     return rows
+end
+
+function GGM.GetMaximumMaterialTrackingAmount(api, snapshot, includeBank)
+    local saved = GGM.ValidateMaterialTrackingSnapshot(api, snapshot)
+    if not saved then return nil end
+    local countCache, maximum, inventoryCap = {}, 2147483647, 2147483647
+    for _, group in ipairs(saved.materials) do
+        local available, seen = 0, {}
+        for _, choice in ipairs(group.choices) do
+            local key = materialChoiceKey(choice)
+            if not seen[key] then
+                seen[key] = true
+                local count = ownedCount(api, choice, includeBank, countCache)
+                if count == nil then return nil end
+                available = math.min(inventoryCap, available + count)
+            end
+        end
+        maximum = math.min(maximum, math.floor(available / group.quantity))
+        if maximum == 0 then return 0 end
+    end
+
+    local function feasible(amount)
+        local rows = GGM.BuildMaterialTrackingRows(api, saved, includeBank, amount, countCache)
+        if #rows ~= #saved.materials then return nil end
+        for _, row in ipairs(rows) do
+            if row.unknown then return nil end
+            if not row.complete then return false end
+        end
+        return true
+    end
+
+    local low, high = 0, maximum
+    while low < high do
+        local middle = math.floor((low + high + 1) / 2)
+        local fits = feasible(middle)
+        if fits == nil then return nil end
+        if fits then low = middle else high = middle - 1 end
+    end
+    return low
 end

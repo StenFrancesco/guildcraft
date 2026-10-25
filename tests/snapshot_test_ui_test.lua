@@ -4951,6 +4951,24 @@ T.test("profession filter button and recipe heading use the agreed layout", func
         "the heading keeps its position when no status is visible")
 end)
 
+T.test("recipe list shows a bag craft-count column and craftable-recipe total", function()
+    local _, _, frame, model = professionFilterFixture()
+    model.recipes[1].bagCraftableCount = 4
+    model.recipes[2].bagCraftableCount = 0
+    model.recipes[3].bagCraftableCount = nil
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
+
+    T.assertEqual(frame.professionCraftableHeading:GetText(), "CAN CRAFT")
+    T.assertEqual(frame.professionCraftableCount:GetText(), "(1)",
+        "the heading counts recipes with at least one available bag craft")
+    T.assertEqual(frame.professionRecipeRows[1].craftableCount:GetText(), "4")
+    T.assertEqual(frame.professionRecipeRows[2].craftableCount:GetText(), "0")
+    T.assertEqual(frame.professionRecipeRows[3].craftableCount:GetText(), "—",
+        "recipes without a known bag count display an unavailable marker")
+    T.assertTrue(frame.professionRecipeRows[1].craftableCount.point.x >= 300,
+        "the craft-count column sits near the middle of the recipe row")
+end)
+
 T.test("profession filter close control uses Blizzard's default close button", function()
     local _, _, frame = professionFilterFixture()
     local close = frame.professionFiltersCloseButton

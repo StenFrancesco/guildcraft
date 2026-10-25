@@ -111,6 +111,7 @@ local function cloneCatalogRecipe(api, recipe)
         learned = nil,
         craftable = false,
         craftableCount = nil,
+        bagCraftableCount = nil,
         categoryIDs = {},
         categoryPath = {},
         slotKeys = {},
@@ -475,36 +476,42 @@ end
 local function recipeCraftableFromMaterials(api, recipe, includeBank, noMaterialCraftable)
     if type(GGM.BuildRecipeMaterialDetails) ~= "function"
         or type(GGM.CreateMaterialTrackingSnapshot) ~= "function"
-        or type(GGM.BuildMaterialTrackingRows) ~= "function" then
-        return false, nil, false
+        or type(GGM.BuildMaterialTrackingRows) ~= "function"
+        or type(GGM.GetMaximumMaterialTrackingAmount) ~= "function" then
+        return false, nil, false, nil
     end
     local detailsOK, details = pcall(GGM.BuildRecipeMaterialDetails, api, recipe.recipeID)
     if not detailsOK or type(details) ~= "table" or details.state ~= "ready"
-        or type(details.materials) ~= "table" then return false, nil, false end
+        or type(details.materials) ~= "table" then return false, nil, false, nil end
     local snapshot = GGM.CreateMaterialTrackingSnapshot(api, recipe.recipeID, recipe.name, 1, details)
     if not snapshot then
         for _, group in ipairs(details.materials) do
             checkpoint()
             if type(group) == "table" and group.optional ~= true then
-                return false, nil, false
+                return false, nil, false, nil
             end
         end
         local craftable = noMaterialCraftable == true
-        return craftable, craftable and 1 or 0, true
+        local count = craftable and 1 or 0
+        return craftable, count, true, count
     end
+    local bagCraftableCount = GGM.GetMaximumMaterialTrackingAmount(api, snapshot, false)
     local rowsOK, rows = pcall(GGM.BuildMaterialTrackingRows, api, snapshot, includeBank == true)
     if not rowsOK or type(rows) ~= "table" or #rows ~= #snapshot.materials then
-        return false, nil, false
+        return false, nil, false, bagCraftableCount
     end
     for _, row in ipairs(rows) do
         checkpoint()
-        if type(row) ~= "table" or type(row.complete) ~= "boolean" then return false, nil, false end
+        if type(row) ~= "table" or type(row.complete) ~= "boolean" then
+            return false, nil, false, bagCraftableCount
+        end
         if not row.complete then
-            if row.unknown == true then return false, nil, false end
-            return false, 0, true
+            if row.unknown == true then return false, nil, false, bagCraftableCount end
+            return false, 0, true, bagCraftableCount
         end
     end
-    return true, 1, true
+    if bagCraftableCount == nil then return true, 1, false, nil end
+    return true, 1, true, bagCraftableCount
 end
 
 function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes, bankVerified, preserveCatalog)
@@ -655,8 +662,9 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
                 if positiveInteger(api, liveIcon) then recipe.outputIcon = liveIcon end
 
                 if learned then
-                    local craftable, count, materialOK = recipeCraftableFromMaterials(api, recipe,
+                    local craftable, count, materialOK, bagCraftableCount = recipeCraftableFromMaterials(api, recipe,
                         bankVerified, field(api, info, "craftable"))
+                    recipe.bagCraftableCount = bagCraftableCount
                     if materialOK then
                         recipe.craftable = craftable
                         recipe.craftableCount = count
@@ -666,6 +674,7 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
                     end
                 else
                     recipe.craftableCount = 0
+                    recipe.bagCraftableCount = 0
                 end
 
                 local categoryID = field(api, info, "categoryID")
