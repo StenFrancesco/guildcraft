@@ -1798,7 +1798,7 @@ local function buildProfessionFilterRows(model, expanded)
     return rows
 end
 
-renderProfessionFilterOptions = function(frame)
+renderProfessionFilterOptions = function(frame, scrollFraction)
     local model = frame.professionRecipeFilterModel
     local expanded = frame.professionRecipeFilterExpanded or { categories = {}, slots = {} }
     frame.professionRecipeFilterExpanded = expanded
@@ -1832,12 +1832,16 @@ renderProfessionFilterOptions = function(frame)
     local scrollOffset = frame.professionFilterScroll:GetVerticalScroll() or 0
     local function toggleExpanded(control)
         local dimension, node = control.dimension, control.node
+        local scroll = frame.professionFilterScroll
+        local oldMaximum = math.max(0, content:GetHeight() - scroll:GetHeight())
+        local oldOffset = scroll:GetVerticalScroll() or 0
+        local fraction = oldMaximum > 0 and math.max(0, math.min(oldOffset / oldMaximum, 1)) or 0
         local open = frame.professionRecipeFilterExpanded[dimension][node.key] == true
         frame.professionRecipeFilterExpanded[dimension][node.key] = not open
-        renderProfessionFilterOptions(frame)
+        renderProfessionFilterOptions(frame, fraction)
     end
-    for _, label in ipairs(frame.professionFilterSectionLabels) do label:Hide() end
-    for _, label in ipairs(frame.professionFilterEmptyLabels) do label:Hide() end
+    for _, label in pairs(frame.professionFilterSectionLabels) do label:Hide() end
+    for _, label in pairs(frame.professionFilterEmptyLabels) do label:Hide() end
     for _, dimension in ipairs({ "categories", "slots" }) do
         for _, control in pairs(frame.professionFilterNodeControls[dimension]) do cpuCheckpoint(); control:Hide() end
     end
@@ -1924,11 +1928,13 @@ renderProfessionFilterOptions = function(frame)
             controls[dimension][node.key] = control
         end
     end
-    for index = #rows + 1, #frame.professionFilterSectionLabels do frame.professionFilterSectionLabels[index]:Hide() end
-    for index = #rows + 1, #frame.professionFilterEmptyLabels do frame.professionFilterEmptyLabels[index]:Hide() end
     content:SetHeight(math.max(#rows * rowHeight, 1))
     local maximum = math.max(0, content:GetHeight() - frame.professionFilterScroll:GetHeight())
-    frame.professionFilterScroll:SetVerticalScroll(math.min(scrollOffset, maximum))
+    if scrollFraction ~= nil then
+        frame.professionFilterScroll:SetVerticalScroll(math.max(0, math.min(scrollFraction, 1)) * maximum)
+    else
+        frame.professionFilterScroll:SetVerticalScroll(math.min(scrollOffset, maximum))
+    end
 end
 
 local function setSimpleFilterToggle(frame, key, value)

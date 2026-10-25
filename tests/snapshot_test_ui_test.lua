@@ -1490,6 +1490,26 @@ T.test("recipe clicks open one movable details window and pooled rows use curren
     T.assertEqual(db.marker, "unchanged")
 end)
 
+T.test("Own recipe details open for live recipes missing from the saved catalog", function()
+    local GGM, _, browser = recipeDetailsFixture()
+    browser.professionLibraryMode = "Own"
+    browser.selectedProfession = "Blacksmithing"
+    browser.selectedProfessionID = 164
+    local liveRecipe = { recipeID = 33, name = "Replaced Servo Arm", outputIcon = 303, learned = false }
+    browser.professionRecipeFilterModel = { professionID = 164, recipes = { liveRecipe } }
+    browser.professionRecipeRows[1].recipe = liveRecipe
+
+    browser.professionRecipeRows[1].scripts.OnClick(browser.professionRecipeRows[1])
+    local details = browser.recipeDetailsFrame
+    T.assertNotNil(details, "live Own recipes must open details even when absent from saved recipes")
+    T.assertTrue(details:IsShown())
+    T.assertEqual(details.recipeName.text, liveRecipe.name)
+
+    GGM.RefreshRecipeDetailsWindow(browser)
+    T.assertTrue(details:IsShown(), "live Own recipe details remain open during recipe refreshes")
+    T.assertEqual(details.recipeName.text, liveRecipe.name)
+end)
+
 T.test("recipe details display quantities optional groups and alternative choices", function()
     local GGM, _, browser, recipes = recipeDetailsFixture()
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
@@ -4869,6 +4889,54 @@ T.test("profession filter groups only expand and leaves select categories and sl
     T.assertTrue(frame.professionRecipeFilterState.slotKeys["slot:mace"])
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     T.assertEqual(frame.filteredProfessionRecipes[1].recipeID, 702)
+end)
+
+T.test("filter scrolling does not leave duplicate sparse section and empty labels behind", function()
+    local _, _, frame, model = professionFilterFixture()
+    model.categories = { {
+        key = "category:root", id = 10, name = "Engineering", children = {
+            { key = "category:group", id = 11, name = "Devices", children = {
+                { key = "category:leaf", id = 12, name = "Tools", children = {} },
+            } },
+        },
+    } }
+    model.slots = {}
+
+    frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
+    frame.professionFilterNodeControls.categories["category:root"].expandButton.scripts.OnClick(
+        frame.professionFilterNodeControls.categories["category:root"].expandButton)
+    local group = frame.professionFilterNodeControls.categories["category:group"]
+    group.expandButton.scripts.OnClick(group.expandButton)
+
+    local function visibleCount(labels, text)
+        local count = 0
+        for _, label in pairs(labels) do
+            if label:IsShown() and label:GetText() == text then count = count + 1 end
+        end
+        return count
+    end
+    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "SLOTS"), 1)
+    T.assertEqual(visibleCount(frame.professionFilterEmptyLabels, "No equipment slots for this profession."), 1)
+end)
+
+T.test("filter tree preserves scrollbar position when a group changes content height", function()
+    local _, _, frame = professionFilterFixture()
+    local scroll = frame.professionFilterScroll
+    scroll:SetHeight(80)
+    frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
+
+    local group = frame.professionFilterNodeControls.categories["category:10"]
+    local function position()
+        local range = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+        return range > 0 and scroll:GetVerticalScroll() / range or 0
+    end
+    local initialRange = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+    T.assertTrue(initialRange > 0)
+    scroll:SetVerticalScroll(initialRange / 2)
+    group.expandButton.scripts.OnClick(group.expandButton)
+    T.assertTrue(math.abs(position() - 0.5) < 0.001, "opening a group keeps the scrollbar at the same relative position")
+    group.expandButton.scripts.OnClick(group.expandButton)
+    T.assertTrue(math.abs(position() - 0.5) < 0.001, "closing a group keeps the scrollbar at the same relative position")
 end)
 
 T.test("bag and personal bank changes refresh Have Materials for the selected character", function()
