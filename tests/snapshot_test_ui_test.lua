@@ -4949,6 +4949,20 @@ T.test("profession filter button and recipe heading use the agreed layout", func
         "the heading keeps its position when no status is visible")
 end)
 
+T.test("profession filter close control uses Blizzard's default close button", function()
+    local _, _, frame = professionFilterFixture()
+    local close = frame.professionFiltersCloseButton
+    T.assertNotNil(close)
+    T.assertEqual(close.template, "UIPanelCloseButton")
+    T.assertEqual(close:GetWidth(), 32)
+    T.assertEqual(close:GetHeight(), 32)
+    T.assertEqual(close.point.point, "TOPRIGHT")
+
+    frame.professionFiltersMenu:Show()
+    close.scripts.OnClick(close)
+    T.assertFalse(frame.professionFiltersMenu:IsShown(), "Blizzard close button hides the filter menu")
+end)
+
 T.test("profession filter checkboxes keep a square outline and only toggle the checkmark", function()
     local _, _, frame = professionFilterFixture()
     frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)

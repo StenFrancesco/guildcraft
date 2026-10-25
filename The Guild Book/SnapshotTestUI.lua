@@ -2009,8 +2009,9 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
     title:SetText("Filter recipes")
     title:SetPoint("TOPLEFT", menu, "TOPLEFT", 14, -12)
     setTextColor(title, THEME.text)
-    local close = GGM.CreateFlatButton(api, menu, "×", 28, 26, "ghost")
-    close:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -10, -8)
+    local close = api.CreateFrame("Button", nil, menu, "UIPanelCloseButton")
+    close:SetSize(32, 32)
+    close:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -8, -8)
     close:SetScript("OnClick", function() menu:Hide() end)
     frame.professionFiltersCloseButton = close
 
