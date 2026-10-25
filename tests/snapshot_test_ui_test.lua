@@ -1948,25 +1948,51 @@ T.test("Guild craft fails closed for the wrong live profession and protected cra
     T.assertFalse(details.createButton:IsShown())
 end)
 
-T.test("closing Guild recipe details releases only its own crafting context", function()
+T.test("closing Guild recipe details keeps All filter context until the browser closes", function()
     local GGM, api, browser, recipes = recipeDetailsFixture()
-    local closed = 0
+    local contextReady, closed, liveRecipeReads = false, 0, 0
     api.C_TradeSkillUI = {
-        OpenTradeSkill = function() return true end,
-        CloseTradeSkill = function() closed = closed + 1 end,
-        GetTradeSkillLine = function() return 164 end,
+        OpenTradeSkill = function() contextReady = true; return true end,
+        CloseTradeSkill = function() contextReady = false; closed = closed + 1 end,
+        IsTradeSkillReady = function() return contextReady end,
+        IsTradeSkillLinked = function() return false end,
+        GetBaseProfessionInfo = function() return { professionID = 164 } end,
+        GetAllRecipeIDs = function()
+            liveRecipeReads = liveRecipeReads + 1
+            return { 11 }
+        end,
         GetRecipeInfo = function(recipeID)
-            return { recipeID = recipeID, learned = true, craftable = true }
+            return { recipeID = recipeID, name = "Copper Bracers", learned = true, craftable = true }
         end,
         CraftRecipe = function() return true end,
     }
+    GGM.BuildProfessionRecipeFilterModel = GGM.__testBuiltInRecipeFilterModelBuilder
     api.issecretvalue = function() return false end
     api.InCombatLockdown = function() return false end
     GGM.SelectProfession(browser, "Blacksmithing")
     GGM.ShowRecipeDetailsWindow(browser, recipes[1])
     T.assertEqual(browser.craftingContextSkillLineID, 164)
     browser.recipeDetailsFrame:Hide()
-    T.assertEqual(closed, 1, "close should follow details ownership: details=" .. tostring(browser.recipeDetailsFrame.openedCraftingContext)
+    T.assertEqual(closed, 0, "closing details must keep the browser's All-mode filter context open")
+    T.assertEqual(browser.craftingContextSkillLineID, 164,
+        "the selected profession context remains available to All filters")
+    T.assertTrue(contextReady)
+
+    browser.professionFilterEventFrame.scripts.OnEvent(browser.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
+    T.assertTrue(liveRecipeReads > 0, "bag changes rebuild live recipe metadata after details close")
+    T.assertEqual(browser.professionRecipeFilterModel.availability.profession, "available",
+        "the refreshed filter model still sees the selected character's live profession")
+    local readsAfterBag = liveRecipeReads
+
+    browser.professionFilterEventFrame.scripts.OnEvent(browser.professionFilterEventFrame, "BANKFRAME_OPENED")
+    T.assertTrue(liveRecipeReads > readsAfterBag, "opening the selected character's bank refreshes live filters")
+    local readsAfterBankOpen = liveRecipeReads
+    browser.professionFilterEventFrame.scripts.OnEvent(browser.professionFilterEventFrame, "BANKFRAME_CLOSED")
+    T.assertTrue(liveRecipeReads > readsAfterBankOpen, "closing the bank keeps live filters refreshable")
+
+    browser:Hide()
+    T.assertEqual(closed, 1, "closing the main browser releases the context it owns: details="
+        .. tostring(browser.recipeDetailsFrame.openedCraftingContext)
         .. ", browser=" .. tostring(browser.craftingContextOpenedByGuildBook))
     T.assertNil(browser.craftingContextSkillLineID)
 end)

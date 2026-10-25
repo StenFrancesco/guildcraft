@@ -119,11 +119,13 @@ local function openGuildCraftingContext(details)
         or type(trade) ~= "table" or type(trade.GetRecipeInfo) ~= "function"
         or type(GGM.OpenSelectedProfessionContext) ~= "function" then return false end
     if browser.craftingContextSkillLineID == browser.selectedProfessionID then
-        details.openedCraftingContext = browser.craftingContextOpenedByGuildBook == true
+        -- The browser owns this shared context: its All-mode filter model still
+        -- needs live profession data after the recipe details window is closed.
+        details.openedCraftingContext = false
         return true
     end
     local opened = GGM.OpenSelectedProfessionContext(browser, browser.selectedProfessionID, true)
-    details.openedCraftingContext = opened and browser.craftingContextOpenedByGuildBook == true
+    details.openedCraftingContext = false
     return opened
 end
 
