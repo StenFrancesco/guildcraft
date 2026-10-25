@@ -316,6 +316,21 @@ T.test("profession recipe filter model derives Enchanting targets from matching 
     T.assertEqual(#model.recipes[1].slotKeys, 2)
 end)
 
+T.test("Enchanting target slots are limited to currently eligible items returned by the client", function()
+    local GGM = loadFilters()
+    local api = modelAPI(333, {
+        [311] = { recipeID = 311, name = "Enchant target with no sample", categoryID = 20,
+            learned = true, craftable = true, isEnchantingRecipe = true },
+    }, nil, { [20] = { categoryID = 20, name = "Enchantments" } }, nil, { [311] = {} })
+
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 333, {
+        { recipeID = 311, name = "Enchant target with no sample" },
+    }, true)
+
+    T.assertEqual(#model.slots, 0)
+    T.assertEqual(model.availability.enchantTargets, "inventory-limited")
+end)
+
 T.test("profession recipe filter model allocates alternative reagents from bag counts", function()
     local GGM = loadFilters()
     local api = modelAPI(171, {

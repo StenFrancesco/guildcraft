@@ -91,7 +91,9 @@ Enchanting targets. Expand a group to choose individual options; checking a
 parent selects its children, and a partial selection is shown as mixed. Leaving
 Categories or Slots empty shows all values for that dimension. Multiple choices
 within one dimension match with OR; active filters and recipe search combine
-with AND. All keeps its existing catalog search behavior.
+with AND. Enchanting target slots reflect only eligible target items currently
+reported by the client API; the client does not provide target slot types when
+there is no eligible sample item. All keeps its existing catalog search behavior.
 
 In All, recipe details also show Create and Create All beneath Whisper crafter
 when the current character knows the recipe in the active profession. Live game

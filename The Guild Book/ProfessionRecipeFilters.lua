@@ -88,6 +88,7 @@ local function newFilterModel(professionID)
             profession = "unavailable",
             materials = "unavailable",
             bank = "unverified",
+            enchantTargets = "unavailable",
             categories = "unavailable",
             slots = "unavailable",
         },
@@ -410,10 +411,11 @@ local function addOutputSlot(api, model, recipe, itemID, slotRoots)
     return true
 end
 
-local function addEnchantTargets(api, trade, recipeID, recipe, slotRoots)
+local function addEnchantTargets(api, trade, model, recipeID, recipe, slotRoots)
     if type(trade.GetEnchantItems) ~= "function" then return false end
     local ok, targetGUIDs = call(api, trade.GetEnchantItems, recipeID)
     if not ok or type(targetGUIDs) ~= "table" then return false end
+    model.availability.enchantTargets = "inventory-limited"
     local count, highest = 0, 0
     for index in pairs(targetGUIDs) do
         checkpoint()
@@ -682,7 +684,7 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
                         slotMetadataPartial = true
                     end
                 elseif professionID == 333 or field(api, info, "isEnchantingRecipe") == true then
-                    if not addEnchantTargets(api, trade, recipe.recipeID, recipe, slotRoots) then
+                    if not addEnchantTargets(api, trade, model, recipe.recipeID, recipe, slotRoots) then
                         slotMetadataPartial = true
                     end
                 elseif not outputKnown then

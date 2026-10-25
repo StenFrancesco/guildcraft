@@ -1801,7 +1801,12 @@ local function buildProfessionFilterRows(model, expanded)
     else appendFilterTreeRows(rows, categoryNodes, "categories", 0, expanded.categories) end
     rows[#rows + 1] = { kind = "section", text = "SLOTS" }
     local slotNodes = model and model.slots or {}
-    if #slotNodes == 0 then rows[#rows + 1] = { kind = "empty", text = "No equipment slots for this profession." }
+    if #slotNodes == 0 then
+        local text = model and model.availability
+            and model.availability.enchantTargets == "inventory-limited"
+            and "No eligible enchant targets in inventory."
+            or "No equipment slots for this profession."
+        rows[#rows + 1] = { kind = "empty", text = text }
     else appendFilterTreeRows(rows, slotNodes, "slots", 0, expanded.slots) end
     return rows
 end
@@ -1812,16 +1817,24 @@ renderProfessionFilterOptions = function(frame)
     frame.professionRecipeFilterExpanded = expanded
     local rows = buildProfessionFilterRows(model, expanded)
     if frame.professionFilterModelLabel then
-        local message = not model and "Live profession data is unavailable."
-            or (model.availability and model.availability.profession ~= "available"
-                and "Selected character's live profession data is unavailable."
-                or (model.availability and model.availability.materials == "unavailable"
-                    and "Live material availability is unavailable."
-                    or (model.availability and model.availability.bank == "unverified"
-                        and "Personal bank unverified; Have Materials counts bags only."
-                        or (model.availability and model.availability.materials == "partial"
-                            and "Some live material counts are unavailable; unverified recipes are hidden."
-                            or (model.state == "partial" and "Some live filter data is unavailable." or "")))))
+        local message = ""
+        if not model then
+            message = "Live profession data is unavailable."
+        elseif model.availability and model.availability.profession ~= "available" then
+            message = "Selected character's live profession data is unavailable."
+        elseif model.availability and model.availability.materials == "unavailable" then
+            message = "Live material availability is unavailable."
+        elseif model.availability and model.availability.bank == "unverified" then
+            message = "Personal bank unverified; Have Materials counts bags only."
+        elseif model.availability and model.availability.materials == "partial" then
+            message = "Some live material counts are unavailable; unverified recipes are hidden."
+        elseif model.state == "partial" then
+            message = "Some live filter data is unavailable."
+        end
+        if model and model.availability and model.availability.enchantTargets == "inventory-limited" then
+            message = message ~= "" and (message .. " Enchant slots show eligible items only.")
+                or "Enchant slots show eligible items only."
+        end
         frame.professionFilterModelLabel:SetText(message)
         if message ~= "" then frame.professionFilterModelLabel:Show() else frame.professionFilterModelLabel:Hide() end
     end
@@ -1984,13 +1997,13 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
     local partial = createText(menu, "OVERLAY", "GameFontDisableSmall")
     partial:SetPoint("TOPLEFT", menu, "TOPLEFT", 14, -126)
     partial:SetWidth(290)
-    partial:SetHeight(16)
+    partial:SetHeight(32)
     partial:SetJustifyH("LEFT")
     partial:Hide()
     frame.professionFilterModelLabel = partial
 
     frame.professionFilterScroll = api.CreateFrame("ScrollFrame", nil, menu, "UIPanelScrollFrameTemplate")
-    frame.professionFilterScroll:SetPoint("TOPLEFT", menu, "TOPLEFT", 12, -146)
+    frame.professionFilterScroll:SetPoint("TOPLEFT", menu, "TOPLEFT", 12, -164)
     frame.professionFilterScroll:SetPoint("BOTTOMRIGHT", menu, "BOTTOMRIGHT", -32, 12)
     frame.professionFilterContent = api.CreateFrame("Frame", nil, frame.professionFilterScroll)
     frame.professionFilterContent:SetSize(286, 1)
