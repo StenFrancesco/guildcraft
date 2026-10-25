@@ -4791,6 +4791,35 @@ T.test("profession recipe filter dropdown is available only for the selected Own
     T.assertFalse(trigger:IsShown(), "filters remain hidden in All mode after returning to Professions")
 end)
 
+T.test("profession filter checkboxes keep a square outline and only toggle the checkmark", function()
+    local _, _, frame = professionFilterFixture()
+    frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
+
+    local learned = frame.professionFilterControls.learned
+    local square = learned.checkboxSquare
+    T.assertNotNil(square, "each filter checkbox needs a separate square indicator")
+    T.assertEqual(square:GetWidth(), 16)
+    T.assertEqual(square:GetHeight(), 16)
+    T.assertEqual(learned.indicator:GetText(), "✓", "checked controls display a checkmark in the square")
+    T.assertEqual(learned.visualState, "idle", "checked state must not tint the full row")
+
+    local rowTint = table.concat(learned.background.vertexColor, ",")
+    local squareTint = table.concat(square.background.vertexColor, ",")
+    learned.scripts.OnClick(learned)
+    T.assertFalse(learned:GetChecked())
+    T.assertEqual(learned.indicator:GetText(), "", "unchecked controls leave the square open")
+    T.assertEqual(learned.visualState, "idle")
+    T.assertEqual(table.concat(learned.background.vertexColor, ","), rowTint)
+    T.assertEqual(table.concat(square.background.vertexColor, ","), squareTint)
+
+    learned.scripts.OnClick(learned)
+    T.assertTrue(learned:GetChecked())
+    T.assertEqual(learned.indicator:GetText(), "✓")
+    T.assertEqual(learned.visualState, "idle")
+    T.assertEqual(table.concat(learned.background.vertexColor, ","), rowTint)
+    T.assertEqual(table.concat(square.background.vertexColor, ","), squareTint)
+end)
+
 T.test("profession filter groups select descendants, show partial state, and update without closing", function()
     local _, _, frame = professionFilterFixture()
     local trigger = frame.professionFiltersButton

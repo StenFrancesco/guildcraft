@@ -1698,9 +1698,9 @@ local function setFilterControlChecked(control, checked, indeterminate)
     control.indeterminate = indeterminate == true
     if control.indicator then
         control.indicator:SetText(control.indeterminate and "−" or (control.checked and "✓" or ""))
-        setTextColor(control.indicator, control.indeterminate and THEME.gold or THEME.text)
+        setTextColor(control.indicator, THEME.text)
     end
-    GGM.SetFlatButtonState(control, (control.checked or control.indeterminate) and "selected" or "idle")
+    GGM.SetFlatButtonState(control, "idle")
 end
 
 local function makeFilterCheckControl(api, parent, label, width, height)
@@ -1710,9 +1710,11 @@ local function makeFilterCheckControl(api, parent, label, width, height)
     button.label:SetPoint("LEFT", button, "LEFT", 30, 0)
     button.label:SetJustifyH("LEFT")
     button.label:SetText(label or "")
-    button.indicator = createText(button, "OVERLAY", "GameFontNormal")
-    button.indicator:SetPoint("LEFT", button, "LEFT", 8, 0)
-    button.indicator:SetWidth(16)
+    button.checkboxSquare = createSurface(api, button, THEME.panelAlt, THEME.borderDark)
+    button.checkboxSquare:SetSize(16, 16)
+    button.checkboxSquare:SetPoint("LEFT", button, "LEFT", 8, 0)
+    button.indicator = createText(button.checkboxSquare, "OVERLAY", "GameFontNormalSmall")
+    button.indicator:SetAllPoints(button.checkboxSquare)
     button.indicator:SetJustifyH("CENTER")
     function button:SetChecked(value) setFilterControlChecked(self, value, self.indeterminate) end
     function button:GetChecked() return self.checked == true end
