@@ -716,7 +716,7 @@ function GGM.CreateProfessionRecipeFilterState()
     return {
         showLearned = true,
         showUnlearned = true,
-        haveMaterials = true,
+        haveMaterials = false,
         categoryIDs = {},
         slotKeys = {},
     }

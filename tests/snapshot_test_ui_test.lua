@@ -4888,7 +4888,6 @@ local function professionFilterFixture()
     local frame = showAllProfessionsBrowser(G, api, makeDB(G))
     local categoryRoot = model.categories[1]
     for _, child in ipairs(categoryRoot.children) do child.parent = categoryRoot end
-    frame.professionRecipeFilterState.haveMaterials = true
     frame.professionLibraryToggle.ownRadio.scripts.OnClick(frame.professionLibraryToggle.ownRadio)
     return G, api, frame, model
 end
@@ -4905,8 +4904,11 @@ T.test("profession recipe filters work for the selected profession in Own and Al
     T.assertTrue(frame.professionFiltersMenu:IsShown())
     T.assertTrue(frame.professionFilterControls.learned:GetChecked())
     T.assertTrue(frame.professionFilterControls.unlearned:GetChecked())
+    T.assertFalse(frame.professionFilterControls.materials:GetChecked())
+    T.assertEqual(#frame.filteredProfessionRecipes, 3, "Have Materials starts disabled for the selected character")
+    frame.professionFilterControls.materials.scripts.OnClick(frame.professionFilterControls.materials)
     T.assertTrue(frame.professionFilterControls.materials:GetChecked())
-    T.assertEqual(#frame.filteredProfessionRecipes, 1, "Have Materials starts enabled for the selected character")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1, "enabling Have Materials shows craftable selected-character recipes")
     frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
     T.assertFalse(frame.professionFiltersMenu:IsShown(), "switching library mode dismisses the filter menu")
     T.assertTrue(trigger:IsShown(), "All mode should expose the same filter menu for the selected profession")
@@ -4935,7 +4937,7 @@ T.test("profession filter button and recipe heading use the agreed layout", func
     T.assertEqual(frame.professionCount.journalFont, frame.professionRecipeHeading.journalFont)
     T.assertEqual(frame.professionCount.point.relativeTo, frame.professionRecipeHeading)
     T.assertEqual(frame.professionCount.point.relativePoint, "RIGHT")
-    T.assertEqual(frame.professionCount.text, "(1)")
+    T.assertEqual(frame.professionCount.text, "(3)")
     T.assertTrue(frame.professionStatus:GetHeight() >= 36, "status space is reserved for two readable lines")
     T.assertTrue(frame.professionRecipeHeading.point.y <= -250, "the recipe heading starts below the reserved status space")
     T.assertTrue(frame.professionRecipeScroll.points.TOPLEFT.y <= -280, "recipe rows start below the heading")
@@ -4999,7 +5001,6 @@ T.test("profession filter groups only expand and leaves select categories and sl
     local trigger = frame.professionFiltersButton
     trigger.scripts.OnClick(trigger)
     local controls = frame.professionFilterControls
-    controls.materials.scripts.OnClick(controls.materials)
     T.assertEqual(#frame.filteredProfessionRecipes, 3)
     T.assertEqual(frame.professionCount.text, "(3)")
     T.assertTrue(frame.professionFiltersMenu:IsShown(), "toggling a filter keeps the menu open")
@@ -5043,22 +5044,10 @@ T.test("profession filter groups only expand and leaves select categories and sl
     T.assertEqual(frame.filteredProfessionRecipes[1].recipeID, 702)
 end)
 
-T.test("filter scrolling does not leave duplicate sparse section and empty labels behind", function()
+T.test("empty category and slot sections are omitted from the filter menu", function()
     local _, _, frame, model = professionFilterFixture()
-    model.categories = { {
-        key = "category:root", id = 10, name = "Engineering", children = {
-            { key = "category:group", id = 11, name = "Devices", children = {
-                { key = "category:leaf", id = 12, name = "Tools", children = {} },
-            } },
-        },
-    } }
     model.slots = {}
-
     frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
-    frame.professionFilterNodeControls.categories["category:root"].expandButton.scripts.OnClick(
-        frame.professionFilterNodeControls.categories["category:root"].expandButton)
-    local group = frame.professionFilterNodeControls.categories["category:group"]
-    group.expandButton.scripts.OnClick(group.expandButton)
 
     local function visibleCount(labels, text)
         local count = 0
@@ -5067,8 +5056,31 @@ T.test("filter scrolling does not leave duplicate sparse section and empty label
         end
         return count
     end
-    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "SLOTS"), 1)
-    T.assertEqual(visibleCount(frame.professionFilterEmptyLabels, "No equipment slots for this profession."), 1)
+    local function refresh()
+        frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
+    end
+    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "CATEGORIES"), 1,
+        "categories remain visible when the profession has category nodes")
+    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "SLOTS"), 0,
+        "a profession with no slots has no Slots heading")
+    T.assertEqual(visibleCount(frame.professionFilterEmptyLabels, "No equipment slots for this profession."), 0,
+        "a profession with no slots has no empty-state message")
+
+    model.categories = {}
+    model.slots = { { key = "slot:head", name = "Head", children = {} } }
+    refresh()
+    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "CATEGORIES"), 0,
+        "a profession with no categories has no Categories heading")
+    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "SLOTS"), 1,
+        "slots remain visible when the profession has slot nodes")
+    T.assertEqual(visibleCount(frame.professionFilterEmptyLabels, "No live categories available."), 0,
+        "a profession with no categories has no empty-state message")
+
+    model.slots = {}
+    refresh()
+    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "CATEGORIES"), 0)
+    T.assertEqual(visibleCount(frame.professionFilterSectionLabels, "SLOTS"), 0)
+    T.assertEqual(visibleCount(frame.professionFilterEmptyLabels, "No equipment slots for this profession."), 0)
 end)
 
 T.test("filter tree preserves scrollbar position when a group changes content height", function()
@@ -5126,6 +5138,7 @@ end)
 
 T.test("bag and personal bank changes refresh Have Materials for the selected character", function()
     local _, _, frame, model = professionFilterFixture()
+    frame.professionFilterControls.materials.scripts.OnClick(frame.professionFilterControls.materials)
     T.assertFalse(frame.professionFilterBankVerified, "a new session starts with unverified bank contents")
     T.assertTrue(frame.professionFilterEventFrame.registeredEvents.BAG_UPDATE_DELAYED)
     T.assertTrue(frame.professionFilterEventFrame.registeredEvents.BANKFRAME_OPENED)
@@ -5159,6 +5172,7 @@ end)
 T.test("bag updates refresh Have Materials in All using the selected character model", function()
     local _, _, frame, model = professionFilterFixture()
     frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
+    frame.professionFilterControls.materials.scripts.OnClick(frame.professionFilterControls.materials)
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
     frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
 

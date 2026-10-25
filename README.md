@@ -81,11 +81,12 @@ its candidate list; learned state, materials, categories and slots are evaluated
 for the selected character. A guild recipe with unavailable live metadata can
 remain visible when both learning states are included, but it cannot pass Have
 Materials or a selected category/slot facet without matching character data.
-**Show learned**, **Show unlearned**, and **Have Materials** start
-checked. Have Materials shows learned recipes whose required reagents the selected
-character currently has. It counts bags immediately. Open that character's bank
-once per session to verify and include personal-bank and reagent-bank items; until
-then, bank stock is excluded and the browser reports that only bags are counted.
+**Show learned** and **Show unlearned** start checked; **Have Materials** starts
+unchecked. When enabled, Have Materials shows learned recipes whose required
+reagents the selected character currently has. It counts bags immediately. Open
+that character's bank once per session to verify and include personal-bank and
+reagent-bank items; until then, bank stock is excluded and the browser reports
+that only bags are counted.
 Shared account-bank, guild-bank, and other-character stock are excluded. If live
 material availability cannot be verified, those recipes are excluded and the
 browser reports the unavailable data. Bag and bank changes refresh the results.
@@ -93,7 +94,8 @@ Categories
 come from the active profession's live headings, and Slots come from the
 profession's actual equipment outputs or
 Enchanting targets. Expand a group to reveal its children; only leaf categories
-and slots have checkboxes. Leaving Categories or Slots with no leaf selections
+and slots have checkboxes. Categories and Slots are omitted when the profession
+has no options for that section. Leaving either section with no leaf selections
 shows all values for that dimension. Multiple choices within one dimension
 match with OR; active filters and recipe search combine with AND. Enchanting
 target slots reflect only eligible target items currently reported by the client

@@ -96,13 +96,13 @@ local function findNode(nodes, key)
     end
 end
 
-T.test("profession recipe filter state enables both learning states and materials by default", function()
+T.test("profession recipe filter state enables both learning states and disables materials by default", function()
     local GGM = loadFilters()
     local state = GGM.CreateProfessionRecipeFilterState()
 
     T.assertTrue(state.showLearned)
     T.assertTrue(state.showUnlearned)
-    T.assertTrue(state.haveMaterials)
+    T.assertFalse(state.haveMaterials)
     T.assertEqual(next(state.categoryIDs), nil)
     T.assertEqual(next(state.slotKeys), nil)
 end)
@@ -163,7 +163,9 @@ T.test("Have Materials requires a learned recipe with a currently craftable item
         entry("Unlearned", false, true),
     }
 
-    local filtered = GGM.FilterProfessionRecipeEntries(entries, "", GGM.CreateProfessionRecipeFilterState())
+    local state = GGM.CreateProfessionRecipeFilterState()
+    state.haveMaterials = true
+    local filtered = GGM.FilterProfessionRecipeEntries(entries, "", state)
 
     T.assertEqual(#filtered, 1)
     T.assertTrue(filtered[1] == entries[1])

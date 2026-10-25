@@ -1797,21 +1797,17 @@ local function updateFilterResults(frame)
 end
 
 local function buildProfessionFilterRows(model, expanded)
-    local rows = {
-        { kind = "section", text = "CATEGORIES" },
-    }
+    local rows = {}
     local categoryNodes = model and model.categories or {}
-    if #categoryNodes == 0 then rows[#rows + 1] = { kind = "empty", text = "No live categories available." }
-    else appendFilterTreeRows(rows, categoryNodes, "categories", 0, expanded.categories) end
-    rows[#rows + 1] = { kind = "section", text = "SLOTS" }
+    if #categoryNodes > 0 then
+        rows[#rows + 1] = { kind = "section", text = "CATEGORIES" }
+        appendFilterTreeRows(rows, categoryNodes, "categories", 0, expanded.categories)
+    end
     local slotNodes = model and model.slots or {}
-    if #slotNodes == 0 then
-        local text = model and model.availability
-            and model.availability.enchantTargets == "inventory-limited"
-            and "No eligible enchant targets in inventory."
-            or "No equipment slots for this profession."
-        rows[#rows + 1] = { kind = "empty", text = text }
-    else appendFilterTreeRows(rows, slotNodes, "slots", 0, expanded.slots) end
+    if #slotNodes > 0 then
+        rows[#rows + 1] = { kind = "section", text = "SLOTS" }
+        appendFilterTreeRows(rows, slotNodes, "slots", 0, expanded.slots)
+    end
     return rows
 end
 
