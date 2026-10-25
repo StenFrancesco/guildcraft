@@ -1966,6 +1966,7 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
     menu:SetSize(324, 414)
     menu:SetPoint("TOPRIGHT", trigger, "BOTTOMRIGHT", 0, -4)
     if menu.SetClampedToScreen then menu:SetClampedToScreen(true) end
+    if menu.SetFrameLevel and trigger.GetFrameLevel then menu:SetFrameLevel(trigger:GetFrameLevel() + 10) end
     if menu.SetFrameStrata then menu:SetFrameStrata("DIALOG") end
     menu:Hide()
     frame.professionFiltersMenu = menu

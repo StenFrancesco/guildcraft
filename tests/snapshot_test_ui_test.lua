@@ -470,6 +470,12 @@ local function newControl()
     function control:SetHeight(height) self.height = height end
     function control:SetWidth(width) self.width = width end
     function control:SetFrameStrata(value) self.strata = value end
+    function control:SetFrameLevel(value) self.frameLevel = value end
+    function control:GetFrameLevel()
+        if self.frameLevel ~= nil then return self.frameLevel end
+        if self.parent and self.parent.GetFrameLevel then return self.parent:GetFrameLevel() + 1 end
+        return 0
+    end
     function control:SetMovable(value) self.movable = value end
     function control:EnableMouse() end
     function control:RegisterForDrag() end
@@ -4766,6 +4772,8 @@ T.test("profession recipe filter dropdown is available only for the selected Own
     local G, api, frame = professionFilterFixture()
     local trigger = frame.professionFiltersButton
     T.assertNotNil(trigger, "Own profession page needs its filter dropdown trigger")
+    T.assertTrue(frame.professionFiltersMenu:GetFrameLevel() >= trigger:GetFrameLevel() + 10,
+        "filter menu should be raised above recipe content in the same frame strata")
     T.assertTrue(trigger:IsShown())
     T.assertFalse(frame.professionFiltersMenu:IsShown())
     trigger.scripts.OnClick(trigger)
