@@ -75,7 +75,7 @@ When Own has no captured professions, the recipe panel is hidden and no
 profession is selected. Switching from All to Own selects a listed profession
 or clears the previous selection when the list is empty.
 
-In Own or All, open **Filters** beside recipe search to filter recipes using the
+In Own or All, open **Filters** beside **Sync profession** to filter recipes using the
 selected character's live profession data. All keeps the guild recipe catalog as
 its candidate list; learned state, materials, categories and slots are evaluated
 for the selected character. A guild recipe with unavailable live metadata can

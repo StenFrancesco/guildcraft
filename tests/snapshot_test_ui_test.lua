@@ -4865,6 +4865,34 @@ T.test("profession recipe filters work for the selected profession in Own and Al
     T.assertTrue(trigger:IsShown(), "filters remain available in All mode after returning to Professions")
 end)
 
+T.test("profession filter button and recipe heading use the agreed layout", function()
+    local _, _, frame = professionFilterFixture()
+    local trigger, sync = frame.professionFiltersButton, frame.professionSyncButton
+    T.assertEqual(trigger.template, "UIPanelButtonTemplate")
+    T.assertEqual(trigger.point.point, "RIGHT")
+    T.assertEqual(trigger.point.relativeTo, sync)
+    T.assertEqual(trigger.point.relativePoint, "LEFT")
+    T.assertTrue(trigger.point.x < 0, "Filters sits to the left of Sync Profession")
+
+    T.assertEqual(frame.professionCount.font.size, 17)
+    T.assertEqual(frame.professionCount.journalFontSize, frame.professionRecipeHeading.journalFontSize)
+    T.assertEqual(frame.professionCount.journalFont, frame.professionRecipeHeading.journalFont)
+    T.assertEqual(frame.professionCount.point.relativeTo, frame.professionRecipeHeading)
+    T.assertEqual(frame.professionCount.point.relativePoint, "RIGHT")
+    T.assertEqual(frame.professionCount.text, "(1)")
+    T.assertTrue(frame.professionStatus:GetHeight() >= 36, "status space is reserved for two readable lines")
+    T.assertTrue(frame.professionRecipeHeading.point.y <= -250, "the recipe heading starts below the reserved status space")
+    T.assertTrue(frame.professionRecipeScroll.points.TOPLEFT.y <= -280, "recipe rows start below the heading")
+
+    local headingY = frame.professionRecipeHeading.point.y
+    frame.professionStatus:SetText(string.rep("Personal bank status text. ", 8))
+    T.assertEqual(frame.professionRecipeHeading.point.y, headingY,
+        "the heading has the same reserved position with long status text")
+    frame.professionStatus:Hide()
+    T.assertEqual(frame.professionRecipeHeading.point.y, headingY,
+        "the heading keeps its position when no status is visible")
+end)
+
 T.test("profession filter checkboxes keep a square outline and only toggle the checkmark", function()
     local _, _, frame = professionFilterFixture()
     frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
@@ -4903,7 +4931,7 @@ T.test("profession filter groups only expand and leaves select categories and sl
     local controls = frame.professionFilterControls
     controls.materials.scripts.OnClick(controls.materials)
     T.assertEqual(#frame.filteredProfessionRecipes, 3)
-    T.assertEqual(frame.professionCount.text, "3 recipes")
+    T.assertEqual(frame.professionCount.text, "(3)")
     T.assertTrue(frame.professionFiltersMenu:IsShown(), "toggling a filter keeps the menu open")
 
     local categoryRoot = controls.categories["category:10"]
@@ -4925,7 +4953,7 @@ T.test("profession filter groups only expand and leaves select categories and sl
     controls.categories["category:11"].scripts.OnClick(controls.categories["category:11"])
     T.assertTrue(frame.professionRecipeFilterState.categoryIDs[11], "a leaf category can be selected")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
-    T.assertEqual(frame.professionCount.text, "1 recipe")
+    T.assertEqual(frame.professionCount.text, "(1)")
     controls.categories["category:11"].scripts.OnClick(controls.categories["category:11"])
     T.assertNil(next(frame.professionRecipeFilterState.categoryIDs))
 

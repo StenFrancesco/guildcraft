@@ -1506,13 +1506,14 @@ local function createProfessionsPage(api, frame)
     frame.professionSearchBox:SetText("")
 
     frame.professionCount = createText(panel, "OVERLAY", "GameFontDisableSmall")
-    frame.professionCount:SetPoint("LEFT", frame.professionSearchBox, "RIGHT", 14, 0)
-    frame.professionCount:SetWidth(130)
+    GGM.ApplyJournalFont(frame.professionCount, 17, "bold")
+    frame.professionCount:SetWidth(100)
     setTextColor(frame.professionCount, THEME.textSoft)
     frame.professionStatus = createText(panel, "OVERLAY", "GameFontHighlight")
     GGM.ApplyJournalFont(frame.professionStatus, 13)
     frame.professionStatus:SetPoint("TOPLEFT", frame.professionSearchBox, "BOTTOMLEFT", 0, -4)
     frame.professionStatus:SetPoint("RIGHT", panel, "RIGHT", -18, 0)
+    frame.professionStatus:SetHeight(40)
     frame.professionStatus:SetJustifyH("LEFT")
     setTextColor(frame.professionStatus, THEME.textSoft)
 
@@ -1527,12 +1528,14 @@ local function createProfessionsPage(api, frame)
     frame.professionRecipeHeading = createText(panel, "OVERLAY", "GameFontNormal")
     GGM.ApplyJournalFont(frame.professionRecipeHeading, 17, "bold")
     frame.professionRecipeHeading:SetText("CACHED RECIPES")
-    frame.professionRecipeHeading:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -230)
+    frame.professionRecipeHeading:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -257)
+    frame.professionCount:SetPoint("LEFT", frame.professionRecipeHeading, "RIGHT", 8, 0)
     setTextColor(frame.professionRecipeHeading, THEME.text)
     frame.professionRecipeHeading:Hide()
+    frame.professionCount:Hide()
 
     frame.professionRecipeScroll = api.CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
-    frame.professionRecipeScroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -257)
+    frame.professionRecipeScroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -284)
     frame.professionRecipeScroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 22)
     frame.professionRecipeContent = api.CreateFrame("Frame", nil, frame.professionRecipeScroll)
     frame.professionRecipeContent:SetSize(667, 1)
@@ -1572,7 +1575,8 @@ updateProfessionRecipeBrowser = function(frame, prepared)
     if not filterModel then
         frame.filteredProfessionRecipes = {}
         if frame.professionRecipeHeading then frame.professionRecipeHeading:Hide() end
-        frame.professionCount:SetText("0 recipes")
+        frame.professionCount:SetText("(0)")
+        frame.professionCount:Hide()
         frame.professionStatus:SetText(catalog.message or
             (ownMode and "Waiting for live data from the selected character's profession."
                 or "Waiting for live data to filter the guild recipe catalog for this character."))
@@ -1597,11 +1601,13 @@ updateProfessionRecipeBrowser = function(frame, prepared)
         if (catalog.state == "ready" or catalog.state == "incomplete") and #recipes > 0 then
             frame.professionRecipeHeading:SetText(ownMode and "RECIPES" or "CACHED RECIPES")
             frame.professionRecipeHeading:Show()
+            frame.professionCount:Show()
         else
             frame.professionRecipeHeading:Hide()
+            frame.professionCount:Hide()
         end
     end
-    frame.professionCount:SetText(#filtered .. (#filtered == 1 and " recipe" or " recipes"))
+    frame.professionCount:SetText("(" .. #filtered .. ")")
 
     local status = catalog.message
     if filterModel and filterModel.availability
@@ -1986,8 +1992,10 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
     frame.professionFilterNodeControls = { categories = {}, slots = {} }
     frame.professionFilterSectionLabels, frame.professionFilterEmptyLabels = {}, {}
 
-    local trigger = GGM.CreateFlatButton(api, panel, "Filters  ▾", 112, 27, "secondary")
-    trigger:SetPoint("TOPLEFT", panel, "TOPLEFT", 482, -177)
+    local trigger = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    trigger:SetSize(104, 27)
+    trigger:SetText("Filters")
+    trigger:SetPoint("RIGHT", frame.professionSyncButton, "LEFT", -8, 0)
     frame.professionFiltersButton = trigger
     local menu = createSurface(api, panel, THEME.panelAlt, THEME.border, true)
     menu:SetSize(324, 414)
@@ -2041,11 +2049,10 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
         if menu:IsShown() then menu:Hide(); return end
         if not frame.professionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame) end
         renderProfessionFilterOptions(frame)
-        trigger:SetText("Filters  ▴")
+        trigger:SetText("Filters")
         menu:Show()
     end)
-    menu:SetScript("OnHide", function() trigger:SetText("Filters  ▾") end)
-    trigger:SetText("Filters  ▾")
+    menu:SetScript("OnHide", function() trigger:SetText("Filters") end)
 
     local eventFrame = api.CreateFrame("Frame", nil, frame)
     frame.professionFilterEventFrame = eventFrame
