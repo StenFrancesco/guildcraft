@@ -1697,8 +1697,12 @@ local function setFilterControlChecked(control, checked, indeterminate)
     control.checked = checked == true
     control.indeterminate = indeterminate == true
     if control.indicator then
-        control.indicator:SetText(control.indeterminate and "−" or (control.checked and "✓" or ""))
-        setTextColor(control.indicator, THEME.text)
+        if control.checked and not control.indeterminate then control.indicator:Show()
+        else control.indicator:Hide() end
+    end
+    if control.indeterminateIndicator then
+        if control.indeterminate then control.indeterminateIndicator:Show()
+        else control.indeterminateIndicator:Hide() end
     end
     GGM.SetFlatButtonState(control, "idle")
 end
@@ -1713,9 +1717,17 @@ local function makeFilterCheckControl(api, parent, label, width, height)
     button.checkboxSquare = createSurface(api, button, THEME.panelAlt, THEME.borderDark)
     button.checkboxSquare:SetSize(16, 16)
     button.checkboxSquare:SetPoint("LEFT", button, "LEFT", 8, 0)
-    button.indicator = createText(button.checkboxSquare, "OVERLAY", "GameFontNormalSmall")
-    button.indicator:SetAllPoints(button.checkboxSquare)
-    button.indicator:SetJustifyH("CENTER")
+    button.indicator = button.checkboxSquare:CreateTexture(nil, "OVERLAY")
+    button.indicator:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    button.indicator:SetVertexColor(THEME.text[1], THEME.text[2], THEME.text[3], THEME.text[4])
+    button.indicator:SetSize(16, 16)
+    button.indicator:SetPoint("CENTER", button.checkboxSquare, "CENTER", 0, 0)
+    button.indicator:Hide()
+    button.indeterminateIndicator = button.checkboxSquare:CreateTexture(nil, "OVERLAY")
+    button.indeterminateIndicator:SetColorTexture(THEME.text[1], THEME.text[2], THEME.text[3], THEME.text[4])
+    button.indeterminateIndicator:SetSize(8, 2)
+    button.indeterminateIndicator:SetPoint("CENTER", button.checkboxSquare, "CENTER", 0, 0)
+    button.indeterminateIndicator:Hide()
     function button:SetChecked(value) setFilterControlChecked(self, value, self.indeterminate) end
     function button:GetChecked() return self.checked == true end
     function button:SetIndeterminate(value) setFilterControlChecked(self, self.checked, value) end
