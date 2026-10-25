@@ -7,7 +7,6 @@ local RIGHT_X = 629
 local LIST_ROW_HEIGHT, LIST_ROW_PITCH = 56, 64
 local TAB_COLUMNS, TAB_ROW_HEIGHT, TAB_ROW_PITCH = 3, 28, 32
 local GRID_COLUMNS, GRID_BUTTON_SIZE, GRID_X_PITCH, GRID_ROW_PITCH = 13, 40, 48, 44
-local EMPTY_SLOT_TEXTURE = "Interface\\Buttons\\UI-EmptySlot"
 local BANK_ICON = "Interface\\Icons\\INV_Misc_Bag_10"
 local GUILD_ICON = "Interface\\Icons\\INV_Misc_Coin_02"
 
@@ -374,11 +373,11 @@ local function renderSlots(page)
         button.slotID = slot.id
         button.slot = slot
         local iconTexture = slot.icon
-        if not iconTexture then
-            iconTexture = slot.empty and EMPTY_SLOT_TEXTURE or "Interface\\Icons\\INV_Misc_QuestionMark"
+        if not iconTexture and not slot.empty then
+            iconTexture = "Interface\\Icons\\INV_Misc_QuestionMark"
         end
         button.icon:SetTexture(iconTexture)
-        button.icon:SetAlpha(slot.empty and 0.25 or 1)
+        button.icon:SetAlpha(1)
         button.label:SetText(slot.itemID and slot.count and slot.count > 1 and tostring(slot.count) or "")
         local searchMatch = tabMatches and tabMatches[slot.id] == true
         button.searchMatch = searchMatch == true
@@ -499,7 +498,8 @@ local function scrollToFirstItemMatch(page)
     for index, tab in ipairs(tabs) do
         if tab.id == page.selectedTabID then
             local row = math.floor((index - 1) / TAB_COLUMNS)
-            setScroll(page.tabScroll, row * TAB_ROW_PITCH)
+            local maxScroll = math.max(0, page.tabContent:GetHeight() - page.tabScroll:GetHeight())
+            setScroll(page.tabScroll, math.min(row * TAB_ROW_PITCH, maxScroll))
             break
         end
     end

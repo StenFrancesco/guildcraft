@@ -3478,8 +3478,15 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     page.entryButtons[2].scripts.OnClick(page.entryButtons[2])
     T.assertEqual(page.selectedEntry.key, "Alice-Silvermoon")
     T.assertTrue(page.tabContent.height > page.tabScroll.height, "long tab lists should scroll")
+    T.assertTrue(GGM.SelectBankTab(page, 7))
+    T.assertEqual(page.tabScroll:GetVerticalScroll(), 64,
+        "banks with more than two rows should still scroll to later tabs")
     page.tabButtons[2].scripts.OnClick(page.tabButtons[2])
     T.assertEqual(page.selectedTabID, 2)
+    T.assertNil(page.itemButtons[1].icon.texture,
+        "observed empty bank slots should not draw an inner placeholder")
+    T.assertEqual(page.itemButtons[3].icon.texture, 134,
+        "occupied bank slots should keep their item icon")
     page.itemButtons[3].scripts.OnClick(page.itemButtons[3])
     T.assertEqual(page.selectedSlotID, 3)
     page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
@@ -3507,7 +3514,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     changedWhileHidden.capturedAt = 1700000600
     changedWhileHidden.tabs[1].capturedAt = changedWhileHidden.capturedAt
     _G.TheGuildBookBankDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
-    local addedWhileHidden = record("Beatrice", "Silvermoon", 1)
+    local addedWhileHidden = record("Beatrice", "Silvermoon", 6)
     _G.TheGuildBookBankDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
     T.assertFalse(_G.GuildGearMemoryBankChanged(), "hidden Bank page should defer its visible refresh")
     GGM.ShowGuildGearBrowserWindow(api, frame.db)
@@ -3522,6 +3529,20 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     T.assertTrue(foundAddedEntry, "reopening the journal should refresh the cached character list")
     T.assertEqual(page.selectedTabID, 2)
     T.assertEqual(page.selectedSlotID, 3)
+
+    local beatrice
+    for _, entry in ipairs(page.entries) do
+        if entry.key == "Beatrice-Silvermoon" then beatrice = entry; break end
+    end
+    T.assertTrue(GGM.SelectBankEntry(page, beatrice))
+    T.assertTrue(GGM.SelectBankTab(page, 4))
+    T.assertEqual(page.tabScroll:GetVerticalScroll(), 0,
+        "switching to the second row must keep both rows visible when six tabs fit")
+    for index = 1, 6 do T.assertTrue(page.tabButtons[index].visible) end
+    T.assertTrue(GGM.SelectBankTab(page, 1))
+    T.assertEqual(page.tabScroll:GetVerticalScroll(), 0,
+        "returning to the first row must not move the tab strip")
+    T.assertTrue(GGM.SelectBankEntry(page, page.entries[2]))
 
     page.itemButtons[3].scripts.OnEnter(page.itemButtons[3])
     T.assertTrue(tooltip.visible)
