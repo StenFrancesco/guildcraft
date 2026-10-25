@@ -1692,17 +1692,12 @@ renderProfessionRows = function(frame)
     end
 end
 
-local function setFilterControlChecked(control, checked, indeterminate)
+local function setFilterControlChecked(control, checked)
     if not control then return end
     control.checked = checked == true
-    control.indeterminate = indeterminate == true
     if control.indicator then
-        if control.checked and not control.indeterminate then control.indicator:Show()
+        if control.checked then control.indicator:Show()
         else control.indicator:Hide() end
-    end
-    if control.indeterminateIndicator then
-        if control.indeterminate then control.indeterminateIndicator:Show()
-        else control.indeterminateIndicator:Hide() end
     end
     GGM.SetFlatButtonState(control, "idle")
 end
@@ -1723,47 +1718,38 @@ local function makeFilterCheckControl(api, parent, label, width, height)
     button.indicator:SetSize(16, 16)
     button.indicator:SetPoint("CENTER", button.checkboxSquare, "CENTER", 0, 0)
     button.indicator:Hide()
-    button.indeterminateIndicator = button.checkboxSquare:CreateTexture(nil, "OVERLAY")
-    button.indeterminateIndicator:SetColorTexture(THEME.text[1], THEME.text[2], THEME.text[3], THEME.text[4])
-    button.indeterminateIndicator:SetSize(8, 2)
-    button.indeterminateIndicator:SetPoint("CENTER", button.checkboxSquare, "CENTER", 0, 0)
-    button.indeterminateIndicator:Hide()
-    function button:SetChecked(value) setFilterControlChecked(self, value, self.indeterminate) end
+    function button:SetChecked(value) setFilterControlChecked(self, value) end
     function button:GetChecked() return self.checked == true end
-    function button:SetIndeterminate(value) setFilterControlChecked(self, self.checked, value) end
     return button
 end
 
-local function categoryDescendantIDs(node, values)
-    values = values or {}
-    if type(node) ~= "table" then return values end
-    if type(node.id) == "number" then values[#values + 1] = node.id end
-    for _, child in ipairs(node.children or {}) do cpuCheckpoint(); categoryDescendantIDs(child, values) end
-    return values
+local function makeFilterGroupControl(api, parent, label, width, height)
+    local button = GGM.CreateFlatButton(api, parent, "", width, height, "ghost")
+    button:SetText("")
+    button.label:ClearAllPoints()
+    button.label:SetPoint("LEFT", button, "LEFT", 25, 0)
+    button.label:SetJustifyH("LEFT")
+    button.label:SetText(label or "")
+    return button
 end
 
-local function slotDescendantKeys(node, values)
+local function categoryLeafIDs(node, values)
     values = values or {}
     if type(node) ~= "table" then return values end
     local children = node.children
     if type(children) ~= "table" or #children == 0 then
-        if type(node.key) == "string" and node.key ~= "" then values[#values + 1] = node.key end
+        if type(node.id) == "number" then values[#values + 1] = node.id end
     else
-        for _, child in ipairs(children) do cpuCheckpoint(); slotDescendantKeys(child, values) end
+        for _, child in ipairs(children) do cpuCheckpoint(); categoryLeafIDs(child, values) end
     end
     return values
-end
-
-local function filterTreeValues(dimension, node)
-    if dimension == "categories" then return categoryDescendantIDs(node) end
-    return slotDescendantKeys(node)
 end
 
 local function syncCategoryAncestors(frame, node)
     local selection = frame.professionRecipeFilterState.categoryIDs
     local parent = type(node) == "table" and node.parent or nil
     while parent do
-        local values = categoryDescendantIDs(parent)
+        local values = categoryLeafIDs(parent)
         local allSelected = #values > 0
         for _, value in ipairs(values) do
             if selection[value] ~= true then allSelected = false; break end
@@ -1771,12 +1757,6 @@ local function syncCategoryAncestors(frame, node)
         selection[parent.id] = allSelected and true or nil
         parent = parent.parent
     end
-end
-
-local function selectionSummary(selection, values)
-    local selected, total = 0, #values
-    for _, value in ipairs(values) do if selection[value] == true then selected = selected + 1 end end
-    return total > 0 and selected == total, selected > 0 and selected < total
 end
 
 local function appendFilterTreeRows(rows, nodes, dimension, depth, expanded)
@@ -1788,13 +1768,6 @@ local function appendFilterTreeRows(rows, nodes, dimension, depth, expanded)
             appendFilterTreeRows(rows, children, dimension, depth + 1, expanded)
         end
     end
-end
-
-local function syncFilterTreeControl(frame, dimension, node, control)
-    local state = frame.professionRecipeFilterState
-    local selection = dimension == "categories" and state.categoryIDs or state.slotKeys
-    local selected, mixed = selectionSummary(selection, control.filterValues or filterTreeValues(dimension, node))
-    setFilterControlChecked(control, selected, mixed)
 end
 
 local function updateFilterResults(frame)
@@ -1857,6 +1830,12 @@ renderProfessionFilterOptions = function(frame)
     local content, api = frame.professionFilterContent, frame.api
     local rowHeight, width = 26, 286
     local scrollOffset = frame.professionFilterScroll:GetVerticalScroll() or 0
+    local function toggleExpanded(control)
+        local dimension, node = control.dimension, control.node
+        local open = frame.professionRecipeFilterExpanded[dimension][node.key] == true
+        frame.professionRecipeFilterExpanded[dimension][node.key] = not open
+        renderProfessionFilterOptions(frame)
+    end
     for _, label in ipairs(frame.professionFilterSectionLabels) do label:Hide() end
     for _, label in ipairs(frame.professionFilterEmptyLabels) do label:Hide() end
     for _, dimension in ipairs({ "categories", "slots" }) do
@@ -1891,29 +1870,27 @@ renderProfessionFilterOptions = function(frame)
             local node, dimension = item.node, item.dimension
             local map = dimension == "categories" and frame.professionFilterNodeControls.categories
                 or frame.professionFilterNodeControls.slots
+            local children = type(node.children) == "table" and #node.children > 0
             local control = map[node.key]
-            if not control then
-                control = makeFilterCheckControl(api, content, node.name, width, rowHeight - 2)
+            if not control or control.hasChildren ~= children then
+                if control then control:Hide() end
+                control = children and makeFilterGroupControl(api, content, node.name, width, rowHeight - 2)
+                    or makeFilterCheckControl(api, content, node.name, width, rowHeight - 2)
+                control.hasChildren = children
                 control.nodeKey, control.dimension = node.key, dimension
                 map[node.key] = control
                 control.expandButton = api.CreateFrame("Button", nil, control)
                 control.expandButton:SetSize(18, rowHeight - 2)
-                control.expandButton:SetScript("OnClick", function()
-                    local currentDimension, currentNode = control.dimension, control.node
-                    local open = frame.professionRecipeFilterExpanded[currentDimension][currentNode.key] == true
-                    frame.professionRecipeFilterExpanded[currentDimension][currentNode.key] = not open
-                    renderProfessionFilterOptions(frame)
-                end)
+                control.expandButton:SetScript("OnClick", function() toggleExpanded(control) end)
                 control.expandLabel = createText(control.expandButton, "OVERLAY", "GameFontHighlightSmall")
+                setTextColor(control.expandLabel, THEME.text)
                 control.expandLabel:SetPoint("CENTER", control.expandButton, "CENTER", 0, 0)
             end
             control.node, control.dimension = node, dimension
-            control.filterValues = filterTreeValues(dimension, node)
             control:SetText(node.name)
             control:SetSize(width - item.depth * 14, rowHeight - 2)
             control:ClearAllPoints()
             control:SetPoint("TOPLEFT", content, "TOPLEFT", item.depth * 14, -y)
-            local children = type(node.children) == "table" and #node.children > 0
             if children then
                 control.expandLabel:SetText(expanded[dimension][node.key] and "−" or "+")
                 control.expandButton:ClearAllPoints()
@@ -1921,20 +1898,11 @@ renderProfessionFilterOptions = function(frame)
                 control.expandButton:Show()
                 control.label:ClearAllPoints()
                 control.label:SetPoint("LEFT", control, "LEFT", 25, 0)
-                control:SetScript("OnClick", function(self)
-                    local currentDimension, currentNode = self.dimension, self.node
-                    local selection = currentDimension == "categories"
-                        and frame.professionRecipeFilterState.categoryIDs or frame.professionRecipeFilterState.slotKeys
-                    local values = self.filterValues or filterTreeValues(currentDimension, currentNode)
-                    local selected = selectionSummary(selection, values)
-                    for _, value in ipairs(values) do selection[value] = not selected or nil end
-                    if currentDimension == "categories" then syncCategoryAncestors(frame, currentNode) end
-                    updateFilterResults(frame)
-                end)
+                control:SetScript("OnClick", toggleExpanded)
             else
                 control.expandButton:Hide()
                 control.label:ClearAllPoints()
-                control.label:SetPoint("LEFT", control, "LEFT", 25, 0)
+                control.label:SetPoint("LEFT", control, "LEFT", 30, 0)
                 control:SetScript("OnClick", function(self)
                     local currentDimension, currentNode = self.dimension, self.node
                     local selection = currentDimension == "categories"
@@ -1945,9 +1913,14 @@ renderProfessionFilterOptions = function(frame)
                     updateFilterResults(frame)
                 end)
             end
-            control.label:SetWidth(width - item.depth * 14 - 42)
+            control.label:SetWidth(width - item.depth * 14 - (children and 35 or 42))
             control:Show()
-            syncFilterTreeControl(frame, dimension, node, control)
+            if not children then
+                local selection = dimension == "categories" and frame.professionRecipeFilterState.categoryIDs
+                    or frame.professionRecipeFilterState.slotKeys
+                local value = dimension == "categories" and node.id or node.key
+                setFilterControlChecked(control, selection[value] == true)
+            end
             controls[dimension][node.key] = control
         end
     end
@@ -1961,7 +1934,7 @@ end
 local function setSimpleFilterToggle(frame, key, value)
     local state = frame.professionRecipeFilterState
     state[key] = value == true
-    setFilterControlChecked(frame.professionFilterControls[key], state[key], false)
+    setFilterControlChecked(frame.professionFilterControls[key], state[key])
     updateFilterResults(frame)
 end
 
@@ -2000,7 +1973,7 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
             setSimpleFilterToggle(frame, key, not frame.professionRecipeFilterState[key])
         end)
         frame.professionFilterControls[key] = control
-        setFilterControlChecked(control, frame.professionRecipeFilterState[key], false)
+        setFilterControlChecked(control, frame.professionRecipeFilterState[key])
     end
     createToggle("showLearned", "Show learned", -42)
     frame.professionFilterControls.learned = frame.professionFilterControls.showLearned
