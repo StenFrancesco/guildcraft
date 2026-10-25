@@ -87,11 +87,10 @@ reagents the selected character currently has. It counts bags immediately. Open
 that character's bank once per session to verify and include personal-bank and
 reagent-bank items; until then, bank stock is excluded and the browser reports
 that only bags are counted.
-The recipe header also shows **CAN CRAFT (n)**, the number of currently listed
-recipes for which the selected character has enough materials in bags to make at
-least one. Each recipe row shows the maximum craft count from bags alone; bank,
-reagent-bank and account-bank stock do not increase these counts. Unknown bag
-counts display as an em dash, and bag changes refresh the counts.
+The recipe list has a **CAN CRAFT** column. Each recipe row shows the maximum
+craft count from bags alone; bank, reagent-bank and account-bank stock do not
+increase these counts. Unknown bag counts display as an em dash, and bag changes
+refresh the counts.
 Shared account-bank, guild-bank, and other-character stock are excluded. If live
 material availability cannot be verified, those recipes are excluded and the
 browser reports the unavailable data. Bag and bank changes refresh the results.

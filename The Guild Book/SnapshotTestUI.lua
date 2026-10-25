@@ -1540,12 +1540,6 @@ local function createProfessionsPage(api, frame)
     frame.professionCraftableHeading:SetPoint("TOPLEFT", panel, "TOPLEFT", 365, -257)
     setTextColor(frame.professionCraftableHeading, THEME.text)
     frame.professionCraftableHeading:Hide()
-    frame.professionCraftableCount = createText(panel, "OVERLAY", "GameFontNormal")
-    GGM.ApplyJournalFont(frame.professionCraftableCount, 17, "bold")
-    frame.professionCraftableCount:SetPoint("LEFT", frame.professionCraftableHeading, "RIGHT", 8, 0)
-    setTextColor(frame.professionCraftableCount, THEME.text)
-    frame.professionCraftableCount:Hide()
-
     frame.professionRecipeScroll = api.CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
     frame.professionRecipeScroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -284)
     frame.professionRecipeScroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 22)
@@ -1590,7 +1584,6 @@ updateProfessionRecipeBrowser = function(frame, prepared)
         frame.professionCount:SetText("(0)")
         frame.professionCount:Hide()
         if frame.professionCraftableHeading then frame.professionCraftableHeading:Hide() end
-        if frame.professionCraftableCount then frame.professionCraftableCount:Hide() end
         frame.professionStatus:SetText(catalog.message or
             (ownMode and "Waiting for live data from the selected character's profession."
                 or "Waiting for live data to filter the guild recipe catalog for this character."))
@@ -1617,23 +1610,13 @@ updateProfessionRecipeBrowser = function(frame, prepared)
             frame.professionRecipeHeading:Show()
             frame.professionCount:Show()
             frame.professionCraftableHeading:Show()
-            frame.professionCraftableCount:Show()
         else
             frame.professionRecipeHeading:Hide()
             frame.professionCount:Hide()
             frame.professionCraftableHeading:Hide()
-            frame.professionCraftableCount:Hide()
         end
     end
     frame.professionCount:SetText("(" .. #filtered .. ")")
-    local craftableRecipeCount = 0
-    for _, recipe in ipairs(filtered) do
-        if type(recipe.bagCraftableCount) == "number" and recipe.bagCraftableCount > 0 then
-            craftableRecipeCount = craftableRecipeCount + 1
-        end
-    end
-    frame.professionCraftableCount:SetText("(" .. craftableRecipeCount .. ")")
-
     local status = catalog.message
     if filterModel and filterModel.availability
         and filterModel.availability.profession ~= "available" then

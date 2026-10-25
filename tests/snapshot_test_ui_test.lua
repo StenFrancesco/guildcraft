@@ -4951,7 +4951,7 @@ T.test("profession filter button and recipe heading use the agreed layout", func
         "the heading keeps its position when no status is visible")
 end)
 
-T.test("recipe list shows a bag craft-count column and craftable-recipe total", function()
+T.test("recipe list shows bag craft counts beneath the CAN CRAFT heading", function()
     local _, _, frame, model = professionFilterFixture()
     model.recipes[1].bagCraftableCount = 4
     model.recipes[2].bagCraftableCount = 0
@@ -4959,8 +4959,7 @@ T.test("recipe list shows a bag craft-count column and craftable-recipe total", 
     frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
 
     T.assertEqual(frame.professionCraftableHeading:GetText(), "CAN CRAFT")
-    T.assertEqual(frame.professionCraftableCount:GetText(), "(1)",
-        "the heading counts recipes with at least one available bag craft")
+    T.assertNil(frame.professionCraftableCount, "the heading has no aggregate count")
     T.assertEqual(frame.professionRecipeRows[1].craftableCount:GetText(), "4")
     T.assertEqual(frame.professionRecipeRows[2].craftableCount:GetText(), "0")
     T.assertEqual(frame.professionRecipeRows[3].craftableCount:GetText(), "—",
