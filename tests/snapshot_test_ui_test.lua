@@ -4978,6 +4978,14 @@ T.test("filter tree preserves scrollbar position when a group changes content he
     local scroll = frame.professionFilterScroll
     scroll:SetHeight(80)
     frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
+    local nativeRange = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+    frame.api.issecretvalue = function() return false end
+    scroll.GetVerticalScrollRange = function() return nativeRange end
+    local deferred = {}
+    frame.api.C_Timer = { After = function(delay, callback)
+        T.assertEqual(delay, 0, "range restoration runs on the next frame")
+        deferred[#deferred + 1] = callback
+    end }
 
     local group = frame.professionFilterNodeControls.categories["category:10"]
     local function position()
@@ -4988,9 +4996,34 @@ T.test("filter tree preserves scrollbar position when a group changes content he
     T.assertTrue(initialRange > 0)
     scroll:SetVerticalScroll(initialRange / 2)
     group.expandButton.scripts.OnClick(group.expandButton)
+    T.assertEqual(#deferred, 1, "expanding defers restoration until the scroll range settles")
+    nativeRange = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+    scroll:SetVerticalScroll(0) -- simulate WoW clamping the old offset after child layout
+    deferred[1]()
     T.assertTrue(math.abs(position() - 0.5) < 0.001, "opening a group keeps the scrollbar at the same relative position")
+
+    local expandedRange = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+    scroll:SetVerticalScroll(expandedRange * 0.5)
     group.expandButton.scripts.OnClick(group.expandButton)
+    T.assertEqual(#deferred, 2, "collapsing also defers restoration")
+    nativeRange = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+    scroll:SetVerticalScroll(0)
+    deferred[2]()
     T.assertTrue(math.abs(position() - 0.5) < 0.001, "closing a group keeps the scrollbar at the same relative position")
+
+    scroll:SetVerticalScroll(initialRange * 0.35)
+    group.expandButton.scripts.OnClick(group.expandButton)
+    local rangeAfterOpen = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+    nativeRange = rangeAfterOpen
+    scroll:SetVerticalScroll(rangeAfterOpen * 0.35)
+    group.expandButton.scripts.OnClick(group.expandButton)
+    nativeRange = frame.professionFilterContent:GetHeight() - scroll:GetHeight()
+    T.assertEqual(#deferred, 4)
+    scroll:SetVerticalScroll(0)
+    deferred[3]()
+    T.assertEqual(scroll:GetVerticalScroll(), 0, "an obsolete restore cannot replace the most recent layout position")
+    deferred[4]()
+    T.assertTrue(math.abs(position() - 0.35) < 0.001, "the newest expand/collapse callback owns the restored fraction")
 end)
 
 T.test("bag and personal bank changes refresh Have Materials for the selected character", function()

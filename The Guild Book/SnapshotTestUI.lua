@@ -1841,15 +1841,38 @@ renderProfessionFilterOptions = function(frame, scrollFraction)
     local content, api = frame.professionFilterContent, frame.api
     local rowHeight, width = 26, 286
     local scrollOffset = frame.professionFilterScroll:GetVerticalScroll() or 0
+    local function currentScrollRange()
+        local scroll = frame.professionFilterScroll
+        if type(scroll.GetVerticalScrollRange) == "function" and type(api.issecretvalue) == "function" then
+            local ok, range = pcall(scroll.GetVerticalScrollRange, scroll)
+            local publicOK, secret = pcall(api.issecretvalue, range)
+            if ok and publicOK and secret == false and type(range) == "number" and range >= 0 then
+                return range
+            end
+        end
+        return math.max(0, content:GetHeight() - scroll:GetHeight())
+    end
     local function toggleExpanded(control)
         local dimension, node = control.dimension, control.node
         local scroll = frame.professionFilterScroll
-        local oldMaximum = math.max(0, content:GetHeight() - scroll:GetHeight())
+        local oldMaximum = currentScrollRange()
         local oldOffset = scroll:GetVerticalScroll() or 0
         local fraction = oldMaximum > 0 and math.max(0, math.min(oldOffset / oldMaximum, 1)) or 0
         local open = frame.professionRecipeFilterExpanded[dimension][node.key] == true
         frame.professionRecipeFilterExpanded[dimension][node.key] = not open
+        local generation = (frame.professionFilterScrollRestoreGeneration or 0) + 1
+        frame.professionFilterScrollRestoreGeneration = generation
         renderProfessionFilterOptions(frame, fraction)
+        local function restore()
+            if frame.professionFilterScrollRestoreGeneration ~= generation then return end
+            scroll:SetVerticalScroll(fraction * currentScrollRange())
+        end
+        local timer = api.C_Timer
+        if type(timer) == "table" and type(timer.After) == "function" then
+            timer.After(0, restore)
+        else
+            restore()
+        end
     end
     for _, label in pairs(frame.professionFilterSectionLabels) do label:Hide() end
     for _, label in pairs(frame.professionFilterEmptyLabels) do label:Hide() end
