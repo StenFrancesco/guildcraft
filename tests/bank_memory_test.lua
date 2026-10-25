@@ -479,9 +479,68 @@ T.test("guild open records metadata as incomplete without reading any tab conten
     T.assertEqual(record.tabs[1].numSlots, 98)
     T.assertEqual(next(record.tabs[1].slots), nil)
     T.assertEqual(record.tabs[2].status, "incomplete")
-    T.assertNil(api.calls.currentGuildTab)
+    T.assertEqual(api.calls.currentGuildTab, 1)
     T.assertNil(api.calls.guildItemInfo)
     T.assertNil(api.calls.guildItemLink)
+end)
+
+T.test("guild bank session establishment retries after a transient invalid current tab", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    api.currentGuildTab = nil
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+
+    send(controller, "GUILDBANKFRAME_OPENED")
+    T.assertNil(controller.guildSessionToken)
+    T.assertTrue(controller.guildSessionEstablishPending)
+
+    api.currentGuildTab = 1
+    send(controller, "GUILDBANKBAGSLOTS_CHANGED")
+    T.assertNotNil(controller.guildSessionToken)
+    T.assertFalse(controller.guildSessionEstablishPending)
+end)
+
+T.test("guild bank session establishment retries after a transient metadata read failure", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    local getTabInfo = api.GetGuildBankTabInfo
+    api.GetGuildBankTabInfo = function() error("tab metadata not ready") end
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+
+    send(controller, "GUILDBANKFRAME_OPENED")
+    T.assertNil(controller.guildSessionToken)
+    T.assertTrue(controller.guildSessionEstablishPending)
+
+    api.GetGuildBankTabInfo = getTabInfo
+    send(controller, "GUILDBANK_UPDATE_TABS")
+    T.assertNotNil(controller.guildSessionToken)
+    T.assertFalse(controller.guildSessionEstablishPending)
+end)
+
+T.test("remote guild snapshots recover missing icons locally from item IDs", function()
+    local memory = loadModule()
+    local api = makeAPI()
+    api.GetItemInfoInstant = function(itemID)
+        T.assertEqual(itemID, 4001)
+        return itemID, "Item", 1, 1, 98765
+    end
+    local database = assert(memory.InitializeDatabase(nil))
+    local controller = newController(memory, api, database)
+    send(controller, "GUILDBANKFRAME_OPENED")
+    local context = assert(controller:GetGuildBankSyncContext())
+    local snapshot = {
+        id = 1, name = "Guild Tab 1", numSlots = 98, observedSlotCount = 98,
+        capturedAt = api.now + 1, status = "cached",
+        slots = { [1] = { itemID = 4001, itemLink = "|Hitem:4001|h[Item]|h", count = 3 } },
+    }
+
+    local merged, err = controller:MergeGuildBankSyncSnapshot(context.guildKey, context.sessionToken, 1, snapshot)
+
+    T.assertTrue(merged)
+    T.assertNil(err)
+    T.assertEqual(database.guilds[context.guildKey].tabs[1].slots[1].icon, 98765)
 end)
 
 T.test("guild contents-ready captures only the current tab and timestamps each observed tab", function()
@@ -514,7 +573,7 @@ T.test("guild contents-ready captures only the current tab and timestamps each o
     T.assertEqual(record.tabs[1].status, "cached")
     T.assertEqual(record.tabs[1].capturedAt, api.now)
     T.assertEqual(record.tabs[2].capturedAt, 1700000015)
-    T.assertEqual(record.status, "incomplete")
+    T.assertEqual(record.status, "cached")
 end)
 
 T.test("guild metadata refresh keeps cached contents but marks unobserved tabs incomplete", function()
@@ -533,7 +592,7 @@ T.test("guild metadata refresh keeps cached contents but marks unobserved tabs i
     send(controller, "GUILDBANK_UPDATE_TABS")
 
     local record = database.guilds["Raid Team-Silvermoon"]
-    T.assertEqual(record.tabs[1].status, "incomplete")
+    T.assertEqual(record.tabs[1].status, "cached")
     T.assertEqual(record.tabs[1].slots[1].itemID, 3001)
     T.assertEqual(record.tabs[1].capturedAt, 1700000000)
     T.assertEqual(record.tabs[2].status, "incomplete")
@@ -593,7 +652,7 @@ T.test("guild data is not read during combat and awaits a fresh contents-ready e
 
     api.combat = false
     send(controller, "PLAYER_REGEN_ENABLED")
-    T.assertEqual(api.calls.currentGuildTab, currentTabReadCount)
+    T.assertEqual(api.calls.currentGuildTab, currentTabReadCount + 1)
     T.assertEqual(api.calls.guildItemInfo, itemReadCount)
     T.assertEqual(database.guilds["Raid Team-Silvermoon"].tabs[1].status, "incomplete")
     T.assertEqual(database.guilds["Raid Team-Silvermoon"].tabs[1].slots[1].itemID, 3001)

@@ -20,6 +20,7 @@ local function fixture(saved)
         InCombatLockdown = function() return false end,
         time = function() return 100 end,
         UnitFullName = function() return "Alice", "Silvermoon" end,
+        UnitGUID = function() return "Player-1234-Alice" end,
         GetRealmName = function() return "Silvermoon" end,
         Enum = { BankType = { Character = 0 } },
         C_Bank = {
@@ -47,6 +48,10 @@ local function fixture(saved)
     load("The Guild Book Bank/BankMemory.lua", "The Guild Book Bank", memory)
     load("The Guild Book Bank/Main.lua", "The Guild Book Bank", memory)
     load("The Guild Book/Constants.lua", "The Guild Book", GGM)
+    GGM.IsLocalCharacterGUID = function(db, guid)
+        return type(db) == "table" and type(db.localCharacterGUIDs) == "table"
+            and type(guid) == "string" and db.localCharacterGUIDs[guid] == true
+    end
     load("The Guild Book/BankView.lua", "The Guild Book", GGM)
     return api, frame, GGM, function() return reads, changes end
 end
@@ -66,11 +71,11 @@ T.test("companion captures bank on open and carried inventory with bank closed i
     local reads, changes = counts()
     T.assertEqual(reads, 2)
     T.assertEqual(changes, initialChanges + 1)
-    local entries = GGM.BuildBankEntries({ schemaVersion = GGM.SCHEMA_VERSION, characters = {} }, saved)
-    T.assertEqual(#entries, 2)
-    T.assertEqual(entries[1].label, "Guild Bank")
-    T.assertEqual(entries[2].key, "Alice-Silvermoon")
-    local detail = GGM.BuildBankDetail(entries[2], api)
+    local entries = GGM.BuildBankEntries({ schemaVersion = GGM.SCHEMA_VERSION, characters = {},
+        localCharacterGUIDs = { ["Player-1234-Alice"] = true } }, saved)
+    T.assertEqual(#entries, 1)
+    T.assertEqual(entries[1].key, "Alice-Silvermoon")
+    local detail = GGM.BuildBankDetail(entries[1], api)
     T.assertTrue(detail.hasRecord)
     T.assertEqual(detail.tabs[1].slots[1].itemID, 1001)
     T.assertEqual(detail.tabs[1].slots[1].count, 8)
@@ -187,7 +192,8 @@ T.test("reloaded bank snapshot displays a named quality color link while the ban
     local link = "|cnIQ2:|Hitem:170617::::::::11:105::105:1:13572:2:9:11:28:2852:::::|h[Springrain Spear]|h|r"
     local record = {
         status = "cached", capturedAt = 1791558481,
-        identity = { key = "Dysheal-Stormscale", name = "Dysheal", realm = "Stormscale" },
+        identity = { key = "Dysheal-Stormscale", name = "Dysheal", realm = "Stormscale",
+            guid = "Player-1234-Dysheal" },
         tabs = {
             [6] = {
                 id = 6, name = "Tab 1", numSlots = 98,
@@ -202,9 +208,10 @@ T.test("reloaded bank snapshot displays a named quality color link while the ban
     api.C_Bank.FetchPurchasedBankTabData = function() return {} end
     frame.scripts.OnEvent(frame, "ADDON_LOADED", "The Guild Book Bank")
 
-    local entries = GGM.BuildBankEntries(nil, saved)
-    T.assertTrue(entries[2].record == record, "valid saved bank record was discarded")
-    local detail = GGM.BuildBankDetail(entries[2], api)
+    local entries = GGM.BuildBankEntries({ schemaVersion = GGM.SCHEMA_VERSION, characters = {},
+        localCharacterGUIDs = { ["Player-1234-Dysheal"] = true } }, saved)
+    T.assertTrue(entries[1].record == record, "valid saved bank record was discarded")
+    local detail = GGM.BuildBankDetail(entries[1], api)
     T.assertTrue(detail.hasRecord)
     T.assertEqual(detail.completenessText, "Cached")
     T.assertEqual(detail.selectedTabID, 6)
