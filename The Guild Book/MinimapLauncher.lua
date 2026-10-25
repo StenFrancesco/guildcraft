@@ -24,20 +24,24 @@ local function label(parent, text, x, y)
     return font
 end
 
-local function panel(api, name, width, height)
+local function panel(api, name, width, height, alwaysOnTop)
     local frame = api.CreateFrame("Frame", name, api.UIParent,
         api.BackdropTemplateMixin and "BackdropTemplate" or nil)
     frame:SetSize(width, height)
-    frame:SetFrameStrata("DIALOG")
+    frame:SetFrameStrata(alwaysOnTop and "FULLSCREEN_DIALOG" or "DIALOG")
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
     if frame.SetBackdrop then
         frame:SetBackdrop({
-            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+            bgFile = alwaysOnTop and "Interface\\Buttons\\WHITE8X8"
+                or "Interface\\DialogFrame\\UI-DialogBox-Background",
             edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
             tile = true, tileSize = 32, edgeSize = 16,
             insets = { left = 4, right = 4, top = 4, bottom = 4 },
         })
+        if alwaysOnTop and frame.SetBackdropColor then
+            frame:SetBackdropColor(0.08, 0.06, 0.04, 1)
+        end
     end
     api.UISpecialFrames = api.UISpecialFrames or {}
     table.insert(api.UISpecialFrames, name)
@@ -72,7 +76,7 @@ function GGM.ShowGuildBookOptions(api, db)
     if not settings or type(api.CreateFrame) ~= "function" then return nil end
     local frame = GGM.guildBookOptionsFrame
     if not frame then
-        frame = panel(api, "TheGuildBookOptionsFrame", 340, 580)
+        frame = panel(api, "TheGuildBookOptionsFrame", 340, 580, true)
         GGM.guildBookOptionsFrame = frame
         frame:SetPoint("CENTER", api.UIParent, "CENTER", 0, 0)
         frame:SetMovable(true)

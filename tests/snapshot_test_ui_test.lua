@@ -1047,7 +1047,12 @@ local function recipeDetailsFixture()
     api.C_ChatInfo = { SendAddonMessage = forbidden }
     api.C_GuildInfo = { GuildRoster = forbidden }
     api.NotifyInspect, api.CraftRecipe = forbidden, forbidden
-    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {}, marker = "unchanged" }
+    local db = { schemaVersion = GGM.SCHEMA_VERSION, characters = {}, marker = "unchanged",
+        localCharacterGUIDs = {
+            ["Player-1234-Alice"] = true, ["Player-1234-Bob"] = true,
+            ["Player-1234-Carol"] = true, ["Player-1234-Dave"] = true,
+        } }
+    GGM.db = db
     installProfessionCatalogStub(GGM, function() return professionCatalog("ready", recipes) end, {})
     local frame = showBrowser(GGM, api, db)
     GGM.SelectGuildGearBrowserTab(frame, "Professions")
@@ -1068,7 +1073,8 @@ T.test("recipe details show personal bank notes below individual materials witho
     api.issecretvalue = function() return false end
     api.UnitFullName = function() return "Alice", "Realm" end
     local function bank(name, itemID, count, partial)
-        return { identity = { key = name .. "-Realm", name = name, realm = "Realm" },
+        return { identity = { key = name .. "-Realm", name = name, realm = "Realm",
+                guid = "Player-1234-" .. name },
             status = partial and "incomplete" or "cached", capturedAt = 100,
             tabs = { [1] = { id = 1, name = "Personal", numSlots = 1, status = "cached", capturedAt = 100,
                 slots = { { itemID = itemID, count = count } } } } }
@@ -1136,7 +1142,8 @@ T.test("single recipe material bank note clears when rows are reused for currenc
         return { state = "ready", materials = { { name = choice.name, quantity = 1, choices = { choice } } } }
     end
     api.TheGuildBookBankDB = { schemaVersion = 1, characters = { ["Bob-Realm"] = {
-        identity = { key = "Bob-Realm", name = "Bob", realm = "Realm" }, status = "cached", capturedAt = 100,
+        identity = { key = "Bob-Realm", name = "Bob", realm = "Realm", guid = "Player-1234-Bob" },
+        status = "cached", capturedAt = 100,
         tabs = { [1] = { id = 1, name = "Personal", numSlots = 1, status = "cached", capturedAt = 100,
             slots = { { itemID = 1, count = 20 } } } },
     } } }
@@ -1234,7 +1241,8 @@ T.test("tracker personal bank toggle renders locations and refreshes without com
     api.UnitFullName = function() return "Alice", "Realm" end
     api.date = function(_, timestamp) return "time:" .. timestamp end
     local function bank(name, count)
-        return { identity = { key = name .. "-Realm", name = name, realm = "Realm" },
+        return { identity = { key = name .. "-Realm", name = name, realm = "Realm",
+                guid = "Player-1234-" .. name },
             status = "cached", capturedAt = 100, tabs = { [1] = {
                 id = 1, name = "Bank", status = "cached", capturedAt = 100, numSlots = 1,
                 slots = { [1] = { itemID = 1, count = count } },
@@ -1292,7 +1300,8 @@ T.test("tracker bank toggle handles missing companion and partial captures visib
     tracker.altMaterialsToggle.scripts.OnClick(tracker.altMaterialsToggle)
     T.assertEqual(tracker.bankStatus.text, "Personal bank data unavailable.")
     api.TheGuildBookBankDB = { schemaVersion = 1, characters = {
-        ["Bob-Realm"] = { identity = { key = "Bob-Realm", name = "Bob", realm = "Realm" },
+        ["Bob-Realm"] = { identity = { key = "Bob-Realm", name = "Bob", realm = "Realm",
+                guid = "Player-1234-Bob" },
             status = "incomplete", tabs = {} },
     } }
     G.RefreshMaterialTracker()
@@ -3868,7 +3877,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
         end
         local key = name .. "-" .. realm
         return {
-            identity = { key = key, name = name, realm = realm },
+            identity = { key = key, name = name, realm = realm, guid = "Player-1234-" .. name },
             capturedAt = 1700000001, status = "cached", tabs = tabs,
         }
     end
@@ -3903,7 +3912,9 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     function tooltip:SetHyperlink(link) self.link = link end
     api.GameTooltip = tooltip
 
-    local frame = showBrowser(GGM, api, makeDB(GGM, ggmRecords))
+    local sharedDB = makeDB(GGM, ggmRecords)
+    sharedDB.localCharacterGUIDs = { ["Player-1234-Alice"] = true }
+    local frame = showBrowser(GGM, api, sharedDB)
     T.assertNotNil(frame.bankPage, "journal should construct a dedicated Bank page")
     T.assertTrue(GGM.SelectGuildGearBrowserTab(frame, "Bank"))
     local page = frame.bankPage
@@ -3973,6 +3984,7 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     changedWhileHidden.tabs[1].capturedAt = changedWhileHidden.capturedAt
     _G.TheGuildBookBankDB.characters[changedWhileHidden.identity.key] = changedWhileHidden
     local addedWhileHidden = record("Beatrice", "Silvermoon", 1)
+    sharedDB.localCharacterGUIDs[addedWhileHidden.identity.guid] = true
     _G.TheGuildBookBankDB.characters[addedWhileHidden.identity.key] = addedWhileHidden
     T.assertFalse(_G.GuildGearMemoryBankChanged(), "hidden Bank page should defer its visible refresh")
     GGM.ShowGuildGearBrowserWindow(api, frame.db)
@@ -3996,8 +4008,8 @@ T.test("journal Bank page selects cached entries, tabs, and slots and refreshes 
     T.assertNil(page.selectedTabID)
     T.assertNil(page.selectedSlotID)
     T.assertFalse(tooltip.visible, "missing companion should close a tooltip from the previous snapshot")
-    T.assertTrue(page.slotsEmpty.text:find("_retail_/Interface/AddOns/The Guild Book Bank", 1, true) ~= nil,
-        "missing companion state should include its installation path")
+    T.assertEqual(#page.entries, 0, "banks without observed snapshots are hidden")
+    T.assertEqual(page.listEmpty.text, "No saved bank snapshots.")
     _G.DysbankMemoryAPI, _G.TheGuildBookBankDB = previousAPI, previousDB
 end)
 

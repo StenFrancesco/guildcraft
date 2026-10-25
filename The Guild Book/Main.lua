@@ -18,6 +18,10 @@ frame:RegisterEvent("TRADE_SKILL_CLOSE")
 frame:RegisterEvent("GUILD_ROSTER_UPDATE")
 frame:RegisterEvent("PLAYER_GUILD_UPDATE")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+frame:RegisterEvent("GUILDBANKFRAME_OPENED")
+frame:RegisterEvent("GUILDBANKFRAME_CLOSED")
+frame:RegisterEvent("GUILDBANK_UPDATE_TABS")
+frame:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
 for _, event in ipairs({ "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "PLAYER_UPDATE_RESTING", "PLAYER_REGEN_ENABLED" }) do
     frame:RegisterEvent(event)
 end
@@ -95,6 +99,10 @@ end
 frame:SetScript("OnEvent", function(_, event, ...)
     local arg1 = ...
 
+    if type(GGM.HandleBankSyncEvent) == "function" then
+        GGM.HandleBankSyncEvent(GGM.bankSync, event, ...)
+    end
+
     if event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS"
         or event == "PLAYER_UPDATE_RESTING" or event == "PLAYER_REGEN_ENABLED" then
         if type(GGM.WakeProfessionSync) == "function" then GGM.WakeProfessionSync(GGM.professionSync) end
@@ -154,6 +162,15 @@ frame:SetScript("OnEvent", function(_, event, ...)
         end
 
         if type(GGM.RefreshGearBackendState) == "function" then GGM.RefreshGearBackendState() end
+        if type(GGM.CreateBankSync) == "function" then
+            local bankSync, bankSyncErr = GGM.CreateBankSync(_G)
+            GGM.bankSync = bankSync
+            if bankSync then
+                local registered, registerErr = GGM.RegisterBankSync(bankSync)
+                if not registered then bankSyncErr = registerErr end
+            end
+            GGM.lastBankSyncError = bankSyncErr
+        end
         return
     end
 
@@ -185,6 +202,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "CHAT_MSG_ADDON" then
+        if GGM.bankSync then
+            local _, bankErr = GGM.HandleBankSyncAddonMessage(GGM.bankSync, ...)
+            if bankErr and bankErr ~= "bank-sync-frame-invalid" then GGM.lastBankSyncError = bankErr end
+        end
         if GGM.professionSync and not GGM.startupError then
             local _, err = GGM.HandleProfessionSyncAddonMessage(GGM.professionSync, ...)
             GGM.lastProfessionSyncError = err

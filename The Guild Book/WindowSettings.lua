@@ -14,12 +14,21 @@ function GGM.ReadBrowserWindowSettings(db)
     local saved = type(ui) == "table" and ui.window
     if type(saved) ~= "table" then saved = {} end
     local scale = bounded(saved.scale, 0.75, 1.25, 1)
+    local positionX, positionY
+    if type(saved.positionX) == "number" and saved.positionX == saved.positionX
+        and saved.positionX >= 0 and saved.positionX <= 1
+        and type(saved.positionY) == "number" and saved.positionY == saved.positionY
+        and saved.positionY >= 0 and saved.positionY <= 1 then
+        positionX, positionY = saved.positionX, saved.positionY
+    end
     return {
         scale = scale,
         recipeScale = bounded(saved.recipeScale, 0.75, 1.25, scale),
         opacity = bounded(saved.opacity, 0.6, 1, 1),
         locked = saved.locked == true,
         autoAlignRecipe = saved.autoAlignRecipe ~= false,
+        positionX = positionX,
+        positionY = positionY,
     }
 end
 
@@ -49,6 +58,13 @@ function GGM.ApplyBrowserWindowSettings(browser, db)
     local root = browser.api.UIParent
     if browser.SetScale then browser:SetScale(fittedScale(browser, root, saved.scale)) end
     if browser.SetAlpha then browser:SetAlpha(saved.opacity) end
+    if saved.positionX and saved.positionY and root and root.GetWidth and root.GetHeight then
+        local width, height = root:GetWidth(), root:GetHeight()
+        if width > 0 and height > 0 then
+            browser:ClearAllPoints()
+            browser:SetPoint("CENTER", root, "BOTTOMLEFT", saved.positionX * width, saved.positionY * height)
+        end
+    end
     if saved.locked and browser.StopMovingOrSizing then browser:StopMovingOrSizing() end
     local details = browser.recipeDetailsFrame
     if details then
@@ -57,11 +73,33 @@ function GGM.ApplyBrowserWindowSettings(browser, db)
     end
 end
 
+function GGM.SaveGuildBookWindowPosition(browser)
+    if not browser or type(browser.db) ~= "table" then return end
+    local root = browser.api and browser.api.UIParent
+    if not root or not root.GetWidth or not root.GetHeight or not browser.GetCenter then return end
+    local width, height = root:GetWidth(), root:GetHeight()
+    local centerX, centerY = browser:GetCenter()
+    if width <= 0 or height <= 0 or type(centerX) ~= "number" or type(centerY) ~= "number" then return end
+    local rootScale = root.GetEffectiveScale and root:GetEffectiveScale() or 1
+    local browserScale = browser.GetEffectiveScale and browser:GetEffectiveScale() or rootScale
+    if rootScale <= 0 or browserScale <= 0 then return end
+
+    local saved = GGM.GetBrowserWindowSettings(browser.db)
+    if not saved then return end
+    saved.positionX = math.max(0, math.min(1, centerX * browserScale / (width * rootScale)))
+    saved.positionY = math.max(0, math.min(1, centerY * browserScale / (height * rootScale)))
+end
+
 function GGM.CenterGuildBookWindow(browser)
     if not browser then return end
     if browser.StopMovingOrSizing then browser:StopMovingOrSizing() end
     browser:ClearAllPoints()
     browser:SetPoint("CENTER", browser.api.UIParent, "CENTER", 0, 0)
+    local saved = GGM.GetBrowserWindowSettings(browser.db)
+    if saved then
+        saved.positionX = nil
+        saved.positionY = nil
+    end
 end
 
 function GGM.PositionRecipeDetailsWindow(browser, details)

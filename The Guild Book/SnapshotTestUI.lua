@@ -932,6 +932,9 @@ local function openSelectedProfessionContext(frame, skillLineID, allowAll)
         if not publicOK or secret ~= false then return false end
     end
     if opened == false then return false end
+    -- Opening a profession for the first time can create ProfessionsFrame.
+    -- Resolve it again so the frame created by OpenTradeSkill is hidden too.
+    professionFrame = frame.api.ProfessionsFrame or frame.api.TradeSkillFrame or professionFrame
     frame.craftingContextSkillLineID = skillLineID
     frame.craftingContextOpenedByGuildBook = not frameWasShown
     if professionFrame and not frameWasShown then
@@ -2119,7 +2122,10 @@ function GGM.CreateGuildGearBrowserWindow(api)
         if settings and settings.locked then return end
         if self.StartMoving then self:StartMoving() end
     end)
-    frame:SetScript("OnDragStop", function(self) if self.StopMovingOrSizing then self:StopMovingOrSizing() end end)
+    frame:SetScript("OnDragStop", function(self)
+        if self.StopMovingOrSizing then self:StopMovingOrSizing() end
+        if GGM.SaveGuildBookWindowPosition then GGM.SaveGuildBookWindowPosition(self) end
+    end)
 
     frame.background = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
     frame.background:SetAllPoints(frame)

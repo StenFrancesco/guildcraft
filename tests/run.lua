@@ -20,6 +20,8 @@ local suites = {
     "tests.local_gear_memory_test",
     "tests.bank_memory_test",
     "tests.bank_integration_test",
+    "tests.bank_sync_test",
+    "tests.bank_sync_transport_security_test",
     "tests.bank_view_test",
     "tests.snapshot_test_ui_test",
     "tests.stable_gear_tracker_test",
