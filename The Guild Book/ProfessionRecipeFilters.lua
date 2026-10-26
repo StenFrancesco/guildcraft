@@ -132,8 +132,8 @@ local function categoryNodeBuilder(api, trade, model)
             invalid = true
             return nil
         end
-        if nodesByID[categoryID] then return nodesByID[categoryID] end
         if seen[categoryID] then invalid = true; return nil end
+        if nodesByID[categoryID] then return nodesByID[categoryID] end
 
         local infoOK, info = call(api, trade.GetCategoryInfo, categoryID)
         if not infoOK or type(info) ~= "table" then invalid = true; return nil end

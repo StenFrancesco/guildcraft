@@ -332,6 +332,25 @@ T.test("profession recipe filter model builds category ancestry from live profes
     T.assertEqual(model.recipes[1].categoryIDs[3], 12)
 end)
 
+T.test("profession recipe filter rejects cyclic live category ancestry", function()
+    local GGM = loadFilters()
+    local categories = {
+        [10] = { categoryID = 10, name = "A", parentCategoryID = 11 },
+        [11] = { categoryID = 11, name = "B", parentCategoryID = 10 },
+    }
+    local api = modelAPI(164, {
+        [202] = { recipeID = 202, name = "Cyclic category recipe", categoryID = 10, learned = true, craftable = true },
+    }, { [202] = 1 }, categories)
+
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 164, {
+        { recipeID = 202, name = "Cyclic category recipe" },
+    })
+
+    T.assertEqual(model.availability.categories, "partial")
+    T.assertEqual(#model.recipes[1].categoryIDs, 2)
+    T.assertEqual(model.state, "partial")
+end)
+
 T.test("profession recipe filter model derives armor and two-handed weapon slots from item metadata", function()
     local GGM = loadFilters()
     local itemData = {
