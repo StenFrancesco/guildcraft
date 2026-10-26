@@ -61,6 +61,48 @@ T.test("tracker refreshes bag counts upward and downward and supports the legacy
     T.assertEqual(GGM.BuildMaterialTrackingRows(api, saved)[1].owned, 0)
 end)
 
+T.test("tracker counts actual bag slots and excludes equipped copies on modern and legacy container APIs", function()
+    local GGM, api, _, model = fixture()
+    model.materials[1].quantity = 10
+    local saved = assert(GGM.CreateMaterialTrackingSnapshot(api, 123, "Bag", 1, model))
+    local totalWithBank = false
+    local function getCount(_, includeBank, includeUses, includeReagentBank, includeAccountBank)
+        T.assertFalse(includeUses)
+        T.assertFalse(includeAccountBank)
+        if includeBank then
+            T.assertTrue(includeReagentBank)
+            totalWithBank = true
+            return 9 -- 2 in bags + 3 equipped + 4 in bank
+        end
+        T.assertFalse(includeReagentBank)
+        return 5 -- 2 in bags + 3 equipped
+    end
+
+    api.NUM_BAG_SLOTS = 4
+    api.C_Item.GetItemCount = getCount
+    api.C_Container = {
+        GetContainerNumSlots = function(bagID) return bagID == 0 and 2 or 0 end,
+        GetContainerItemInfo = function(_, slotID)
+            if slotID == 1 then return { itemID = 101, stackCount = 2 } end
+            return nil
+        end,
+    }
+    local cache = {}
+    T.assertEqual(GGM.BuildMaterialTrackingRows(api, saved, false, nil, cache)[1].owned, 2)
+    T.assertEqual(GGM.BuildMaterialTrackingRows(api, saved, true, nil, cache)[1].owned, 6)
+    T.assertTrue(totalWithBank)
+
+    -- The supported Classic client may expose the older tuple-returning API.
+    api.C_Container = nil
+    api.GetContainerNumSlots = function(bagID) return bagID == 0 and 1 or 0 end
+    api.GetContainerItemInfo = function(_, slotID)
+        if slotID == 1 then return "texture", 2, false, 1, false, false, "item:101", false, false, 101 end
+    end
+    local legacyCache = {}
+    T.assertEqual(GGM.BuildMaterialTrackingRows(api, saved, false, nil, legacyCache)[1].owned, 2)
+    T.assertEqual(GGM.BuildMaterialTrackingRows(api, saved, true, nil, legacyCache)[1].owned, 6)
+end)
+
 T.test("tracker allocates alternatives across groups without double counting or starving fixed reagents", function()
     local GGM, api, counts, model = fixture()
     model.materials = {

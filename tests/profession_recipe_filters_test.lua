@@ -2,6 +2,7 @@ local T = require("tests.testlib")
 
 local function loadFilters()
     local GGM = {}
+    T.loadAddonFile("The Guild Book/Constants.lua", GGM)
     T.loadAddonFile("The Guild Book/RecipeDetails.lua", GGM)
     T.loadAddonFile("The Guild Book/MaterialTracker.lua", GGM)
     T.loadAddonFile("The Guild Book/ProfessionRecipeFilters.lua", GGM)
@@ -95,6 +96,37 @@ local function findNode(nodes, key)
         if child then return child end
     end
 end
+
+T.test("profession recipe filter keeps catalog rows through the shared 4096 recipe limit", function()
+    local GGM = loadFilters()
+    local api = modelAPI(171, {}, {})
+    local catalog = {}
+    for index = 1, GGM.PROFESSION_MAX_RECIPES do
+        catalog[index] = { recipeID = index, name = "Recipe " .. index }
+    end
+
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, catalog, false, true)
+
+    T.assertEqual(#model.recipes, GGM.PROFESSION_MAX_RECIPES)
+    T.assertEqual(model.recipes[GGM.PROFESSION_MAX_RECIPES].recipeID, GGM.PROFESSION_MAX_RECIPES)
+end)
+
+T.test("profession recipe filter keeps valid catalog rows around malformed indexes", function()
+    local GGM = loadFilters()
+    local api = modelAPI(171, {}, {})
+    local catalog = {
+        [1] = { recipeID = 340, name = "First" },
+        [3] = { recipeID = 342, name = "Third" },
+        [GGM.PROFESSION_MAX_RECIPES + 1] = { recipeID = 9999, name = "Too high" },
+    }
+
+    local model = GGM.BuildProfessionRecipeFilterModel(api, 171, catalog, false, true)
+
+    T.assertEqual(#model.recipes, 2)
+    T.assertEqual(model.recipes[1].recipeID, 340)
+    T.assertEqual(model.recipes[2].recipeID, 342)
+    T.assertEqual(model.state, "partial")
+end)
 
 T.test("profession recipe filter state enables both learning states and disables materials by default", function()
     local GGM = loadFilters()

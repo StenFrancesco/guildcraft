@@ -28,7 +28,7 @@ local function hasCraftableItem(entry)
     return type(entry.craftableCount) == "number" and entry.craftableCount > 0
 end
 
-local MAX_RECIPES, MAX_CATEGORIES, MAX_ENCHANT_TARGETS = 2048, 512, 128
+local MAX_RECIPES, MAX_CATEGORIES, MAX_ENCHANT_TARGETS = GGM.PROFESSION_MAX_RECIPES or 4096, 512, 128
 
 local function public(api, value)
     if type(api) ~= "table" or type(api.issecretvalue) ~= "function" then return false end
@@ -473,7 +473,7 @@ local function denseArraySize(api, value, maximum)
     return count
 end
 
-local function recipeCraftableFromMaterials(api, recipe, includeBank, noMaterialCraftable)
+local function recipeCraftableFromMaterials(api, recipe, includeBank, noMaterialCraftable, countCache)
     if type(GGM.BuildRecipeMaterialDetails) ~= "function"
         or type(GGM.CreateMaterialTrackingSnapshot) ~= "function"
         or type(GGM.BuildMaterialTrackingRows) ~= "function"
@@ -495,8 +495,8 @@ local function recipeCraftableFromMaterials(api, recipe, includeBank, noMaterial
         local count = craftable and 1 or 0
         return craftable, count, true, count
     end
-    local bagCraftableCount = GGM.GetMaximumMaterialTrackingAmount(api, snapshot, false)
-    local rowsOK, rows = pcall(GGM.BuildMaterialTrackingRows, api, snapshot, includeBank == true)
+    local bagCraftableCount = GGM.GetMaximumMaterialTrackingAmount(api, snapshot, false, countCache)
+    local rowsOK, rows = pcall(GGM.BuildMaterialTrackingRows, api, snapshot, includeBank == true, nil, countCache)
     if not rowsOK or type(rows) ~= "table" or #rows ~= #snapshot.materials then
         return false, nil, false, bagCraftableCount
     end
@@ -521,21 +521,19 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
     end
 
     local recipesByID = {}
-    local recipeCount, highest = 0, 0
+    local recipeIndexes = {}
     for index in pairs(catalogRecipes) do
         checkpoint()
         if not positiveInteger(api, index) or index > MAX_RECIPES then
             model.state = "partial"
-            return model
+        else
+            recipeIndexes[#recipeIndexes + 1] = index
         end
-        recipeCount, highest = recipeCount + 1, math.max(highest, index)
     end
-    if recipeCount ~= highest then
-        model.state = "partial"
-        return model
-    end
-    for index = 1, recipeCount do
+    table.sort(recipeIndexes)
+    for position, index in ipairs(recipeIndexes) do
         checkpoint()
+        if index ~= position then model.state = "partial" end
         local copy = cloneCatalogRecipe(api, rawget(catalogRecipes, index))
         if copy and not recipesByID[copy.recipeID] then
             recipesByID[copy.recipeID] = copy
@@ -632,6 +630,7 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
     local materialUnavailable = type(GGM.BuildRecipeMaterialDetails) ~= "function"
         or type(GGM.CreateMaterialTrackingSnapshot) ~= "function"
         or type(GGM.BuildMaterialTrackingRows) ~= "function"
+    local materialCountCache = {}
     local materialPartial = false
     local metadataPartial = model.state == "partial"
     local slotMetadataPartial = false
@@ -663,7 +662,7 @@ function GGM.BuildProfessionRecipeFilterModel(api, professionID, catalogRecipes,
 
                 if learned then
                     local craftable, count, materialOK, bagCraftableCount = recipeCraftableFromMaterials(api, recipe,
-                        bankVerified, field(api, info, "craftable"))
+                        bankVerified, field(api, info, "craftable"), materialCountCache)
                     recipe.bagCraftableCount = bagCraftableCount
                     if materialOK then
                         recipe.craftable = craftable
