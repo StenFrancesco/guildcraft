@@ -116,11 +116,16 @@ local function openGuildCraftingContext(details)
     local browser = details.browser
     local trade = browser.api.C_TradeSkillUI
     if browser.professionLibraryMode ~= "All"
-        or browser.craftingContextSkillLineID == browser.selectedProfessionID
         or type(trade) ~= "table" or type(trade.GetRecipeInfo) ~= "function"
         or type(GGM.OpenSelectedProfessionContext) ~= "function" then return false end
+    if browser.craftingContextSkillLineID == browser.selectedProfessionID then
+        -- The browser owns this shared context: its All-mode filter model still
+        -- needs live profession data after the recipe details window is closed.
+        details.openedCraftingContext = false
+        return true
+    end
     local opened = GGM.OpenSelectedProfessionContext(browser, browser.selectedProfessionID, true)
-    details.openedCraftingContext = opened and browser.craftingContextOpenedByGuildBook == true
+    details.openedCraftingContext = false
     return opened
 end
 
@@ -1058,13 +1063,27 @@ function GGM.HideRecipeDetailsWindow(browser)
     if browser.recipeDetailsFrame then browser.recipeDetailsFrame:Hide() end
 end
 
+local function findProfessionRecipe(browser, recipeID)
+    for _, entry in ipairs((browser.professionCatalog or {}).recipes or {}) do
+        if entry.recipeID == recipeID then return entry end
+    end
+
+    if browser.professionLibraryMode ~= "Own" or not browser.selectedProfessionID then return nil end
+    local model = browser.professionRecipeFilterModel
+    if type(model) ~= "table" or model.professionID ~= browser.selectedProfessionID
+        or type(model.recipes) ~= "table" then
+        return nil
+    end
+    for _, entry in ipairs(model.recipes) do
+        if entry.recipeID == recipeID then return entry end
+    end
+end
+
 function GGM.ShowRecipeDetailsWindow(browser, recipe)
     if browser.activeTab ~= "Professions" or type(recipe) ~= "table" then return nil end
-    local canonical
-    for _, entry in ipairs((browser.professionCatalog or {}).recipes or {}) do
-        if entry.recipeID == recipe.recipeID then canonical = entry; break end
-    end
+    local canonical = findProfessionRecipe(browser, recipe.recipeID)
     if not canonical then return nil end
+    local firstDisplay = browser.recipeDetailsFrame == nil
     local details = browser.recipeDetailsFrame or createWindow(browser, canonical)
     local preserveSelection = details.recipeID == canonical.recipeID
     if not preserveSelection then details.amountInput:SetText("1") end
@@ -1077,8 +1096,8 @@ function GGM.ShowRecipeDetailsWindow(browser, recipe)
     details.professionName:SetText(browser.selectedProfession or "Profession")
     updateCrafters(details, canonical, preserveSelection)
     renderMaterials(details, GGM.BuildRecipeMaterialDetails(browser.api, canonical.recipeID))
-    if GGM.ApplyBrowserWindowSettings then GGM.ApplyBrowserWindowSettings(browser, browser.db) end
-    if GGM.PositionRecipeDetailsWindow then GGM.PositionRecipeDetailsWindow(browser, details) end
+    if GGM.ApplyRecipeDetailsWindowSettings then GGM.ApplyRecipeDetailsWindowSettings(browser) end
+    if firstDisplay and GGM.PositionRecipeDetailsWindow then GGM.PositionRecipeDetailsWindow(browser, details) end
     details:Show()
     if details.SetFrameStrata then details:SetFrameStrata("TOOLTIP") end
     if details.Raise then details:Raise() end
@@ -1089,15 +1108,14 @@ function GGM.RefreshRecipeDetailsWindow(browser)
     local details = browser.recipeDetailsFrame
     if not shown(details) then return end
     if browser.activeTab == "Professions" then
-        for _, recipe in ipairs((browser.professionCatalog or {}).recipes or {}) do
-            if recipe.recipeID == details.recipeID then
-                setRecipeTitle(details, recipe.name)
-                details.recipeIcon:SetTexture(recipe.outputIcon or UNKNOWN_ICON)
-                details.currentRecipeName = recipe.name
-                updateCrafters(details, recipe, true)
-                setActionMode(details, browser.professionLibraryMode == "Own")
-                return
-            end
+        local recipe = findProfessionRecipe(browser, details.recipeID)
+        if recipe then
+            setRecipeTitle(details, recipe.name)
+            details.recipeIcon:SetTexture(recipe.outputIcon or UNKNOWN_ICON)
+            details.currentRecipeName = recipe.name
+            updateCrafters(details, recipe, true)
+            setActionMode(details, browser.professionLibraryMode == "Own")
+            return
         end
     end
     GGM.HideRecipeDetailsWindow(browser)

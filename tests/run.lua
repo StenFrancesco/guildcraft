@@ -4,6 +4,7 @@ local suites = {
     "tests.cpu_work_test",
     "tests.profession_cpu_data_test",
     "tests.profession_cpu_index_test",
+    "tests.profession_recipe_filters_test",
     "tests.profession_roster_cpu_test",
     "tests.profession_sync_cpu_test",
     "tests.chat_throttle_test",

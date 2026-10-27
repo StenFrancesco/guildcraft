@@ -110,22 +110,129 @@ function GGM.LoadMaterialTracking(api, db)
     return GGM.ValidateMaterialTrackingSnapshot(api, db.materialTracking[guid])
 end
 
-local function ownedCount(api, choice)
-    local ok, value
+local function materialChoiceKey(choice)
+    return choice.itemID and "item" .. choice.itemID or "currency" .. choice.currencyID
+end
+
+local MAX_BAG_INDEX, MAX_CONTAINER_SLOTS = 5, 200
+local BAG_COUNTS_CACHE_KEY = {}
+local BAG_SCAN_FAILED, BAG_SCAN_UNAVAILABLE = {}, {}
+
+local function validItemCount(api, value)
+    return public(api, value) and type(value) == "number" and value >= 0
+        and value <= 2147483647 and value == math.floor(value)
+end
+
+local function bagItemCounts(api)
+    local containerAPI = type(api.C_Container) == "table" and api.C_Container or api
+    local getSlots = rawget(containerAPI, "GetContainerNumSlots") or rawget(api, "GetContainerNumSlots")
+    local getItemInfo = rawget(containerAPI, "GetContainerItemInfo") or rawget(api, "GetContainerItemInfo")
+    if type(getSlots) ~= "function" or type(getItemInfo) ~= "function" then
+        return nil, false
+    end
+
+    local lastBag = rawget(api, "NUM_TOTAL_EQUIPPED_BAG_SLOTS")
+    if lastBag == nil then lastBag = rawget(api, "NUM_BAG_SLOTS") end
+    if lastBag == nil then lastBag = 4 end
+    if not integer(api, lastBag, MAX_BAG_INDEX) then return nil, true end
+
+    local counts = {}
+    for bagID = 0, lastBag do
+        local slotsOK, slots = pcall(getSlots, bagID)
+        if not slotsOK or not public(api, slots) or type(slots) ~= "number"
+            or slots < 0 or slots > MAX_CONTAINER_SLOTS or slots ~= math.floor(slots) then
+            return nil, true
+        end
+        for slotID = 1, slots do
+            local infoOK, info, legacyCount, legacyLocked, legacyQuality, legacyReadable, legacyLootable,
+                legacyLink, legacyFiltered, legacyNoValue, legacyItemID = pcall(getItemInfo, bagID, slotID)
+            if not infoOK or not public(api, info) then return nil, true end
+            local slotItemID, count
+            if type(info) == "table" then
+                slotItemID, count = rawget(info, "itemID"), rawget(info, "stackCount")
+                if not public(api, slotItemID) or not public(api, count) then return nil, true end
+                if slotItemID == nil then return nil, true end
+            else
+                slotItemID, count = legacyItemID, legacyCount
+                if not public(api, slotItemID) or not public(api, count) then return nil, true end
+                if slotItemID == nil and (info ~= nil or count ~= nil) then return nil, true end
+            end
+            if slotItemID ~= nil then
+                if not integer(api, slotItemID, 2147483647) then return nil, true end
+                if not validItemCount(api, count) or count == 0 then return nil, true end
+                local total = counts[slotItemID] or 0
+                if total > 2147483647 - count then return nil, true end
+                counts[slotItemID] = total + count
+            end
+        end
+    end
+    return counts, true
+end
+
+local function cachedBagItemCounts(api, countCache)
+    if countCache then
+        local cached = rawget(countCache, BAG_COUNTS_CACHE_KEY)
+        if cached == BAG_SCAN_UNAVAILABLE then return nil, false end
+        if cached == BAG_SCAN_FAILED then return nil, true end
+        if cached ~= nil then return cached, true end
+    end
+    local counts, scanAvailable = bagItemCounts(api)
+    if countCache then
+        if scanAvailable then
+            countCache[BAG_COUNTS_CACHE_KEY] = counts or BAG_SCAN_FAILED
+        else
+            countCache[BAG_COUNTS_CACHE_KEY] = BAG_SCAN_UNAVAILABLE
+        end
+    end
+    return counts, scanAvailable
+end
+
+local function apiItemCount(api, fn, itemID, includeBank)
+    local bankItems = includeBank == true
+    local ok, value = pcall(fn, itemID, bankItems, false, bankItems, false)
+    if not ok or not validItemCount(api, value) then return nil end
+    return value
+end
+
+local function ownedCount(api, choice, includeBank, countCache)
+    local key = materialChoiceKey(choice) .. (includeBank == true and ":bank" or ":bags")
+    if countCache and countCache[key] ~= nil then
+        return countCache[key] ~= false and countCache[key] or nil
+    end
+    local value
     if choice.itemID then
         local fn = type(api.C_Item) == "table" and api.C_Item.GetItemCount or api.GetItemCount
-        if type(fn) ~= "function" then return nil end
-        ok, value = pcall(fn, choice.itemID, false, false, false, false)
+        local bagCounts, scanAvailable = cachedBagItemCounts(api, countCache)
+        if not scanAvailable then
+            -- Keep the legacy API path for clients without container-slot APIs.
+            if type(fn) ~= "function" then return nil end
+            value = apiItemCount(api, fn, choice.itemID, includeBank)
+        elseif bagCounts == nil then
+            return nil
+        elseif includeBank == true then
+            if type(fn) ~= "function" then return nil end
+            -- GetItemCount has no equipped-item flag. The equipped count is
+            -- common to both scopes and cancels in this bank-only difference.
+            local withBank = apiItemCount(api, fn, choice.itemID, true)
+            local withoutBank = apiItemCount(api, fn, choice.itemID, false)
+            local bags = bagCounts[choice.itemID] or 0
+            if withBank == nil or withoutBank == nil or withBank < withoutBank
+                or bags > 2147483647 - (withBank - withoutBank) then return nil end
+            value = bags + withBank - withoutBank
+        else
+            value = bagCounts[choice.itemID] or 0
+        end
     else
         local fn = type(api.C_CurrencyInfo) == "table" and api.C_CurrencyInfo.GetCurrencyInfo
         if type(fn) ~= "function" then return nil end
         local info
+        local ok
         ok, info = pcall(fn, choice.currencyID)
         if not ok or not public(api, info) or type(info) ~= "table" then return nil end
         value = info.quantity
     end
-    if not ok or not public(api, value) or type(value) ~= "number" or value < 0
-        or value > 2147483647 or value ~= math.floor(value) then return nil end
+    if not validItemCount(api, value) then return nil end
+    if countCache then countCache[key] = value end
     return value
 end
 
@@ -138,9 +245,14 @@ local function choiceName(api, choice)
     return choice.name
 end
 
-function GGM.BuildMaterialTrackingRows(api, snapshot)
+function GGM.BuildMaterialTrackingRows(api, snapshot, includeBank, amount, countCache)
     local saved = GGM.ValidateMaterialTrackingSnapshot(api, snapshot)
     if not saved then return {} end
+    if amount ~= nil then
+        if not integer(api, amount, 2147483647) then return {} end
+        saved.amount = amount
+    end
+    countCache = type(countCache) == "table" and countCache or {}
     local rows, edges, capacity, resources = {}, {}, {}, {}
     local source, sink = "source", "sink"
     local function edge(a, b, amount)
@@ -155,12 +267,12 @@ function GGM.BuildMaterialTrackingRows(api, snapshot)
         rows[index] = row
         edge(source, node, row.required)
         for _, choice in ipairs(group.choices) do
-            local key = choice.itemID and "item" .. choice.itemID or "currency" .. choice.currencyID
+            local key = materialChoiceKey(choice)
             if not seen[key] then
                 seen[key] = true
                 names[#names + 1] = choiceName(api, choice)
                 if resources[key] == nil then
-                    local count = ownedCount(api, choice)
+                    local count = ownedCount(api, choice, includeBank, countCache)
                     resources[key] = count or false
                     edge(key, sink, count or 0)
                 end
@@ -206,4 +318,44 @@ function GGM.BuildMaterialTrackingRows(api, snapshot)
         row.owned = (not row.unknown or row.complete) and assigned or nil
     end
     return rows
+end
+
+function GGM.GetMaximumMaterialTrackingAmount(api, snapshot, includeBank, countCache)
+    local saved = GGM.ValidateMaterialTrackingSnapshot(api, snapshot)
+    if not saved then return nil end
+    countCache = type(countCache) == "table" and countCache or {}
+    local maximum, inventoryCap = 2147483647, 2147483647
+    for _, group in ipairs(saved.materials) do
+        local available, seen = 0, {}
+        for _, choice in ipairs(group.choices) do
+            local key = materialChoiceKey(choice)
+            if not seen[key] then
+                seen[key] = true
+                local count = ownedCount(api, choice, includeBank, countCache)
+                if count == nil then return nil end
+                available = math.min(inventoryCap, available + count)
+            end
+        end
+        maximum = math.min(maximum, math.floor(available / group.quantity))
+        if maximum == 0 then return 0 end
+    end
+
+    local function feasible(amount)
+        local rows = GGM.BuildMaterialTrackingRows(api, saved, includeBank, amount, countCache)
+        if #rows ~= #saved.materials then return nil end
+        for _, row in ipairs(rows) do
+            if row.unknown then return nil end
+            if not row.complete then return false end
+        end
+        return true
+    end
+
+    local low, high = 0, maximum
+    while low < high do
+        local middle = math.floor((low + high + 1) / 2)
+        local fits = feasible(middle)
+        if fits == nil then return nil end
+        if fits then low = middle else high = middle - 1 end
+    end
+    return low
 end

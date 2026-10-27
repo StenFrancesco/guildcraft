@@ -850,6 +850,9 @@ local function professionButtonColor(button, selected)
 end
 
 local updateProfessionRecipeBrowser, renderProfessionRows, renderCharacterRows
+local refreshProfessionRecipeFilterModel, refreshProfessionFilterVisibility
+local createProfessionRecipeFilterUI
+local renderProfessionFilterOptions
 
 function GGM.FilterProfessionRecipeBrowserEntries(entries, query)
     local filtered = {}
@@ -1069,6 +1072,8 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.selectedProfession = nil
         frame.selectedProfessionID = nil
         frame.professionCatalog = { state = "unavailable", recipes = {} }
+        frame.professionRecipeFilterModel = nil
+        if refreshProfessionFilterVisibility then refreshProfessionFilterVisibility(frame) end
         if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
         frame.professionSearchBox:SetText("")
         frame.professionDetailPanel:Hide()
@@ -1082,6 +1087,15 @@ function GGM.SelectProfession(frame, selectedKey)
     frame.professionDetailPanel:Show()
     local changed = frame.selectedProfession ~= selectedKey
     if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
+    if changed then
+        frame.professionRecipeFilterModel = nil
+        frame.professionRecipeFilterExpanded = { categories = {}, slots = {} }
+        if frame.professionRecipeFilterState then
+            frame.professionRecipeFilterState.categoryIDs = {}
+            frame.professionRecipeFilterState.slotKeys = {}
+        end
+        if frame.professionFiltersMenu then frame.professionFiltersMenu:Hide() end
+    end
     frame.selectedProfession = selectedKey
     frame.selectedProfessionID = selectedProfession.professionID
     frame.professionHeading:SetText(selectedKey)
@@ -1092,22 +1106,26 @@ function GGM.SelectProfession(frame, selectedKey)
         frame.professionHeroArtwork:SetVertexColor(1, 1, 1, 1)
     end
     for _, button in ipairs(frame.professionButtons) do professionButtonColor(button, button.key == selectedKey) end
+    if refreshProfessionFilterVisibility then refreshProfessionFilterVisibility(frame) end
     if changed then
         frame.professionCatalog = nil
         frame.filteredProfessionRecipes = {}
         if frame.cpuOwners and GGM.CancelCPUJob then
             GGM.CancelCPUJob(frame.cpuOwners.catalogBuild)
             GGM.CancelCPUJob(frame.cpuOwners.recipeFilter)
+            GGM.CancelCPUJob(frame.cpuOwners.recipeFilterModel)
         end
         renderProfessionRows(frame)
     end
     if changed and frame.professionSearchBox then frame.professionSearchBox:SetText("") end
     frame.professionDirty = true
     if flushProfessionCatalog then flushProfessionCatalog(frame) end
-    if browserVisible(frame) and frame.professionLibraryMode == "Own" and frame.db and frame.activeTab == "Professions" then
+    if browserVisible(frame) and frame.db and frame.activeTab == "Professions"
+        and (frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All") then
         frame.craftingContextSkillLineID = nil
         frame.craftingContextOpenedByGuildBook = nil
-        openSelectedProfessionContext(frame, selectedProfession.professionID)
+        openSelectedProfessionContext(frame, selectedProfession.professionID, frame.professionLibraryMode == "All")
+        if refreshProfessionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame) end
     end
     if browserVisible(frame) and frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
     return true
@@ -1189,6 +1207,7 @@ function GGM.RefreshVisibleProfessionLibrary(frame)
         setTextColor(frame.professionLibraryToggle.allRadio.label, own and THEME.muted or THEME.text)
         setTextColor(frame.professionLibraryToggle.ownRadio.label, own and THEME.text or THEME.muted)
     end
+    if refreshProfessionFilterVisibility then refreshProfessionFilterVisibility(frame) end
     -- The detail selection must belong to the same list as the visible buttons.
     if frame.db and frame.professionDetailPanel then
         local selectionVisible = false
@@ -1367,6 +1386,12 @@ local function createProfessionsPage(api, frame)
         if changed and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
         if changed then frame.professionLibraryResetScroll = true end
         frame.professionLibraryMode = mode
+        if frame.professionFiltersMenu then frame.professionFiltersMenu:Hide() end
+        if refreshProfessionFilterVisibility then refreshProfessionFilterVisibility(frame) end
+        if changed and frame.cpuOwners and GGM.CancelCPUJob then
+            GGM.CancelCPUJob(frame.cpuOwners.recipeFilterModel)
+            GGM.CancelCPUJob(frame.cpuOwners.recipeFilter)
+        end
         GGM.RefreshVisibleProfessionLibrary(frame)
         if changed and mode == "Own" then
             for _, profession in ipairs(frame.visibleProfessionEntries or {}) do
@@ -1374,6 +1399,18 @@ local function createProfessionsPage(api, frame)
                     GGM.SelectProfession(frame, frame.selectedProfession)
                     break
                 end
+            end
+        elseif changed then
+            frame.professionRecipeFilterModel = nil
+            frame.professionRecipeFilterModelCatalog = nil
+            frame.professionRecipeFilterModelMode = nil
+            if frame.selectedProfessionID then
+                openSelectedProfessionContext(frame, frame.selectedProfessionID, true)
+            end
+            if refreshProfessionRecipeFilterModel then
+                refreshProfessionRecipeFilterModel(frame, true)
+            elseif updateProfessionRecipeBrowser then
+                updateProfessionRecipeBrowser(frame)
             end
         end
     end
@@ -1469,13 +1506,14 @@ local function createProfessionsPage(api, frame)
     frame.professionSearchBox:SetText("")
 
     frame.professionCount = createText(panel, "OVERLAY", "GameFontDisableSmall")
-    frame.professionCount:SetPoint("LEFT", frame.professionSearchBox, "RIGHT", 14, 0)
-    frame.professionCount:SetWidth(130)
+    GGM.ApplyJournalFont(frame.professionCount, 17, "bold")
+    frame.professionCount:SetWidth(100)
     setTextColor(frame.professionCount, THEME.textSoft)
     frame.professionStatus = createText(panel, "OVERLAY", "GameFontHighlight")
     GGM.ApplyJournalFont(frame.professionStatus, 13)
     frame.professionStatus:SetPoint("TOPLEFT", frame.professionSearchBox, "BOTTOMLEFT", 0, -4)
     frame.professionStatus:SetPoint("RIGHT", panel, "RIGHT", -18, 0)
+    frame.professionStatus:SetHeight(40)
     frame.professionStatus:SetJustifyH("LEFT")
     setTextColor(frame.professionStatus, THEME.textSoft)
 
@@ -1485,16 +1523,25 @@ local function createProfessionsPage(api, frame)
     frame.professionSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
     frame.professionSyncButton:SetScript("OnClick", function() GGM.SyncSelectedProfession(frame, true) end)
     frame.professionSyncStatus = frame.sharedStatus
+    if createProfessionRecipeFilterUI then createProfessionRecipeFilterUI(api, panel, frame) end
 
     frame.professionRecipeHeading = createText(panel, "OVERLAY", "GameFontNormal")
     GGM.ApplyJournalFont(frame.professionRecipeHeading, 17, "bold")
     frame.professionRecipeHeading:SetText("CACHED RECIPES")
-    frame.professionRecipeHeading:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -230)
+    frame.professionRecipeHeading:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -257)
+    frame.professionCount:SetPoint("LEFT", frame.professionRecipeHeading, "RIGHT", 8, 0)
     setTextColor(frame.professionRecipeHeading, THEME.text)
     frame.professionRecipeHeading:Hide()
+    frame.professionCount:Hide()
 
+    frame.professionCraftableHeading = createText(panel, "OVERLAY", "GameFontNormal")
+    GGM.ApplyJournalFont(frame.professionCraftableHeading, 17, "bold")
+    frame.professionCraftableHeading:SetText("CAN CRAFT")
+    frame.professionCraftableHeading:SetPoint("TOPLEFT", panel, "TOPLEFT", 365, -257)
+    setTextColor(frame.professionCraftableHeading, THEME.text)
+    frame.professionCraftableHeading:Hide()
     frame.professionRecipeScroll = api.CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
-    frame.professionRecipeScroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -257)
+    frame.professionRecipeScroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 34, -284)
     frame.professionRecipeScroll:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -10, 22)
     frame.professionRecipeContent = api.CreateFrame("Frame", nil, frame.professionRecipeScroll)
     frame.professionRecipeContent:SetSize(667, 1)
@@ -1518,33 +1565,83 @@ end
 updateProfessionRecipeBrowser = function(frame, prepared)
     frame.recipeSearchGeneration = (frame.recipeSearchGeneration or 0) + 1
     local catalog = frame.professionCatalog or { state = "unavailable", recipes = {}, message = nil }
-    local recipes = type(catalog.recipes) == "table" and catalog.recipes or {}
+    local mode = frame.professionLibraryMode
+    local ownMode = mode == "Own"
+    local filterModel = frame.professionRecipeFilterModelMode == mode and frame.professionRecipeFilterModel or nil
+    local recipes = filterModel and filterModel.recipes
+        or (type(catalog.recipes) == "table" and catalog.recipes or {})
+    recipes = type(recipes) == "table" and recipes or {}
     local query = frame.professionSearchBox:GetText() or ""
+    local function filterEntries()
+        if filterModel then
+            return GGM.FilterProfessionRecipeEntries(recipes, query, frame.professionRecipeFilterState)
+        end
+        return GGM.FilterProfessionRecipeBrowserEntries(recipes, query)
+    end
+    if not filterModel then
+        frame.filteredProfessionRecipes = {}
+        if frame.professionRecipeHeading then frame.professionRecipeHeading:Hide() end
+        frame.professionCount:SetText("(0)")
+        frame.professionCount:Hide()
+        if frame.professionCraftableHeading then frame.professionCraftableHeading:Hide() end
+        frame.professionStatus:SetText(catalog.message or
+            (ownMode and "Waiting for live data from the selected character's profession."
+                or "Waiting for live data to filter the guild recipe catalog for this character."))
+        frame.professionStatus:Show()
+        renderProfessionRows(frame)
+        if GGM.RefreshRecipeDetailsWindow then GGM.RefreshRecipeDetailsWindow(frame) end
+        return false
+    end
     if not prepared and GGM.StartCPUJob then
         local generation = frame.recipeSearchGeneration
         return browserRead(frame, "recipeFilter", "Professions", function()
-            return GGM.FilterProfessionRecipeBrowserEntries(recipes, query)
+            return filterEntries()
         end, function(filtered)
-            if frame.professionCatalog == catalog and frame.recipeSearchGeneration == generation
+            if frame.professionCatalog == catalog and frame.professionRecipeFilterModel == filterModel
+                and frame.recipeSearchGeneration == generation
                 and frame.professionSearchBox:GetText() == query then updateProfessionRecipeBrowser(frame, filtered) end
         end, function() frame.professionDirty = true end)
     end
-    local filtered = prepared or GGM.FilterProfessionRecipeBrowserEntries(recipes, query)
+    local filtered = prepared or filterEntries()
     frame.filteredProfessionRecipes = filtered
     if frame.professionRecipeHeading then
         if (catalog.state == "ready" or catalog.state == "incomplete") and #recipes > 0 then
-            frame.professionRecipeHeading:SetText("CACHED RECIPES")
+            frame.professionRecipeHeading:SetText(ownMode and "RECIPES" or "CACHED RECIPES")
             frame.professionRecipeHeading:Show()
+            frame.professionCount:Show()
+            frame.professionCraftableHeading:Show()
         else
             frame.professionRecipeHeading:Hide()
+            frame.professionCount:Hide()
+            frame.professionCraftableHeading:Hide()
         end
     end
-    frame.professionCount:SetText(#filtered .. (#filtered == 1 and " recipe" or " recipes"))
-
+    frame.professionCount:SetText("(" .. #filtered .. ")")
     local status = catalog.message
+    if filterModel and filterModel.availability
+        and filterModel.availability.profession ~= "available" then
+        status = status and (status .. " Live profession data is unavailable.")
+            or "Live profession data is unavailable; the selected character's recipes cannot be verified."
+    elseif filterModel and filterModel.availability
+        and filterModel.availability.materials == "unavailable" then
+        status = status and (status .. " Live material availability is unavailable.")
+            or "Live material availability is unavailable; Have Materials excludes unverified recipes."
+    elseif filterModel and filterModel.availability
+        and filterModel.availability.bank == "unverified" then
+        status = status and (status .. " Personal bank data has not been verified this session; Have Materials currently counts bags only.")
+            or "Personal bank data has not been verified this session; Have Materials currently counts bags only. Open your character bank to include its materials."
+    elseif filterModel and filterModel.availability
+        and filterModel.availability.materials == "partial" then
+        status = status and (status .. " Some live material counts are unavailable.")
+            or "Some live material counts are unavailable; Have Materials excludes those recipes."
+    elseif filterModel and filterModel.state == "partial" then
+        status = status and (status .. " Live recipe filter data is incomplete.")
+            or "Live recipe filter data is incomplete; some recipes may be missing."
+    end
     if (catalog.state == "ready" or catalog.state == "incomplete")
         and #recipes > 0 and #filtered == 0 then
-        local noMatch = "No recipes match this search."
+        local noMatch = filterModel and "No recipes match the current filters."
+            or "No recipes match this search."
         status = status and (status .. " " .. noMatch) or noMatch
     elseif catalog.state == "ready" and #recipes == 0 then
         status = "No saved recipes are available."
@@ -1591,9 +1688,15 @@ renderProfessionRows = function(frame)
             -- Bound the label inside the scroll row instead of relying on an
             -- automatically sized FontString when the hidden page is laid out.
             row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 50, -8)
-            row.name:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -18, 8)
+            row.name:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -337, 8)
             row.name:SetJustifyH("LEFT")
             setTextColor(row.name, THEME.text)
+            row.craftableCount = createText(row, "OVERLAY", "GameFontHighlight")
+            GGM.ApplyJournalFont(row.craftableCount, 17, "bold")
+            row.craftableCount:SetPoint("TOPLEFT", row, "TOPLEFT", 340, -8)
+            row.craftableCount:SetPoint("BOTTOMRIGHT", row, "BOTTOMLEFT", 430, 8)
+            row.craftableCount:SetJustifyH("CENTER")
+            setTextColor(row.craftableCount, THEME.text)
             row.separator = row:CreateTexture(nil, "BORDER")
             row.separator:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 50, 0)
             row.separator:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -18, 0)
@@ -1605,6 +1708,8 @@ renderProfessionRows = function(frame)
         row.recipe = recipe
         row.outputIcon:SetTexture(recipe.outputIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
         row.name:SetText(recipe.name or "Unknown recipe")
+        row.craftableCount:SetText(type(recipe.bagCraftableCount) == "number"
+            and tostring(recipe.bagCraftableCount) or "—")
         local rowHeight = 45
         row:SetHeight(rowHeight)
         row:ClearAllPoints()
@@ -1618,6 +1723,453 @@ renderProfessionRows = function(frame)
         row.recipe = nil
         row:Hide()
     end
+end
+
+local function setFilterControlChecked(control, checked)
+    if not control then return end
+    control.checked = checked == true
+    if control.indicator then
+        if control.checked then control.indicator:Show()
+        else control.indicator:Hide() end
+    end
+    GGM.SetFlatButtonState(control, "idle")
+end
+
+local function makeFilterCheckControl(api, parent, label, width, height)
+    local button = GGM.CreateFlatButton(api, parent, "", width, height, "ghost")
+    button:SetText("")
+    button.label:ClearAllPoints()
+    button.label:SetPoint("LEFT", button, "LEFT", 30, 0)
+    button.label:SetJustifyH("LEFT")
+    button.label:SetText(label or "")
+    button.checkboxSquare = createSurface(api, button, THEME.panelAlt, THEME.borderDark)
+    button.checkboxSquare:SetSize(16, 16)
+    button.checkboxSquare:SetPoint("LEFT", button, "LEFT", 8, 0)
+    button.indicator = button.checkboxSquare:CreateTexture(nil, "OVERLAY")
+    button.indicator:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    button.indicator:SetVertexColor(THEME.text[1], THEME.text[2], THEME.text[3], THEME.text[4])
+    button.indicator:SetSize(16, 16)
+    button.indicator:SetPoint("CENTER", button.checkboxSquare, "CENTER", 0, 0)
+    button.indicator:Hide()
+    function button:SetChecked(value) setFilterControlChecked(self, value) end
+    function button:GetChecked() return self.checked == true end
+    return button
+end
+
+local function makeFilterGroupControl(api, parent, label, width, height)
+    local button = GGM.CreateFlatButton(api, parent, "", width, height, "ghost")
+    button:SetText("")
+    button.label:ClearAllPoints()
+    button.label:SetPoint("LEFT", button, "LEFT", 25, 0)
+    button.label:SetJustifyH("LEFT")
+    button.label:SetText(label or "")
+    return button
+end
+
+local function categoryLeafIDs(node, values)
+    values = values or {}
+    if type(node) ~= "table" then return values end
+    local children = node.children
+    if type(children) ~= "table" or #children == 0 then
+        if type(node.id) == "number" then values[#values + 1] = node.id end
+    else
+        for _, child in ipairs(children) do cpuCheckpoint(); categoryLeafIDs(child, values) end
+    end
+    return values
+end
+
+local function syncCategoryAncestors(frame, node)
+    local selection = frame.professionRecipeFilterState.categoryIDs
+    local parent = type(node) == "table" and node.parent or nil
+    while parent do
+        local values = categoryLeafIDs(parent)
+        local allSelected = #values > 0
+        for _, value in ipairs(values) do
+            if selection[value] ~= true then allSelected = false; break end
+        end
+        selection[parent.id] = allSelected and true or nil
+        parent = parent.parent
+    end
+end
+
+local function appendFilterTreeRows(rows, nodes, dimension, depth, expanded)
+    for _, node in ipairs(nodes or {}) do
+        cpuCheckpoint()
+        rows[#rows + 1] = { kind = "node", dimension = dimension, node = node, depth = depth }
+        local children = node.children
+        if type(children) == "table" and #children > 0 and expanded[node.key] == true then
+            appendFilterTreeRows(rows, children, dimension, depth + 1, expanded)
+        end
+    end
+end
+
+local function updateFilterResults(frame)
+    if not updateProfessionRecipeBrowser then return false end
+    if frame.professionFiltersMenu and frame.professionFiltersMenu:IsShown() then
+        if renderProfessionFilterOptions then renderProfessionFilterOptions(frame) end
+    end
+    updateProfessionRecipeBrowser(frame)
+    return true
+end
+
+local function buildProfessionFilterRows(model, expanded, slotSelection)
+    local rows = {}
+    local categoryNodes = model and model.categories or {}
+    if #categoryNodes > 0 then
+        rows[#rows + 1] = { kind = "section", text = "CATEGORIES" }
+        appendFilterTreeRows(rows, categoryNodes, "categories", 0, expanded.categories)
+    end
+    local slotNodes = model and model.slots or {}
+    local knownSlots, missingSelectedSlots = {}, {}
+    local function collectSlotKeys(nodes)
+        for _, node in ipairs(nodes or {}) do
+            knownSlots[node.key] = true
+            collectSlotKeys(node.children)
+        end
+    end
+    collectSlotKeys(slotNodes)
+    for key, selected in pairs(slotSelection or {}) do
+        if selected == true and not knownSlots[key] then missingSelectedSlots[#missingSelectedSlots + 1] = key end
+    end
+    table.sort(missingSelectedSlots)
+    if #slotNodes > 0 or #missingSelectedSlots > 0 then
+        rows[#rows + 1] = { kind = "section", text = "SLOTS" }
+        appendFilterTreeRows(rows, slotNodes, "slots", 0, expanded.slots)
+        for _, key in ipairs(missingSelectedSlots) do
+            rows[#rows + 1] = { kind = "node", dimension = "slots", node = {
+                key = key, name = "Unavailable slot (" .. key .. ")", children = {},
+            }, depth = 0 }
+        end
+    end
+    return rows
+end
+
+renderProfessionFilterOptions = function(frame, scrollFraction)
+    local model = frame.professionRecipeFilterModel
+    local expanded = frame.professionRecipeFilterExpanded or { categories = {}, slots = {} }
+    frame.professionRecipeFilterExpanded = expanded
+    local rows = buildProfessionFilterRows(model, expanded, frame.professionRecipeFilterState.slotKeys)
+    if frame.professionFilterModelLabel then
+        local message = ""
+        if not model then
+            message = "Live profession data is unavailable."
+        elseif model.availability and model.availability.profession ~= "available" then
+            message = "Selected character's live profession data is unavailable."
+        elseif model.availability and model.availability.materials == "unavailable" then
+            message = "Live material availability is unavailable."
+        elseif model.availability and model.availability.bank == "unverified" then
+            message = "Personal bank unverified; Have Materials counts bags only."
+        elseif model.availability and model.availability.materials == "partial" then
+            message = "Some live material counts are unavailable; unverified recipes are hidden."
+        elseif model.state == "partial" then
+            message = "Some live filter data is unavailable."
+        end
+        if model and model.availability and model.availability.enchantTargets == "inventory-limited" then
+            message = message ~= "" and (message .. " Enchant slots show eligible items only.")
+                or "Enchant slots show eligible items only."
+        end
+        frame.professionFilterModelLabel:SetText(message)
+        if message ~= "" then frame.professionFilterModelLabel:Show() else frame.professionFilterModelLabel:Hide() end
+    end
+    local controls = frame.professionFilterControls
+    controls.categories, controls.slots = {}, {}
+    local content, api = frame.professionFilterContent, frame.api
+    local rowHeight, width = 26, 286
+    local scrollOffset = frame.professionFilterScroll:GetVerticalScroll() or 0
+    local function currentScrollRange()
+        local scroll = frame.professionFilterScroll
+        if type(scroll.GetVerticalScrollRange) == "function" and type(api.issecretvalue) == "function" then
+            local ok, range = pcall(scroll.GetVerticalScrollRange, scroll)
+            local publicOK, secret = pcall(api.issecretvalue, range)
+            if ok and publicOK and secret == false and type(range) == "number" and range >= 0 then
+                return range
+            end
+        end
+        return math.max(0, content:GetHeight() - scroll:GetHeight())
+    end
+    local function toggleExpanded(control)
+        local dimension, node = control.dimension, control.node
+        local scroll = frame.professionFilterScroll
+        local oldMaximum = currentScrollRange()
+        local oldOffset = scroll:GetVerticalScroll() or 0
+        local fraction = oldMaximum > 0 and math.max(0, math.min(oldOffset / oldMaximum, 1)) or 0
+        local open = frame.professionRecipeFilterExpanded[dimension][node.key] == true
+        frame.professionRecipeFilterExpanded[dimension][node.key] = not open
+        local generation = (frame.professionFilterScrollRestoreGeneration or 0) + 1
+        frame.professionFilterScrollRestoreGeneration = generation
+        renderProfessionFilterOptions(frame, fraction)
+        local function restore()
+            if frame.professionFilterScrollRestoreGeneration ~= generation then return end
+            scroll:SetVerticalScroll(fraction * currentScrollRange())
+        end
+        local timer = api.C_Timer
+        if type(timer) == "table" and type(timer.After) == "function" then
+            timer.After(0, restore)
+        else
+            restore()
+        end
+    end
+    for _, label in pairs(frame.professionFilterSectionLabels) do label:Hide() end
+    for _, label in pairs(frame.professionFilterEmptyLabels) do label:Hide() end
+    for _, dimension in ipairs({ "categories", "slots" }) do
+        for _, control in pairs(frame.professionFilterNodeControls[dimension]) do cpuCheckpoint(); control:Hide() end
+    end
+    for index, item in ipairs(rows) do
+        cpuCheckpoint()
+        local y = (index - 1) * rowHeight
+        if item.kind == "section" then
+            local label = frame.professionFilterSectionLabels[index]
+            if not label then
+                label = createSectionLabel(content, item.text)
+                frame.professionFilterSectionLabels[index] = label
+            end
+            label:SetText(item.text)
+            label:ClearAllPoints()
+            label:SetPoint("TOPLEFT", content, "TOPLEFT", 4, -y - 4)
+            label:SetPoint("RIGHT", content, "RIGHT", -4, 0)
+            label:SetHeight(rowHeight)
+            label:Show()
+        elseif item.kind == "empty" then
+            local label = frame.professionFilterEmptyLabels[index]
+            if not label then
+                label = createText(content, "OVERLAY", "GameFontDisableSmall")
+                frame.professionFilterEmptyLabels[index] = label
+            end
+            label:SetText(item.text)
+            label:ClearAllPoints()
+            label:SetPoint("TOPLEFT", content, "TOPLEFT", 8, -y - 4)
+            label:Show()
+        else
+            local node, dimension = item.node, item.dimension
+            local map = dimension == "categories" and frame.professionFilterNodeControls.categories
+                or frame.professionFilterNodeControls.slots
+            local children = type(node.children) == "table" and #node.children > 0
+            local control = map[node.key]
+            if not control or control.hasChildren ~= children then
+                if control then control:Hide() end
+                control = children and makeFilterGroupControl(api, content, node.name, width, rowHeight - 2)
+                    or makeFilterCheckControl(api, content, node.name, width, rowHeight - 2)
+                control.hasChildren = children
+                control.nodeKey, control.dimension = node.key, dimension
+                map[node.key] = control
+                control.expandButton = api.CreateFrame("Button", nil, control)
+                control.expandButton:SetSize(18, rowHeight - 2)
+                control.expandButton:SetScript("OnClick", function() toggleExpanded(control) end)
+                control.expandLabel = createText(control.expandButton, "OVERLAY", "GameFontHighlightSmall")
+                setTextColor(control.expandLabel, THEME.text)
+                control.expandLabel:SetPoint("CENTER", control.expandButton, "CENTER", 0, 0)
+            end
+            control.node, control.dimension = node, dimension
+            control:SetText(node.name)
+            control:SetSize(width - item.depth * 14, rowHeight - 2)
+            control:ClearAllPoints()
+            control:SetPoint("TOPLEFT", content, "TOPLEFT", item.depth * 14, -y)
+            if children then
+                control.expandLabel:SetText(expanded[dimension][node.key] and "−" or "+")
+                control.expandButton:ClearAllPoints()
+                control.expandButton:SetPoint("LEFT", control, "LEFT", 0, 0)
+                control.expandButton:Show()
+                control.label:ClearAllPoints()
+                control.label:SetPoint("LEFT", control, "LEFT", 25, 0)
+                control:SetScript("OnClick", toggleExpanded)
+            else
+                control.expandButton:Hide()
+                control.label:ClearAllPoints()
+                control.label:SetPoint("LEFT", control, "LEFT", 30, 0)
+                control:SetScript("OnClick", function(self)
+                    local currentDimension, currentNode = self.dimension, self.node
+                    local selection = currentDimension == "categories"
+                        and frame.professionRecipeFilterState.categoryIDs or frame.professionRecipeFilterState.slotKeys
+                    local value = currentDimension == "categories" and currentNode.id or currentNode.key
+                    if selection[value] == true then selection[value] = nil else selection[value] = true end
+                    if currentDimension == "categories" then syncCategoryAncestors(frame, currentNode) end
+                    updateFilterResults(frame)
+                end)
+            end
+            control.label:SetWidth(width - item.depth * 14 - (children and 35 or 42))
+            control:Show()
+            if not children then
+                local selection = dimension == "categories" and frame.professionRecipeFilterState.categoryIDs
+                    or frame.professionRecipeFilterState.slotKeys
+                local value = dimension == "categories" and node.id or node.key
+                setFilterControlChecked(control, selection[value] == true)
+            end
+            controls[dimension][node.key] = control
+        end
+    end
+    content:SetHeight(math.max(#rows * rowHeight, 1))
+    local maximum = math.max(0, content:GetHeight() - frame.professionFilterScroll:GetHeight())
+    if scrollFraction ~= nil then
+        frame.professionFilterScroll:SetVerticalScroll(math.max(0, math.min(scrollFraction, 1)) * maximum)
+    else
+        frame.professionFilterScroll:SetVerticalScroll(math.min(scrollOffset, maximum))
+    end
+end
+
+local function setSimpleFilterToggle(frame, key, value)
+    local state = frame.professionRecipeFilterState
+    state[key] = value == true
+    setFilterControlChecked(frame.professionFilterControls[key], state[key])
+    updateFilterResults(frame)
+end
+
+createProfessionRecipeFilterUI = function(api, panel, frame)
+    frame.professionRecipeFilterState = GGM.CreateProfessionRecipeFilterState()
+    frame.professionRecipeFilterExpanded = { categories = {}, slots = {} }
+    frame.professionFilterBankVerified = false
+    frame.professionFilterControls = { categories = {}, slots = {} }
+    frame.professionFilterNodeControls = { categories = {}, slots = {} }
+    frame.professionFilterSectionLabels, frame.professionFilterEmptyLabels = {}, {}
+
+    local trigger = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    trigger:SetSize(104, 27)
+    trigger:SetText("Filters")
+    trigger:SetPoint("RIGHT", frame.professionSyncButton, "LEFT", -8, 0)
+    frame.professionFiltersButton = trigger
+    local menu = createSurface(api, panel, THEME.panelAlt, THEME.border, true)
+    menu:SetSize(324, 414)
+    menu:SetPoint("TOPRIGHT", trigger, "BOTTOMRIGHT", 0, -4)
+    if menu.SetClampedToScreen then menu:SetClampedToScreen(true) end
+    if menu.SetFrameLevel and trigger.GetFrameLevel then menu:SetFrameLevel(trigger:GetFrameLevel() + 10) end
+    if menu.SetFrameStrata then menu:SetFrameStrata("DIALOG") end
+    menu:Hide()
+    frame.professionFiltersMenu = menu
+    local title = createText(menu, "OVERLAY", "GameFontNormal")
+    title:SetText("Filter recipes")
+    title:SetPoint("TOPLEFT", menu, "TOPLEFT", 14, -12)
+    setTextColor(title, THEME.text)
+    local close = api.CreateFrame("Button", nil, menu, "UIPanelCloseButton")
+    close:SetSize(32, 32)
+    close:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -8, -8)
+    close:SetScript("OnClick", function() menu:Hide() end)
+    frame.professionFiltersCloseButton = close
+
+    local function createToggle(key, label, y)
+        local control = makeFilterCheckControl(api, menu, label, 292, 26)
+        control:SetPoint("TOPLEFT", menu, "TOPLEFT", 14, y)
+        control:SetScript("OnClick", function(self)
+            setSimpleFilterToggle(frame, key, not frame.professionRecipeFilterState[key])
+        end)
+        frame.professionFilterControls[key] = control
+        setFilterControlChecked(control, frame.professionRecipeFilterState[key])
+    end
+    createToggle("showLearned", "Show learned", -42)
+    frame.professionFilterControls.learned = frame.professionFilterControls.showLearned
+    createToggle("showUnlearned", "Show unlearned", -70)
+    frame.professionFilterControls.unlearned = frame.professionFilterControls.showUnlearned
+    createToggle("haveMaterials", "Have Materials", -98)
+    frame.professionFilterControls.materials = frame.professionFilterControls.haveMaterials
+
+    local partial = createText(menu, "OVERLAY", "GameFontDisableSmall")
+    partial:SetPoint("TOPLEFT", menu, "TOPLEFT", 14, -126)
+    partial:SetWidth(290)
+    partial:SetHeight(32)
+    partial:SetJustifyH("LEFT")
+    partial:Hide()
+    frame.professionFilterModelLabel = partial
+
+    frame.professionFilterScroll = api.CreateFrame("ScrollFrame", nil, menu, "UIPanelScrollFrameTemplate")
+    frame.professionFilterScroll:SetPoint("TOPLEFT", menu, "TOPLEFT", 12, -164)
+    frame.professionFilterScroll:SetPoint("BOTTOMRIGHT", menu, "BOTTOMRIGHT", -32, 12)
+    frame.professionFilterContent = api.CreateFrame("Frame", nil, frame.professionFilterScroll)
+    frame.professionFilterContent:SetSize(286, 1)
+    frame.professionFilterScroll:SetScrollChild(frame.professionFilterContent)
+
+    trigger:SetScript("OnClick", function()
+        if menu:IsShown() then menu:Hide(); return end
+        if not frame.professionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame) end
+        renderProfessionFilterOptions(frame)
+        trigger:SetText("Filters")
+        menu:Show()
+    end)
+    menu:SetScript("OnHide", function() trigger:SetText("Filters") end)
+
+    local eventFrame = api.CreateFrame("Frame", nil, frame)
+    frame.professionFilterEventFrame = eventFrame
+    for _, event in ipairs({ "BAG_UPDATE_DELAYED", "CURRENCY_DISPLAY_UPDATE", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
+        "PLAYERBANKSLOTS_CHANGED", "PLAYERREAGENTBANKSLOTS_CHANGED", "TRADE_SKILL_LIST_UPDATE",
+        "PLAYER_REGEN_ENABLED",
+        "TRADE_SKILL_DATA_SOURCE_CHANGED" }) do
+        if eventFrame.RegisterEvent then pcall(eventFrame.RegisterEvent, eventFrame, event) end
+    end
+    eventFrame:SetScript("OnEvent", function(_, event)
+        if event == "BANKFRAME_OPENED" then frame.professionFilterBankVerified = true end
+        if not browserVisible(frame) or frame.activeTab ~= "Professions"
+            or (frame.professionLibraryMode ~= "Own" and frame.professionLibraryMode ~= "All") then return end
+        if frame.professionFilterRefreshPending then return end
+        frame.professionFilterRefreshPending = true
+        local function refresh()
+            frame.professionFilterRefreshPending = nil
+            if browserVisible(frame) and frame.activeTab == "Professions"
+                and (frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All") then
+                refreshProfessionRecipeFilterModel(frame, true)
+            end
+        end
+        local timer = api.C_Timer
+        if timer and type(timer.After) == "function" then timer.After(0.15, refresh) else refresh() end
+    end)
+    refreshProfessionFilterVisibility(frame)
+end
+
+refreshProfessionFilterVisibility = function(frame)
+    if not frame or not frame.professionFiltersButton then return false end
+    local shown = (frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All")
+        and frame.activeTab == "Professions"
+        and frame.selectedProfession ~= nil
+        and frame.professionDetailPanel and frame.professionDetailPanel:IsShown()
+    if shown then
+        frame.professionFiltersButton:Show()
+    else
+        frame.professionFiltersButton:Hide()
+        if frame.professionFiltersMenu then frame.professionFiltersMenu:Hide() end
+    end
+    return shown == true
+end
+
+refreshProfessionRecipeFilterModel = function(frame, force)
+    if not frame or (frame.professionLibraryMode ~= "Own" and frame.professionLibraryMode ~= "All")
+        or not frame.selectedProfessionID
+        or frame.activeTab ~= "Professions" or not browserVisible(frame) then return false end
+    local mode = frame.professionLibraryMode
+    local catalog = frame.professionCatalog
+    if type(catalog) ~= "table" or type(catalog.recipes) ~= "table" then
+        frame.professionRecipeFilterModel = nil
+        frame.professionRecipeFilterModelCatalog = nil
+        frame.professionRecipeFilterModelMode = nil
+        if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
+        return false
+    end
+    if not force and frame.professionRecipeFilterModel
+        and frame.professionRecipeFilterModelCatalog == catalog
+        and frame.professionRecipeFilterModelMode == mode
+        and frame.professionRecipeFilterModel.professionID == frame.selectedProfessionID then
+        return false
+    end
+    if type(GGM.BuildProfessionRecipeFilterModel) ~= "function" then
+        frame.professionRecipeFilterModel = nil
+        frame.professionRecipeFilterModelCatalog = nil
+        frame.professionRecipeFilterModelMode = nil
+        if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
+        return false
+    end
+    local selectedID, recipes = frame.selectedProfessionID, catalog.recipes
+    local function build()
+        return GGM.BuildProfessionRecipeFilterModel(frame.api, selectedID, recipes,
+            frame.professionFilterBankVerified == true, mode == "All")
+    end
+    return browserRead(frame, "recipeFilterModel", "Professions", build, function(model)
+        if frame.professionCatalog ~= catalog or frame.professionLibraryMode ~= mode
+            or frame.selectedProfessionID ~= selectedID then return end
+        frame.professionRecipeFilterModel = type(model) == "table" and model or nil
+        frame.professionRecipeFilterModelCatalog = catalog
+        frame.professionRecipeFilterModelMode = mode
+        if frame.professionFiltersMenu and frame.professionFiltersMenu:IsShown() then
+            renderProfessionFilterOptions(frame)
+        end
+        if updateProfessionRecipeBrowser then updateProfessionRecipeBrowser(frame) end
+    end, function()
+        frame.professionRecipeFilterModelDirty = true
+    end)
 end
 
 flushProfessionCatalog = function(frame)
@@ -1652,7 +2204,11 @@ flushProfessionCatalog = function(frame)
     end, function(catalog)
         frame.professionCatalog = catalog
         frame.professionDirty = nil
-        updateProfessionRecipeBrowser(frame)
+        if refreshProfessionRecipeFilterModel then
+            refreshProfessionRecipeFilterModel(frame, true)
+        else
+            updateProfessionRecipeBrowser(frame)
+        end
         frame.professionRecipeScroll:SetVerticalScroll(scroll)
     end, function() frame.professionDirty = true end)
 end
@@ -1692,6 +2248,8 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
     if selectedKey ~= "Professions" and GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
     if frame.activeTab ~= selectedKey then cancelBrowserReads(frame) end
     frame.activeTab = selectedKey
+    if selectedKey ~= "Professions" and frame.professionFiltersMenu then frame.professionFiltersMenu:Hide() end
+    if refreshProfessionFilterVisibility then refreshProfessionFilterVisibility(frame) end
     if frame.TitleText then frame.TitleText:SetText("The Guild Book") end
 
     if selectedKey == "Character" then setPageHeader(frame, "Characters", "Inspect last-known guild equipment")
@@ -1716,8 +2274,10 @@ function GGM.SelectGuildGearBrowserTab(frame, selectedKey)
         frame.professionLibraryToggle:Show()
         flushProfessionCatalog(frame)
         if browserVisible(frame) and frame.db then
-            if frame.professionLibraryMode == "Own" then
-                openSelectedProfessionContext(frame, frame.selectedProfessionID)
+            if frame.professionLibraryMode == "Own" or frame.professionLibraryMode == "All" then
+                openSelectedProfessionContext(frame, frame.selectedProfessionID,
+                    frame.professionLibraryMode == "All")
+                if refreshProfessionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame, true) end
             end
             GGM.SyncSelectedProfession(frame, false)
         end
@@ -2098,6 +2658,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame:SetScript("OnHide", function(self)
         cancelBrowserReads(self)
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(self) end
+        if self.professionFiltersMenu then self.professionFiltersMenu:Hide() end
         if self.craftingContextSkillLineID and self.craftingContextOpenedByGuildBook then
             local professionFrame = self.api.ProfessionsFrame or self.api.TradeSkillFrame
             if type(GGM.CloseBlizzardProfessionPanel) == "function" then
@@ -2108,6 +2669,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
         end
         self.professionLibraryDirty = true
         self.professionLibraryMode = "Own"
+        if refreshProfessionFilterVisibility then refreshProfessionFilterVisibility(self) end
         self.craftingContextSkillLineID = nil
         self.craftingContextOpenedByGuildBook = nil
     end)
