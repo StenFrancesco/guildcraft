@@ -1066,7 +1066,7 @@ local function queueBrowserRefresh(frame)
     return true
 end
 
-function GGM.SelectProfession(frame, selectedKey)
+function GGM.SelectProfession(frame, selectedKey, skipSelectionSync)
     if selectedKey == nil then
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
         frame.selectedProfession = nil
@@ -1127,7 +1127,7 @@ function GGM.SelectProfession(frame, selectedKey)
         openSelectedProfessionContext(frame, selectedProfession.professionID, frame.professionLibraryMode == "All")
         if refreshProfessionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame) end
     end
-    if browserVisible(frame) and frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
+    if not skipSelectionSync and browserVisible(frame) and frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
     return true
 end
 
@@ -1299,7 +1299,11 @@ local function createProfessionButton(api, content, profession)
     button.label:SetPoint("RIGHT", button, "RIGHT", -10, 0)
     button.label:SetJustifyH("LEFT")
     button.key = profession.key
-    button:SetScript("OnClick", function() GGM.SelectProfession(content.owner, profession.key) end)
+    button:SetScript("OnClick", function()
+        if GGM.SelectProfession(content.owner, profession.key, true) then
+            GGM.SyncSelectedProfession(content.owner, true)
+        end
+    end)
     button:RegisterForClicks("LeftButtonUp")
     professionButtonColor(button, false)
     button.professionID = profession.professionID
@@ -1517,11 +1521,6 @@ local function createProfessionsPage(api, frame)
     frame.professionStatus:SetJustifyH("LEFT")
     setTextColor(frame.professionStatus, THEME.textSoft)
 
-    frame.professionSyncButton = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    frame.professionSyncButton:SetSize(140, 27)
-    frame.professionSyncButton:SetText("Sync profession")
-    frame.professionSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
-    frame.professionSyncButton:SetScript("OnClick", function() GGM.SyncSelectedProfession(frame, true) end)
     frame.professionSyncStatus = frame.sharedStatus
     if createProfessionRecipeFilterUI then createProfessionRecipeFilterUI(api, panel, frame) end
 
@@ -2024,7 +2023,7 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
     local trigger = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     trigger:SetSize(104, 27)
     trigger:SetText("Filters")
-    trigger:SetPoint("RIGHT", frame.professionSyncButton, "LEFT", -8, 0)
+    trigger:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
     frame.professionFiltersButton = trigger
     local menu = createSurface(api, panel, THEME.panelAlt, THEME.border, true)
     menu:SetSize(324, 414)

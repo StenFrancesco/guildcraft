@@ -785,7 +785,7 @@ T.test("Own is the first default filter and both filters retain their meaning af
     T.assertEqual(frame.professionRecipeScroll:GetVerticalScroll(), 0, "short results clamp the scroll offset")
 end)
 
-T.test("profession sync UI is silent while hidden and offers selected automatic and manual sync", function()
+T.test("profession sync UI is silent while hidden and syncs clicked professions", function()
     local G = loadUI()
     local calls = {}
     G.professionSync = {}
@@ -795,7 +795,7 @@ T.test("profession sync UI is silent while hidden and offers selected automatic 
     G.GetProfessionSyncStatus = function() return "Comparing cached data" end
     local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
     T.assertEqual(#calls, 0)
-    T.assertNotNil(frame.professionSyncButton)
+    T.assertNil(frame.professionSyncButton)
     G.SelectGuildGearBrowserTab(frame, "Professions")
     T.assertEqual(#calls, 1)
     T.assertEqual(calls[1].pid, 171)
@@ -805,8 +805,12 @@ T.test("profession sync UI is silent while hidden and offers selected automatic 
     T.assertEqual(#calls, 1)
     G.SelectProfession(frame, "Blacksmithing")
     T.assertEqual(calls[2].pid, 164)
-    frame.professionSyncButton.scripts.OnClick(frame.professionSyncButton)
+    for _, button in ipairs(frame.professionButtons) do
+        if button.key == "Blacksmithing" then button.scripts.OnClick(button); button.scripts.OnClick(button) end
+    end
+    T.assertEqual(calls[3].pid, 164)
     T.assertEqual(calls[3].reason, "manual")
+    T.assertEqual(calls[4].pid, 164)
 end)
 
 T.test("profession library uses the skill icons for Cooking, First Aid, and Leatherworking", function()
@@ -849,7 +853,7 @@ T.test("profession library scrolls all nine rows within its sidebar", function()
         "the final profession row should fit exactly at the end of the scroll range")
 end)
 
-T.test("profession sync button uses the retained manual request path", function()
+T.test("profession clicks use the retained queued request path", function()
     local G = loadUI()
     local calls = {}
     G.professionSync = {}
@@ -862,8 +866,9 @@ T.test("profession sync button uses the retained manual request path", function(
     G.GetProfessionSyncStatus = function() return "Sync queued: waiting for current comparison" end
     local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
     G.SelectGuildGearBrowserTab(frame, "Professions")
-    G.SelectProfession(frame, "Blacksmithing")
-    frame.professionSyncButton.scripts.OnClick(frame.professionSyncButton)
+    for _, button in ipairs(frame.professionButtons) do
+        if button.key == "Blacksmithing" then button.scripts.OnClick(button) end
+    end
     T.assertEqual(#calls, 1)
     T.assertEqual(calls[1], 164)
     T.assertEqual(frame.professionSyncStatus:GetText(), "Sync queued: waiting for current comparison")
@@ -4925,12 +4930,11 @@ end)
 
 T.test("profession filter button and recipe heading use the agreed layout", function()
     local _, _, frame = professionFilterFixture()
-    local trigger, sync = frame.professionFiltersButton, frame.professionSyncButton
+    local trigger = frame.professionFiltersButton
     T.assertEqual(trigger.template, "UIPanelButtonTemplate")
-    T.assertEqual(trigger.point.point, "RIGHT")
-    T.assertEqual(trigger.point.relativeTo, sync)
-    T.assertEqual(trigger.point.relativePoint, "LEFT")
-    T.assertTrue(trigger.point.x < 0, "Filters sits to the left of Sync Profession")
+    T.assertEqual(trigger.point.point, "TOPRIGHT")
+    T.assertEqual(trigger.point.relativeTo, frame.professionDetailPanel)
+    T.assertEqual(trigger.point.relativePoint, "TOPRIGHT")
 
     T.assertEqual(frame.professionCount.font.size, 17)
     T.assertEqual(frame.professionCount.journalFontSize, frame.professionRecipeHeading.journalFontSize)

@@ -75,7 +75,7 @@ When Own has no captured professions, the recipe panel is hidden and no
 profession is selected. Switching from All to Own selects a listed profession
 or clears the previous selection when the list is empty.
 
-In Own or All, open **Filters** beside **Sync profession** to filter recipes using the
+In Own or All, open **Filters** to filter recipes using the
 selected character's live profession data. All keeps the guild recipe catalog as
 its candidate list; learned state, materials, categories and slots are evaluated
 for the selected character. A guild recipe with unavailable live metadata can
@@ -221,7 +221,7 @@ locally and is not added to the bank browser or synchronization messages.
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
 - Personal bank details are shown only for characters whose GUIDs are recorded as belonging to this account. The guild bank remains shared with addon users in the current guild.
 - Profession browsing and sharing support Alchemy, Blacksmithing, Cooking, Enchanting, Engineering, First Aid, Fishing, Leatherworking, and Tailoring. First Aid is mainly relevant to the legacy client. Profession sharing uses protocol P5 (`GC_PROF5`); participating clients need compatible versions.
-- Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
+- Profession comparisons are bounded and request/event driven. Selecting a profession checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
 - Automatic guild-bank synchronization starts after opening a guild bank and establishing the tabs this client can currently view. It also starts when entering a major city, using complete guild-tab snapshots already saved locally; this city trigger does not reopen the bank or read bank APIs. On the Bank page, the guild-only **Sync bank** action still requires an access-known bank session, and repeated clicks coalesce into the active or queued manual run. Compatible online clients exchange bounded, timestamp-only manifest pages and session-end notices over GUILD, then send needed complete tab snapshots directly over WHISPER through throttled addon messages. Before returning contents, the responder checks its current guild roster and requires the requester to have the same guild rank. Live-bank sessions also restrict requests and responses to tabs currently viewable by that client. City sessions read only previously saved complete snapshots. Each peer, tab, and manifest is requested at most twice per sync pass, and work is limited to four peers per window. Inbound frames are accepted only from eligible senders and their partial-transfer buffers are bounded. A strictly newer capture timestamp replaces the saved tab; equal timestamps retain the local snapshot. Missing item icons are looked up locally from item IDs. Saved bank data remains last-known and available offline, and synchronization preserves its existing SavedVariables format. The Bank page reports missing or unsupported companion, no active sync trigger, and no compatible responder or timeout states.
 - Leaving a guild or switching guilds cancels work for the previous guild. Once current membership and roster state are confirmed, a fresh bounded synchronization run is scheduled for the new guild.
@@ -283,12 +283,11 @@ The Professions tab shares complete last-known recipe snapshots with guild
 members using the same protocol version. A first profession selection can start
 a comparison, and a meaningful local snapshot save can announce that change.
 Gear and recipes synchronize automatically after a random login delay of zero
-to five minutes. Neither requires opening the character browser. The
-**Sync profession** button starts immediately when the sync slot is available.
+to five minutes. Neither requires opening the character browser. Clicking a profession starts synchronization immediately when the sync slot is available.
 If a comparison or the existing 60-second cooldown is in progress, the click is
 retained and the status shows that it is queued. Repeated clicks for the same
 profession share one request; clicking a different profession replaces the queued
-choice. Automatic work yields after its current transfer so the button request
+choice. Automatic work yields after its current transfer so the selected profession request
 can run next, and unfinished automatic work remains eligible for city recovery.
 Queued requests are bounded and are cancelled when guild synchronization resets.
 Each manual operation checks up to four
@@ -348,8 +347,7 @@ expires, including when the player stays in the city. Outside a city, zone and
 resting events can resume eligible work. Inns outside city maps do not qualify;
 unavailable or unreadable city APIs leave recovery pending. There are at most
 three recovery attempts per login and a one-hour deadline per automatic attempt.
-Finished work creates no idle polling or broadcasts. Manual synchronization
-remains available after automatic retries are exhausted.
+Finished work creates no idle polling or broadcasts. Selecting a profession can still request synchronization after automatic retries are exhausted.
 
 Gear uses the existing snapshot request, responder election and confirmed
 sequence rules. Automatic target batches include offline guild characters whose
