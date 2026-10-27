@@ -136,7 +136,7 @@ T.test("display addon binds the same gear backend and registers an independent p
     c:event("ADDON_LOADED", "The Guild Book")
     c:event("PLAYER_LOGIN")
     c:advance(1)
-    T.assertEqual(c.registered, 2)
+    T.assertEqual(c.registered, 3)
     T.assertNotNil(GGM.professionSync)
     T.assertTrue(GGM.gearTracker == c.backend.gearTracker)
     T.assertTrue(GGM.guildSync == c.backend.guildSync)

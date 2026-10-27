@@ -489,3 +489,16 @@ Status checked 14 October 2026. GitHub currently marks all three open PRs as dra
 - [#52 Synchronize guild profession caches through bounded whispers](https://github.com/StenFrancesco/guildcraft/pull/52) â€” Draft; GitHub reports it as mergeable. Live in-game delivery and throttling checks are still outstanding.
 - [#51 Store recipe crafters by GUID instead of local IDs](https://github.com/StenFrancesco/guildcraft/pull/51) â€” Draft; depends on #50 and is based on its rename branch. Retarget it after #50 is integrated.
 - [#50 Rename Guild Gear Memory addons to The Guild Book](https://github.com/StenFrancesco/guildcraft/pull/50) â€” Draft; GitHub currently reports a merge conflict. Its description reports static checks only; tests and packaging were not run.
+
+## Update notifications
+
+Participating guild members exchange the main addon's version on login and when
+joining a guild. If a peer reports a newer numeric release version, the **Update**
+button below the title becomes clickable and opens a dialog with the GitHub link
+to copy. Otherwise it stays grey. This is a peer notice, not an online release
+check: it requires a guild member running this feature and a newer version to be
+online. Clients predating this feature cannot receive notices until they update.
+Release versions must increase the numeric `major.minor.patch` in the main
+addon TOC; suffixes are ignored when comparing releases. Update all three addon
+folders together. The notice lasts for the current session and does not change
+saved variables or existing synchronization protocols.

@@ -39,6 +39,7 @@ BankSyncTransport.lua
 BankSync.lua
 BankView.lua
 BankUI.lua
+UpdateNotice.lua
 SnapshotTestUI.lua
 ProfessionLinkSave.lua
 MinimapLauncher.lua
