@@ -28,6 +28,8 @@ Interface/AddOns/
 
 Enable the three addons in the game's AddOns list, then open the browser with `/ggm`. The addon databases are stored separately under `WTF/Account/<account>/SavedVariables` when you log out or reload; the addon folders do not go there.
 
+The settings are also available under **Escape > Options > AddOns > The Guild Book**.
+
 The minimap book icon also opens the browser with a left-click. Right-click the
 icon and choose **Options** for a small settings window: **Show minimap icon**,
 **Lock icon position**, and **Reset icon position**. Drag the unlocked icon with

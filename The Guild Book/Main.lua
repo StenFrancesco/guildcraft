@@ -133,6 +133,10 @@ frame:SetScript("OnEvent", function(_, event, ...)
         GGM.updateRuntimeGearDatabase = updateRuntimeGearDatabase
         GGM.startupError = nil
 
+        if type(GGM.RegisterGuildBookSettings) == "function" then
+            GGM.RegisterGuildBookSettings(_G, db)
+        end
+
         if type(GGM.InitializeMinimapLauncher) == "function" then
             GGM.InitializeMinimapLauncher(_G, db)
         end

@@ -160,12 +160,13 @@ function GGM.RefreshWindowOptionsControls(frame, db)
     frame.updatingWindowControls = nil
 end
 
-function GGM.CreateWindowOptionsControls(api, frame)
+function GGM.CreateWindowOptionsControls(api, frame, suffix)
     caption(frame, "Window", 20, -173)
     local function apply()
         GGM.ApplyBrowserWindowSettings(GGM.guildGearBrowserFrame, frame.windowDB)
     end
     local function slider(name, text, y, low, high, key)
+        name = name .. (suffix or "")
         local control = api.CreateFrame("Slider", name, frame, "OptionsSliderTemplate")
         control:SetSize(270, 16)
         control:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, y)

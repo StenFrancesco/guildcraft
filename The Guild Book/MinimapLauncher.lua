@@ -71,6 +71,42 @@ local function refreshLauncher()
     if button.settings.hide then button:Hide() else button:Show() end
 end
 
+local function createOptionsControls(api, frame, suffix)
+    local function checkbox(text, y, update)
+        local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+        check:SetSize(26, 26)
+        check:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, y)
+        local caption = check:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        caption:SetPoint("LEFT", check, "RIGHT", 4, 0)
+        caption:SetText(text)
+        check:SetScript("OnClick", function(self)
+            update(frame.settings, self:GetChecked() and true or false)
+            refreshLauncher()
+        end)
+        return check
+    end
+    frame.showIcon = checkbox("Show minimap icon", -52,
+        function(saved, checked) saved.hide = not checked end)
+    frame.lockIcon = checkbox("Lock icon position", -87,
+        function(saved, checked) saved.locked = checked end)
+    frame.resetPosition = api.CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    frame.resetPosition:SetSize(180, 24)
+    frame.resetPosition:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -128)
+    frame.resetPosition:SetText("Reset icon position")
+    frame.resetPosition:SetScript("OnClick", function()
+        frame.settings.angle = DEFAULT_ANGLE
+        refreshLauncher()
+    end)
+    GGM.CreateWindowOptionsControls(api, frame, suffix)
+end
+
+local function refreshOptions(frame, db)
+    frame.settings = preferences(db)
+    GGM.RefreshWindowOptionsControls(frame, db)
+    frame.showIcon:SetChecked(not frame.settings.hide)
+    frame.lockIcon:SetChecked(frame.settings.locked)
+end
+
 function GGM.ShowGuildBookOptions(api, db)
     local settings = preferences(db)
     if not settings or type(api.CreateFrame) ~= "function" then return nil end
@@ -89,41 +125,34 @@ function GGM.ShowGuildBookOptions(api, db)
         close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
         close:SetScript("OnClick", function() frame:Hide() end)
 
-        local function checkbox(text, y, update)
-            local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-            check:SetSize(26, 26)
-            check:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, y)
-            local caption = check:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            caption:SetPoint("LEFT", check, "RIGHT", 4, 0)
-            caption:SetText(text)
-            check:SetScript("OnClick", function(self)
-                update(frame.settings, self:GetChecked() and true or false)
-                refreshLauncher()
-            end)
-            return check
-        end
-        frame.showIcon = checkbox("Show minimap icon", -52,
-            function(saved, checked) saved.hide = not checked end)
-        frame.lockIcon = checkbox("Lock icon position", -87,
-            function(saved, checked) saved.locked = checked end)
-        frame.resetPosition = api.CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        frame.resetPosition:SetSize(180, 24)
-        frame.resetPosition:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -128)
-        frame.resetPosition:SetText("Reset icon position")
-        frame.resetPosition:SetScript("OnClick", function()
-            frame.settings.angle = DEFAULT_ANGLE
-            refreshLauncher()
-        end)
-        GGM.CreateWindowOptionsControls(api, frame)
+        createOptionsControls(api, frame)
         local hint = label(frame, "/ggm options opens this window.", 20, -551)
         hint:SetFontObject("GameFontHighlightSmall")
     end
-    frame.settings = settings
-    GGM.RefreshWindowOptionsControls(frame, db)
-    frame.showIcon:SetChecked(not settings.hide)
-    frame.lockIcon:SetChecked(settings.locked)
+    refreshOptions(frame, db)
     frame:Show()
     if frame.Raise then frame:Raise() end
+    return frame
+end
+
+function GGM.RegisterGuildBookSettings(api, db)
+    if GGM.guildBookSettingsPanel or type(db) ~= "table" or type(api.CreateFrame) ~= "function" then return end
+    local modern = type(api.Settings) == "table"
+        and type(api.Settings.RegisterCanvasLayoutCategory) == "function"
+        and type(api.Settings.RegisterAddOnCategory) == "function"
+    if not modern and type(api.InterfaceOptions_AddCategory) ~= "function" then return end
+    local frame = api.CreateFrame("Frame", nil, api.UIParent)
+    frame.name = "The Guild Book"
+    label(frame, "The Guild Book", 20, -18)
+    createOptionsControls(api, frame, "Settings")
+    frame:SetScript("OnShow", function() refreshOptions(frame, db) end)
+    if modern then
+        local category = api.Settings.RegisterCanvasLayoutCategory(frame, frame.name)
+        api.Settings.RegisterAddOnCategory(category)
+    else
+        api.InterfaceOptions_AddCategory(frame)
+    end
+    GGM.guildBookSettingsPanel = frame
     return frame
 end
 
