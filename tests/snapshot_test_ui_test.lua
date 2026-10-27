@@ -5100,6 +5100,29 @@ T.test("empty category and slot sections are omitted from the filter menu", func
     T.assertEqual(visibleCount(frame.professionFilterEmptyLabels, "No equipment slots for this profession."), 0)
 end)
 
+T.test("disappeared selected slots remain clearable after a model refresh", function()
+    local _, _, frame, model = professionFilterFixture()
+    frame.professionFiltersButton.scripts.OnClick(frame.professionFiltersButton)
+    frame.professionFilterControls.slots.weapons.expandButton.scripts.OnClick(
+        frame.professionFilterControls.slots.weapons.expandButton)
+    frame.professionFilterControls.slots["slot:mace"].scripts.OnClick(
+        frame.professionFilterControls.slots["slot:mace"])
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+
+    model.slots = {}
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
+
+    local disappeared = frame.professionFilterControls.slots["slot:mace"]
+    T.assertNotNil(disappeared, "the selected slot remains represented after disappearing from the model")
+    T.assertTrue(disappeared:IsShown())
+    T.assertTrue(disappeared:GetChecked())
+    T.assertTrue(string.find(disappeared:GetText(), "Unavailable slot", 1, true) ~= nil)
+
+    disappeared.scripts.OnClick(disappeared)
+    T.assertNil(frame.professionRecipeFilterState.slotKeys["slot:mace"], "the retained row clears the stale selection")
+    T.assertEqual(#frame.filteredProfessionRecipes, 3)
+end)
+
 T.test("filter tree preserves scrollbar position when a group changes content height", function()
     local _, _, frame = professionFilterFixture()
     local scroll = frame.professionFilterScroll
@@ -5186,6 +5209,23 @@ T.test("bag and personal bank changes refresh Have Materials for the selected ch
     T.assertTrue(string.find(frame.professionFilterModelLabel.text, "Live material availability is unavailable", 1, true) ~= nil)
 end)
 
+T.test("leaving combat refreshes the profession recipe filter model", function()
+    local G, _, frame = professionFilterFixture()
+    T.assertTrue(frame.professionFilterEventFrame.registeredEvents.PLAYER_REGEN_ENABLED,
+        "the filter model refresh frame must retry after combat ends")
+    local buildModel = G.BuildProfessionRecipeFilterModel
+    local buildCount = 0
+    G.BuildProfessionRecipeFilterModel = function(...)
+        buildCount = buildCount + 1
+        return buildModel(...)
+    end
+    frame.professionRecipeFilterModel = nil
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "PLAYER_REGEN_ENABLED")
+    T.assertNotNil(frame.professionRecipeFilterModel,
+        "combat-end refresh rebuilds the model instead of leaving filters unavailable")
+    T.assertEqual(buildCount, 1, "combat-end refresh reruns the material availability build")
+end)
+
 T.test("bag updates refresh Have Materials in All using the selected character model", function()
     local _, _, frame, model = professionFilterFixture()
     frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
@@ -5201,6 +5241,24 @@ T.test("bag updates refresh Have Materials in All using the selected character m
 
     model.recipes[1].craftable = true
     frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "BAG_UPDATE_DELAYED")
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+end)
+
+T.test("currency updates refresh Have Materials in All using the selected character model", function()
+    local _, _, frame, model = professionFilterFixture()
+    frame.professionLibraryToggle.allRadio.scripts.OnClick(frame.professionLibraryToggle.allRadio)
+    frame.professionFilterControls.materials.scripts.OnClick(frame.professionFilterControls.materials)
+    T.assertEqual(#frame.filteredProfessionRecipes, 1)
+    T.assertTrue(frame.professionFilterEventFrame.registeredEvents.CURRENCY_DISPLAY_UPDATE,
+        "currency changes must invalidate currency-backed reagent counts")
+
+    model.recipes[1].craftable = false
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "CURRENCY_DISPLAY_UPDATE")
+    T.assertEqual(#frame.filteredProfessionRecipes, 0,
+        "currency changes refresh selected-character material availability")
+
+    model.recipes[1].craftable = true
+    frame.professionFilterEventFrame.scripts.OnEvent(frame.professionFilterEventFrame, "CURRENCY_DISPLAY_UPDATE")
     T.assertEqual(#frame.filteredProfessionRecipes, 1)
 end)
 

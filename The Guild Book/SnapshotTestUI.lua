@@ -1812,7 +1812,7 @@ local function updateFilterResults(frame)
     return true
 end
 
-local function buildProfessionFilterRows(model, expanded)
+local function buildProfessionFilterRows(model, expanded, slotSelection)
     local rows = {}
     local categoryNodes = model and model.categories or {}
     if #categoryNodes > 0 then
@@ -1820,9 +1820,26 @@ local function buildProfessionFilterRows(model, expanded)
         appendFilterTreeRows(rows, categoryNodes, "categories", 0, expanded.categories)
     end
     local slotNodes = model and model.slots or {}
-    if #slotNodes > 0 then
+    local knownSlots, missingSelectedSlots = {}, {}
+    local function collectSlotKeys(nodes)
+        for _, node in ipairs(nodes or {}) do
+            knownSlots[node.key] = true
+            collectSlotKeys(node.children)
+        end
+    end
+    collectSlotKeys(slotNodes)
+    for key, selected in pairs(slotSelection or {}) do
+        if selected == true and not knownSlots[key] then missingSelectedSlots[#missingSelectedSlots + 1] = key end
+    end
+    table.sort(missingSelectedSlots)
+    if #slotNodes > 0 or #missingSelectedSlots > 0 then
         rows[#rows + 1] = { kind = "section", text = "SLOTS" }
         appendFilterTreeRows(rows, slotNodes, "slots", 0, expanded.slots)
+        for _, key in ipairs(missingSelectedSlots) do
+            rows[#rows + 1] = { kind = "node", dimension = "slots", node = {
+                key = key, name = "Unavailable slot (" .. key .. ")", children = {},
+            }, depth = 0 }
+        end
     end
     return rows
 end
@@ -1831,7 +1848,7 @@ renderProfessionFilterOptions = function(frame, scrollFraction)
     local model = frame.professionRecipeFilterModel
     local expanded = frame.professionRecipeFilterExpanded or { categories = {}, slots = {} }
     frame.professionRecipeFilterExpanded = expanded
-    local rows = buildProfessionFilterRows(model, expanded)
+    local rows = buildProfessionFilterRows(model, expanded, frame.professionRecipeFilterState.slotKeys)
     if frame.professionFilterModelLabel then
         local message = ""
         if not model then
@@ -2069,8 +2086,9 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
 
     local eventFrame = api.CreateFrame("Frame", nil, frame)
     frame.professionFilterEventFrame = eventFrame
-    for _, event in ipairs({ "BAG_UPDATE_DELAYED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
+    for _, event in ipairs({ "BAG_UPDATE_DELAYED", "CURRENCY_DISPLAY_UPDATE", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
         "PLAYERBANKSLOTS_CHANGED", "PLAYERREAGENTBANKSLOTS_CHANGED", "TRADE_SKILL_LIST_UPDATE",
+        "PLAYER_REGEN_ENABLED",
         "TRADE_SKILL_DATA_SOURCE_CHANGED" }) do
         if eventFrame.RegisterEvent then pcall(eventFrame.RegisterEvent, eventFrame, event) end
     end
