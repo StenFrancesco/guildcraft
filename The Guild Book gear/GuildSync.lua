@@ -824,7 +824,7 @@ end
 function GGM.HandleGuildSyncPayload(sync, sender, payload)
     local message, decodeErr = GGM.DecodeSyncMessage(payload)
     if not message then return nil, decodeErr end
-    if GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api) then
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then
         local allowed = message.type == "SNAPSHOT_RESPONSE_CLAIM" or message.type == "CLASS_IDENTITY"
             or message.type == "SNAPSHOT_RESPONSE"
         local pending = allowed and sync.pendingSnapshotRequests[message.requestID]

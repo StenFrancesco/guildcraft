@@ -707,6 +707,20 @@ T.test("disabled gear sync ignores unsolicited requests and accepts button reque
     T.assertNotNil(alice.G.GetCompleteCharacterRecord(alice.db, bob.identity.key))
 end)
 
+T.test("town mode ignores gear requests while not resting but accepts button requests", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    alice:startTracking(); bob:startTracking()
+    alice.api.TheGuildBookDB.uiSettings = { syncMode = "town" }
+    alice.api.IsResting = function() return false end
+    assert(bob.G.RequestCompleteSnapshot(bob.sync, alice.identity))
+    bus:advance(40)
+    T.assertEqual(bus:count("SNAPSHOT_RESPONSE_CLAIM"), 0)
+    assert(alice.G.RequestCompleteSnapshot(alice.sync, bob.identity, nil, nil, nil, true))
+    bus:advance(40)
+    T.assertNotNil(alice.G.GetCompleteCharacterRecord(alice.db, bob.identity.key))
+end)
+
 T.test("disabling gear sync cancels queued replies and ignores slot updates", function()
     local bus = guild()
     local alice, bob = bus:client("Alice"), bus:client("Bob")

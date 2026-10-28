@@ -1102,8 +1102,8 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
     if private and (channel ~= "WHISPER" or recipient ~= sync.selfKey)
         or not private and channel ~= "GUILD" then return "ignored" end
     if recipient ~= "*" and not sync.senders[recipient] then return "ignored" end
-    local disabled = GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api)
-    if disabled and (kind == "A" or kind == "Q") then return "ignored" end
+    if (kind == "A" or kind == "Q") and GGM.AutomaticSyncAllowed
+        and not GGM.AutomaticSyncAllowed(sync.api) then return "ignored" end
     if kind == "A" then
         if recipient ~= "*" or professionID ~= 0 then return "ignored" end
         local seen, entries = {}, split(body, ";")

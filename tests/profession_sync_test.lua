@@ -2116,4 +2116,21 @@ T.test("disabled profession sync ignores unsolicited requests but allows the but
     T.assertNotNil(alice.G.GetProfessionSyncRecord(alice.db, bob.identity.guid, 164))
 end)
 
+T.test("town mode ignores profession requests while not resting but allows the button", function()
+    local bus = guild()
+    local alice, bob = bus:client("Alice"), bus:client("Bob")
+    automatic(alice)
+    alice.api.TheGuildBookDB = { uiSettings = { syncMode = "town" } }
+    alice.api.IsResting = function() return false end
+    alice:save(alice.identity, { 101 }); bob:save(bob.identity, { 202 })
+    alice:ready(); bob:ready()
+    assert(bob.G.RequestProfessionSyncFromButton(bob.sync, 164))
+    bus:advance(40)
+    T.assertEqual(bus:count("C", alice.identity.key), 0)
+    T.assertNil(alice.G.GetProfessionSyncRecord(alice.db, bob.identity.guid, 164))
+    assert(alice.G.RequestProfessionSyncFromButton(alice.sync, 164))
+    bus:advance(60)
+    T.assertNotNil(alice.G.GetProfessionSyncRecord(alice.db, bob.identity.guid, 164))
+end)
+
 return { guild = guild }
