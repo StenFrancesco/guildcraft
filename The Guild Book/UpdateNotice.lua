@@ -2,6 +2,9 @@ local ADDON_NAME, GGM = ...
 
 local PREFIX = "TGB_VERSION1"
 local URL = "https://github.com/StenFrancesco/guildcraft"
+local REPLY_WINDOW = 60
+local REPLY_CACHE_TTL = 120
+local MAX_REPLY_SENDERS = 128
 
 local function parseVersion(value)
     if type(value) ~= "string" or #value > 40 then return nil end
@@ -42,6 +45,7 @@ function GGM.CreateUpdateNotice(api, version)
         if not guild or guild == self.guild then return end
         self.guild = guild
         self.replies = {}
+        self.replyOrder = {}
         self:Send("Q", "GUILD")
     end
     function notice:Receive(prefix, message, channel, sender)
@@ -57,9 +61,23 @@ function GGM.CreateUpdateNotice(api, version)
             self:RefreshButton()
         elseif order < 0 and kind == "Q" then
             self.replies = self.replies or {}
-            if self.replies[sender] or (self.replyCount or 0) >= 128 then return end
-            self.replies[sender] = true
-            self.replyCount = (self.replyCount or 0) + 1
+            self.replyOrder = self.replyOrder or {}
+            local now = type(api.GetTime) == "function" and api.GetTime() or os.time()
+            local last = self.replies[sender]
+            if last and now - last < REPLY_WINDOW then return end
+            for i = #self.replyOrder, 1, -1 do
+                local entry = self.replyOrder[i]
+                if now - entry.time >= REPLY_CACHE_TTL then
+                    if self.replies[entry.sender] == entry.time then self.replies[entry.sender] = nil end
+                    table.remove(self.replyOrder, i)
+                end
+            end
+            if #self.replyOrder >= MAX_REPLY_SENDERS then
+                local oldest = table.remove(self.replyOrder, 1)
+                if self.replies[oldest.sender] == oldest.time then self.replies[oldest.sender] = nil end
+            end
+            self.replies[sender] = now
+            self.replyOrder[#self.replyOrder + 1] = { sender = sender, time = now }
             self:Send("R", "WHISPER", sender)
         end
     end

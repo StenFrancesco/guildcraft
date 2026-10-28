@@ -34,3 +34,38 @@ T.test("update notices reject invalid versions and message channels", function()
     notice:Receive("TGB_VERSION1", "Q:1.2.4", "GUILD", "Peer")
     T.assertTrue(notice.available)
 end)
+
+T.test("update replies use a per-sender cooldown and expire", function()
+    local now, sent = 0, {}
+    local api = { GetTime = function() return now end,
+        ChatThrottleLib = { SendAddonMessage = function(_, _, _, message) sent[#sent + 1] = message end } }
+    local notice = GGM.CreateUpdateNotice(api, "1.2.3")
+    notice.registered = true
+    local function query(sender)
+        notice:Receive("TGB_VERSION1", "Q:1.2.2", "GUILD", sender)
+    end
+    query("Peer")
+    query("Peer")
+    T.assertEqual(#sent, 1)
+    now = 61
+    query("Peer")
+    T.assertEqual(#sent, 2)
+    now = 182
+    query("Peer")
+    T.assertEqual(#sent, 3)
+end)
+
+T.test("update reply cache stays bounded without suppressing later peers", function()
+    local sent = 0
+    local api = { GetTime = function() return 1 end,
+        ChatThrottleLib = { SendAddonMessage = function() sent = sent + 1 end } }
+    local notice = GGM.CreateUpdateNotice(api, "1.2.3")
+    notice.registered = true
+    for i = 1, 160 do
+        notice:Receive("TGB_VERSION1", "Q:1.2.2", "GUILD", "Peer" .. i)
+    end
+    T.assertEqual(sent, 160)
+    T.assertEqual(#notice.replyOrder, 128)
+    notice:Receive("TGB_VERSION1", "Q:1.2.2", "GUILD", "Peer1")
+    T.assertEqual(sent, 161)
+end)
