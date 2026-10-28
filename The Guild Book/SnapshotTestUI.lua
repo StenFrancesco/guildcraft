@@ -649,7 +649,7 @@ local function createEmptyStateCard(api, parent, iconPath, title, body)
 end
 
 local function refreshGearSyncControls(frame)
-    if not frame.gearSyncButton then return end
+    if not frame or not frame.gearSyncButton then return end
     local entry = frame.selectedEntry
     local visible = frame.activeTab == "Character" and entry ~= nil
     if not visible then
@@ -657,7 +657,11 @@ local function refreshGearSyncControls(frame)
         if frame.activeTab == "Character" then GGM.SetSharedStatus(frame, "") end
         return
     end
-    frame.gearSyncButton:Show()
+    if GGM.ReadBrowserWindowSettings(frame.db).manualGearSync then
+        frame.gearSyncButton:Show()
+    else
+        frame.gearSyncButton:Hide()
+    end
     local status, busy, err = "", false, nil
     if type(GGM.GetGearSyncStatus) == "function" then
         status, busy, err = GGM.GetGearSyncStatus(GGM.guildSync, entry.key)
@@ -671,6 +675,8 @@ local function refreshGearSyncControls(frame)
     GGM.SetSharedStatus(frame, status)
     if frame.gearSyncButton.SetEnabled then frame.gearSyncButton:SetEnabled(not busy) end
 end
+
+GGM.RefreshGearSyncControls = refreshGearSyncControls
 
 function GGM.SyncSelectedGear(frame)
     local entry = frame and frame.selectedEntry
@@ -2875,7 +2881,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.gearSyncStatus = frame.sharedStatus
     frame.gearSyncButton:Hide()
     GGM.SetSharedStatus(frame, "")
-    frame.gearSyncButton:SetScript("OnUpdate", function(_, elapsed)
+    frame.gearPanel:SetScript("OnUpdate", function(_, elapsed)
         frame.gearSyncElapsed = (frame.gearSyncElapsed or 0) + elapsed
         if frame.gearSyncElapsed < 1 then return end
         frame.gearSyncElapsed = 0

@@ -243,6 +243,10 @@ T.test("window options save changes immediately and reset only appearance", func
     options.manualProfessionSync:SetChecked(true)
     options.manualProfessionSync.scripts.OnClick(options.manualProfessionSync)
     T.assertTrue(db.uiSettings.window.manualProfessionSync)
+    T.assertFalse(options.manualGearSync:GetChecked())
+    options.manualGearSync:SetChecked(true)
+    options.manualGearSync.scripts.OnClick(options.manualGearSync)
+    T.assertTrue(db.uiSettings.window.manualGearSync)
     options.resetAppearance.scripts.OnClick()
     T.assertEqual(db.uiSettings.window.scale, 1)
     T.assertEqual(db.uiSettings.window.opacity, 1)
@@ -255,6 +259,7 @@ T.test("window options save changes immediately and reset only appearance", func
     T.assertFalse(restored.lockWindow:GetChecked())
     T.assertTrue(restored.alignRecipe:GetChecked())
     T.assertTrue(restored.manualProfessionSync:GetChecked())
+    T.assertTrue(restored.manualGearSync:GetChecked())
 end)
 T.test("separate size sliders retain legacy size independently and reset both sizes", function()
     local db = {uiSettings={window={scale=0.9,locked=true,autoAlignRecipe=false}}}

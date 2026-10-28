@@ -50,6 +50,9 @@ other settings.
 **Show manual profession sync** is disabled by default. Enable it to show a
 **Sync profession** button beside Filters for the selected profession. The
 preference is saved across reloads; selecting a profession still requests sync.
+**Show manual gear sync** is a separate, default-off option that shows **Sync
+gear** on the Characters page. It is also saved across reloads; automatic gear
+synchronization continues when the button is hidden.
 
 **Auto-align recipe details** is enabled by default. The first time you open a
 recipe, its details line up with the top of the main browser, with a small gap on
@@ -238,7 +241,7 @@ finishes and refreshes the Characters page. The member does not need the addon.
 Incomplete or cancelled inspections leave existing saved gear intact.
 
 Inspection snapshots and owner snapshots use the same gear cache and can be
-shared through **Sync gear**. Each slot retains the server time when it was
+shared through automatic synchronization or **Sync gear**. Each slot retains the server time when it was
 observed, including empty slots, so delayed updates and older cached snapshots
 cannot overwrite newer observations. Receiving or forwarding a snapshot keeps
 its original times. Conflicting network observations within the same server
@@ -263,7 +266,7 @@ gear. If all startup attempts fail, a later valid request for this character can
 retry capture, at most once every five seconds. Cached and shared equipment
 remains last-known data, not proof of the character's current state.
 
-On the Characters page, select a saved character and click **Sync gear** to
+Enable **Show manual gear sync** in Options, then on the Characters page select a saved character and click **Sync gear** to
 request the freshest complete snapshot available from responding online guild
 addon users. The character can be offline if another participant has their
 snapshot cached. The panel keeps its saved equipment visible while waiting and

@@ -4264,6 +4264,9 @@ T.test("gear sync button requests only the selected saved character and renders 
     G.GetGearSyncStatus = function() return status, busy end
     local frame = showBrowser(G, api, makeDB(G, { alice, beta }))
     T.assertEqual(count, 0)
+    T.assertFalse(frame.gearSyncButton.visible)
+    frame.db.uiSettings = { window = { manualGearSync = true } }
+    G.ApplyBrowserWindowSettings(frame, frame.db)
     T.assertTrue(frame.gearSyncButton.visible)
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     T.assertEqual(count, 0)
@@ -4278,6 +4281,9 @@ T.test("gear sync button requests only the selected saved character and renders 
     T.assertFalse(frame.gearSyncButton.visible)
     G.SelectGuildGearBrowserTab(frame, "Character")
     T.assertTrue(frame.gearSyncButton.visible)
+    frame.db.uiSettings.window.manualGearSync = false
+    G.ApplyBrowserWindowSettings(frame, frame.db)
+    T.assertFalse(frame.gearSyncButton.visible)
 end)
 
 T.test("gear sync button hides without selection and reports unavailable transport", function()
@@ -4323,7 +4329,7 @@ T.test("uncached equipped item names refresh when item data becomes available", 
     local button = frame.slotButtons[1]
     T.assertEqual(button.label.text, "Item " .. button.itemID)
     available = true
-    frame.gearSyncButton.scripts.OnUpdate(nil, 1)
+    frame.gearPanel.scripts.OnUpdate(nil, 1)
     T.assertEqual(button.label.text, "Crown of Memories")
     T.assertTrue(string.find(button.itemLink, "[Crown of Memories]", 1, true) ~= nil)
 end)
@@ -4338,7 +4344,7 @@ T.test("item-name refresh follows the selected character without replacing empty
     local frame = showBrowser(G, api, makeDB(G, { alice, beta }))
     frame.listRows[2].scripts.OnClick(frame.listRows[2])
     available = true
-    frame.gearSyncButton.scripts.OnUpdate(nil, 1)
+    frame.gearPanel.scripts.OnUpdate(nil, 1)
     local head = frame.slotButtons[1]
     T.assertEqual(head.label.text, "Head")
     T.assertEqual(head.status.text, "Empty")
