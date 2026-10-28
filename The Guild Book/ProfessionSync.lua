@@ -1549,6 +1549,9 @@ local function manualCandidates(sync, professionID, preferredPeer, resumeOnly, a
 end
 
 local function startProfessionComparison(sync, professionID, reason, preferredPeer, operation)
+    if reason ~= "manual" and GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then
+        return false, "automatic-sync-disabled"
+    end
     if not SUPPORTED[professionID] or not safe(sync) then
         if sync then notify(sync, professionID or 0, "Sync unavailable") end
         return false, "profession-sync-unavailable"
@@ -1882,6 +1885,7 @@ function GGM.LoginProfessionSync(sync)
 end
 
 local function announceSave(sync, professionID, digest)
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then return false end
     if not send(sync, "A", "*", nextID(sync), 0, professionID .. "," .. digest .. ",save") then return false end
     sync.saveCooldowns[professionID] = now(sync)
     sync.lastAnnouncedDigests[professionID] = digest
@@ -1889,6 +1893,7 @@ local function announceSave(sync, professionID, digest)
 end
 
 function GGM.PublishProfessionSyncSave(sync, professionID, beforeHash)
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then return false end
     if not safe(sync) then return false end
     if sync.pendingSaves[professionID] then return true end
     local prepared = preparedProfession(sync, professionID)

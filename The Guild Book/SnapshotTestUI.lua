@@ -1229,7 +1229,7 @@ function GGM.SyncSelectedProfession(frame, manual)
     end
     if not professionID then return false end
     frame.professionSyncSelections = frame.professionSyncSelections or {}
-    if not manual and frame.professionSyncSelections[professionID] then return false end
+    if not manual and ((GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(frame.api or _G)) or frame.professionSyncSelections[professionID]) then return false end
     local ok, err = false, "profession-sync-unavailable"
     if GGM.professionSync and type(GGM.RequestProfessionSync) == "function" then
         if manual and type(GGM.RequestProfessionSyncFromButton) == "function" then

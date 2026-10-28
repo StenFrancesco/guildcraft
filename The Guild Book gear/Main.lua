@@ -17,7 +17,7 @@ local function notifyDisplay(dataChanged)
 end
 
 local function publishConfirmedSlot(...)
-    if not GearMemory.guildSync then notifyDisplay(true); return end
+    if not GearMemory.guildSync or (GearMemory.AutomaticSyncAllowed and not GearMemory.AutomaticSyncAllowed(api)) then notifyDisplay(true); return end
     local queued, err = GearMemory.PublishConfirmedSlot(GearMemory.guildSync, ...)
     if queued then GearMemory.lastSyncError = nil else GearMemory.lastSyncError = err end
     notifyDisplay(true)
@@ -71,6 +71,7 @@ local function scheduleGearReady(guildKey, delay)
     local ok, timer = pcall(api.C_Timer.NewTimer, delay, function()
         if GearMemory.gearReadyTimerGeneration ~= generation then return end
         GearMemory.gearReadyTimer, GearMemory.gearReadyTimerGuild = nil, nil
+        if (GearMemory.AutomaticSyncAllowed and not GearMemory.AutomaticSyncAllowed(api)) then GearMemory.gearReadyPending = true; return end
         local currentGuild = currentGuildKey()
         if currentGuild ~= guildKey then
             GearMemory.gearReadyPending = true
@@ -124,6 +125,7 @@ local function scheduleGearReady(guildKey, delay)
 end
 
 maybeScheduleGearReady = function(eventWake)
+    if (GearMemory.AutomaticSyncAllowed and not GearMemory.AutomaticSyncAllowed(api)) then return false end
     if not GearMemory.gearTracker or not GearMemory.guildSync then return false end
     GearMemory.gearReadyPending = true
     local guildKey = currentGuildKey()
@@ -359,3 +361,11 @@ frame:SetScript("OnEvent", function(_, event, ...)
         notifyDisplay()
     end
 end)
+
+api.GuildBookGearSyncPreferenceChanged = function()
+    if GearMemory.guildSync and GearMemory.guildSync.automaticController then
+        GearMemory.WakeAutomaticSync(GearMemory.guildSync.automaticController)
+    end
+    if GearMemory.gearReadyTimer and (GearMemory.AutomaticSyncAllowed and not GearMemory.AutomaticSyncAllowed(api)) then cancelGearReadyTimer() end
+    if GearMemory.gearTracker then maybeScheduleGearReady(true) end
+end

@@ -735,11 +735,13 @@ local function startSession(sync, mode)
     local ok, identityErr = GGM.SetBankSyncTransportIdentity(sync.transport, identity.key, ctx.sessionToken)
     if not ok then GGM.CancelBankSync(sync, identityErr); return false, identityErr end
     setStatus(sync, mode == "city" and "Checking saved guild snapshots" or "Checking available guild snapshots")
-    publishManifest(sync)
+    sync.autoSession = not GGM.AutomaticSyncAllowed or GGM.AutomaticSyncAllowed(sync.api)
+    if sync.autoSession then publishManifest(sync) end
     return true
 end
 
 local function retryCitySession(sync)
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then return false end
     if not sync.inMajorCity or not sync.cachedSupported or sync.sessionMode == "bank" then return false end
     if sync.sessionActive and sync.sessionMode == "city" then return false end
     return startSession(sync, "city")
@@ -764,6 +766,8 @@ function GGM.HandleBankSyncAddonMessage(sync, prefix, message, distribution, sen
         local entry = sync.current
         return channel == "WHISPER" and entry ~= nil and senderMatches(entry.senderKey, senderName)
     end
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api)
+        and not sync.manualActive and not sync.manualPending then return false end
     local state, err = GGM.ReceiveBankSyncFrame(sync.transport, prefix, message, distribution, sender, validate,
         authorizeSender, isExpectedResponse)
     if err then setError(sync, err) end
@@ -772,6 +776,20 @@ end
 
 function GGM.HandleBankSyncEvent(sync, event)
     if type(sync) ~= "table" then return false end
+    if (event == "PLAYER_UPDATE_RESTING" or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS")
+        and GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api)
+        and sync.sessionActive and sync.autoSession and not sync.manualActive and not sync.manualPending then
+        local mode = sync.sessionMode
+        GGM.CancelBankSync(sync, "sync-preference-changed")
+        if mode == "bank" then startSession(sync, "bank") end
+    end
+    if (event == "PLAYER_UPDATE_RESTING" or event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS")
+        and sync.sessionActive and sync.sessionMode == "bank" and not sync.autoSession
+        and not sync.manualActive and not sync.manualPending
+        and (not GGM.AutomaticSyncAllowed or GGM.AutomaticSyncAllowed(sync.api)) then
+        sync.autoSession = true
+        publishManifest(sync)
+    end
     if event == "GUILDBANKFRAME_OPENED" then
         if sync.sessionActive and sync.sessionMode == "city" then
             return GGM.CancelBankSync(sync, "guild-bank-opened")
@@ -831,15 +849,16 @@ function GGM.OnBankMemoryChanged(sync, reason, tabID)
     if type(sync) ~= "table" then return false end
     if reason == "guild-session-close" then return GGM.CancelBankSync(sync, "guild-bank-closed") end
     if reason == "guild-session-open" then return startSession(sync) end
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then return false end
     if not sync.sessionActive then return false end
     if reason == "guild-metadata" then return publishManifest(sync) end
     if reason == "guild-capture" then
         sync.lastCapturedTab = tabID
-        return schedule(sync, "captureTimer", CAPTURE_DEBOUNCE, function() publishManifest(sync) end)
+        return schedule(sync, "captureTimer", CAPTURE_DEBOUNCE, function() if not GGM.AutomaticSyncAllowed or GGM.AutomaticSyncAllowed(sync.api) then publishManifest(sync) end end)
     end
     if reason == "remote-merge" then
         -- Coalesce forwarded cache updates so a multi-tab merge sends one manifest.
-        return schedule(sync, "captureTimer", CAPTURE_DEBOUNCE, function() publishManifest(sync) end)
+        return schedule(sync, "captureTimer", CAPTURE_DEBOUNCE, function() if not GGM.AutomaticSyncAllowed or GGM.AutomaticSyncAllowed(sync.api) then publishManifest(sync) end end)
     end
     return false
 end
@@ -898,4 +917,11 @@ function GGM.GetBankSyncStatus(sync)
         return "Guild sync issue: " .. err
     end
     return sync.status or "Waiting for guild caches"
+end
+
+function GGM.BankSyncPreferenceChanged(sync)
+    if not sync or not sync.available or sync.manualActive or sync.manualPending then return end
+    local mode = sync.sessionActive and sync.sessionMode
+    if mode then GGM.CancelBankSync(sync, "sync-preference-changed") end
+    if mode == "bank" then startSession(sync, "bank") else retryCitySession(sync) end
 end

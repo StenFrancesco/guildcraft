@@ -16,6 +16,18 @@ local function readable(api, value)
     return ok and secret == false
 end
 
+-- Shared account preference; the gear addon also works without the main addon.
+function GGM.AutomaticSyncAllowed(api)
+    local db = api.TheGuildBookDB
+    local settings = type(db) == "table" and db.uiSettings
+    local mode = type(settings) == "table" and settings.syncMode or "auto"
+    if mode == "disable" then return false end
+    if mode ~= "town" then return true end
+    if type(api.IsResting) ~= "function" then return false end
+    local ok, resting = pcall(api.IsResting)
+    return ok and readable(api, resting) and resting == true
+end
+
 local function clock(controller)
     local ok, value = pcall(controller.api.GetTime)
     if ok and readable(controller.api, value) and type(value) == "number"
@@ -61,6 +73,16 @@ end
 
 function GGM.WakeAutomaticSync(controller)
     if not controller then return false end
+    if not GGM.AutomaticSyncAllowed(controller.api) then
+        if controller.running then
+            controller.generation = controller.generation + 1
+            controller.running, controller.pending = false, true
+            cancel(controller.deadlineTimer); controller.deadlineTimer = nil
+            controller.lastStarted = nil
+            if controller.interrupt then pcall(controller.interrupt) end
+        end
+        return false
+    end
     -- Guild identity changes cancel the old run. A later guild/zone wake starts
     -- a fresh bounded run for the current membership in the same session.
     if controller.stopped then

@@ -105,6 +105,7 @@ end
 
 function GGM.WakeProfessionSync(sync)
     if not sync or not sync.automaticController then return end
+    if not GGM.AutomaticSyncAllowed(sync.api) then GGM.WakeAutomaticSync(sync.automaticController); return end
     local ok, inGuild = pcall(sync.api.IsInGuild)
     local guildReadable = false
     if ok and type(sync.api.issecretvalue) == "function" then

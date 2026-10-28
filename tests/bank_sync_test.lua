@@ -200,4 +200,30 @@ T.test("bank sync keeps a newly earlier peer queued while the current request fi
     T.assertEqual(api.sent[#api.sent].target, "Alice-Silvermoon")
 end)
 
+
+T.test("disabled bank sync stays passive until the manual button is pressed", function()
+    local G, api, sync = setup()
+    G.AutomaticSyncAllowed = function() return false end
+    G.BankSyncPreferenceChanged(sync)
+    local sent = #api.sent
+    T.assertTrue(sync.sessionActive)
+    T.assertFalse(sync.autoSession)
+    G.OnBankMemoryChanged(sync, "guild-capture", 1)
+    T.assertEqual(#api.sent, sent)
+    T.assertTrue(G.RequestBankSyncFromButton(sync))
+    T.assertTrue(#api.sent > sent)
+end)
+
+T.test("bank auto sync resumes when entering an eligible resting area", function()
+    local G, api, sync = setup()
+    local allowed = false
+    G.AutomaticSyncAllowed = function() return allowed end
+    G.BankSyncPreferenceChanged(sync)
+    local sent = #api.sent
+    allowed = true
+    G.HandleBankSyncEvent(sync, "PLAYER_UPDATE_RESTING")
+    T.assertTrue(sync.autoSession)
+    T.assertTrue(#api.sent > sent)
+end)
+
 return true

@@ -229,6 +229,7 @@ local function cancelPendingSnapshotResponse(sync, requesterKey, targetKey, requ
 end
 
 local function requestRepair(sync, identity, minimumSequence, minimumObservedAt, retryState)
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then return false, "automatic-sync-disabled" end
     local now, timeErr = getResponseTime(sync)
     if not now then return nil, timeErr end
     local result = sync.snapshotRequestResults[identity.key]
@@ -333,6 +334,7 @@ local function updateGearReadyRetryState(sync, identity, minimumSequence, minimu
 end
 
 local function requestGearReadyRepair(sync, identity, minimumSequence, minimumObservedAt, capturedAt)
+    if GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(sync.api) then return false, "automatic-sync-disabled" end
     local now, timeErr = getResponseTime(sync)
     if not now then return nil, timeErr end
     clearExpiredSnapshotRequests(sync, now)
