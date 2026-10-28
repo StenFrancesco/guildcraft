@@ -39,6 +39,7 @@ T.test("window preferences default and normalize independently of saved addon da
     T.assertEqual(p.opacity, 1)
     T.assertFalse(p.locked)
     T.assertTrue(p.autoAlignRecipe)
+    T.assertFalse(p.manualProfessionSync)
     T.assertTrue(db.uiSettings.minimap.hide)
     T.assertTrue(db.professions.kept)
     T.assertEqual(G.GetBrowserWindowSettings(db), p)

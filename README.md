@@ -47,6 +47,10 @@ restores its center position and clears the saved position, and **Reset
 appearance** restores both sizes and opacity to 100% without changing the
 other settings.
 
+**Show manual profession sync** is disabled by default. Enable it to show a
+**Sync profession** button beside Filters for the selected profession. The
+preference is saved across reloads; selecting a profession still requests sync.
+
 **Auto-align recipe details** is enabled by default. The first time you open a
 recipe, its details line up with the top of the main browser, with a small gap on
 the right. If there is no room, they open on the left or stay within the screen.

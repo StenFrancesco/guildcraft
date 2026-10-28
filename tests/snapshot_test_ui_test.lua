@@ -795,7 +795,7 @@ T.test("profession sync UI is silent while hidden and syncs clicked professions"
     G.GetProfessionSyncStatus = function() return "Comparing cached data" end
     local frame = showBrowser(G, makeBrowserAPI(), makeDB(G, { makeRecord(G) }))
     T.assertEqual(#calls, 0)
-    T.assertNil(frame.professionSyncButton)
+    T.assertFalse(frame.professionSyncButton.visible)
     G.SelectGuildGearBrowserTab(frame, "Professions")
     T.assertEqual(#calls, 1)
     T.assertEqual(calls[1].pid, 171)
@@ -811,6 +811,15 @@ T.test("profession sync UI is silent while hidden and syncs clicked professions"
     T.assertEqual(calls[3].pid, 164)
     T.assertEqual(calls[3].reason, "manual")
     T.assertEqual(calls[4].pid, 164)
+    frame.db.uiSettings = { window = { manualProfessionSync = true } }
+    G.RefreshManualProfessionSync(frame)
+    T.assertTrue(frame.professionSyncButton.visible)
+    frame.professionSyncButton.scripts.OnClick()
+    T.assertEqual(calls[5].pid, 164)
+    T.assertEqual(calls[5].reason, "manual")
+    frame.db.uiSettings.window.manualProfessionSync = false
+    G.RefreshManualProfessionSync(frame)
+    T.assertFalse(frame.professionSyncButton.visible)
 end)
 
 T.test("profession library uses the skill icons for Cooking, First Aid, and Leatherworking", function()

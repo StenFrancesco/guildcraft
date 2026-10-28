@@ -239,6 +239,10 @@ T.test("window options save changes immediately and reset only appearance", func
     options.alignRecipe:SetChecked(true)
     options.alignRecipe.scripts.OnClick(options.alignRecipe)
     T.assertTrue(db.uiSettings.window.autoAlignRecipe)
+    T.assertFalse(options.manualProfessionSync:GetChecked())
+    options.manualProfessionSync:SetChecked(true)
+    options.manualProfessionSync.scripts.OnClick(options.manualProfessionSync)
+    T.assertTrue(db.uiSettings.window.manualProfessionSync)
     options.resetAppearance.scripts.OnClick()
     T.assertEqual(db.uiSettings.window.scale, 1)
     T.assertEqual(db.uiSettings.window.opacity, 1)
@@ -250,6 +254,7 @@ T.test("window options save changes immediately and reset only appearance", func
     local restored = fresh.ShowGuildBookOptions(freshAPI, db)
     T.assertFalse(restored.lockWindow:GetChecked())
     T.assertTrue(restored.alignRecipe:GetChecked())
+    T.assertTrue(restored.manualProfessionSync:GetChecked())
 end)
 T.test("separate size sliders retain legacy size independently and reset both sizes", function()
     local db = {uiSettings={window={scale=0.9,locked=true,autoAlignRecipe=false}}}
