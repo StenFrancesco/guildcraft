@@ -249,6 +249,7 @@ local function schedulePeerExpiry(sync)
 end
 
 local function sendMessage(sync, kind, values, target, channel, done)
+    if GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api) and not sync.manualActive and not sync.manualPending then return false, "sync-disabled" end
     if not sync.transport or not sync.sessionActive then return false, "bank-sync-session-unavailable" end
     local ok, err = GGM.SendBankSyncMessage(sync.transport, kind, values, target, channel, done)
     if not ok then setError(sync, err) end
@@ -692,7 +693,8 @@ function GGM.CancelBankSync(sync, reason)
     sync.sessionToken, sync.guildKey, sync.senderKey = nil, nil, nil
     if sync.transport then
         GGM.CancelBankSyncTransport(sync.transport, reason or "bank-sync-cancelled")
-        if wasActive and oldToken and oldGuild and oldSender and reason ~= "guild-session-changed" then
+        if wasActive and oldToken and oldGuild and oldSender and reason ~= "guild-session-changed" and reason ~= "sync-preference-changed"
+            and not (GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api)) then
             GGM.SetBankSyncTransportIdentity(sync.transport, oldSender, oldToken)
             GGM.SendBankSyncMessage(sync.transport, "E", { oldSender, oldGuild, oldToken }, nil, "GUILD")
         end
@@ -920,7 +922,8 @@ function GGM.GetBankSyncStatus(sync)
 end
 
 function GGM.BankSyncPreferenceChanged(sync)
-    if not sync or not sync.available or sync.manualActive or sync.manualPending then return end
+    if not sync or not sync.available then return end
+    if (sync.manualActive or sync.manualPending) and not (GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api)) then return end
     local mode = sync.sessionActive and sync.sessionMode
     if mode then GGM.CancelBankSync(sync, "sync-preference-changed") end
     if mode == "bank" then startSession(sync, "bank") else retryCitySession(sync) end

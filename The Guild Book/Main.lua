@@ -302,6 +302,7 @@ end)
 
 function GGM.SyncPreferenceChanged(api)
     if GGM.professionSync then
+        if GGM.IsSyncDisabled(api) then GGM.CancelProfessionSync(GGM.professionSync) end
         local controller = GGM.professionSync.automaticController
         if controller then GGM.WakeAutomaticSync(controller)
         elseif GGM.professionPlayerLoggedIn then GGM.LoginProfessionSync(GGM.professionSync) end

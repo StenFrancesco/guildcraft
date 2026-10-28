@@ -42,8 +42,10 @@ starting automatic sync; use **Sync profession**, **Sync gear**, or **Sync bank*
 to request it manually. **Only in town** allows automatic sync while the
 character is resting in a town, city, or inn. Manual buttons remain available
 in every mode. Bank manual sync still requires an open, accessible guild bank.
-The choice is saved for the account. Responses to other players' requests may
-still exchange data, and transfers already underway may finish.
+The choice is saved for the account. In Disable mode, the addon ignores other
+players' sync requests and unsolicited updates; it exchanges data only for a
+manual operation you start. Switching to Disable cancels queued automatic work.
+A frame already handed to ChatThrottleLib can still be sent.
 
 The options window offers separate **Main window size** and **Recipe details
 size** sliders (75-125%), plus a shared **Opacity** slider (60-100%). Changes

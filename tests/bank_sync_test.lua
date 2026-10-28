@@ -226,4 +226,16 @@ T.test("bank auto sync resumes when entering an eligible resting area", function
     T.assertTrue(#api.sent > sent)
 end)
 
+
+T.test("disabling bank sync cancels its session without sending a session-end notice", function()
+    local G, api, sync = setup()
+    G.IsSyncDisabled = function() return true end
+    G.AutomaticSyncAllowed = function() return false end
+    local before = #api.sent
+    G.BankSyncPreferenceChanged(sync)
+    T.assertEqual(#api.sent, before)
+    T.assertTrue(sync.sessionActive)
+    T.assertFalse(sync.autoSession)
+end)
+
 return true

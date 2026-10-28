@@ -677,7 +677,7 @@ function GGM.SyncSelectedGear(frame)
     if not entry or frame.activeTab ~= "Character" then return false end
     local ok, err = false, "sync-unavailable"
     if GGM.guildSync and type(GGM.RequestCompleteSnapshot) == "function" then
-        ok, err = GGM.RequestCompleteSnapshot(GGM.guildSync, entry.record.identity)
+        ok, err = GGM.RequestCompleteSnapshot(GGM.guildSync, entry.record.identity, nil, nil, nil, true)
     end
     frame.gearSyncError = not ok and { targetKey = entry.key, error = err } or nil
     GGM.lastSyncError = err

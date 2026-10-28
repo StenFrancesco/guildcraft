@@ -1102,6 +1102,8 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
     if private and (channel ~= "WHISPER" or recipient ~= sync.selfKey)
         or not private and channel ~= "GUILD" then return "ignored" end
     if recipient ~= "*" and not sync.senders[recipient] then return "ignored" end
+    local disabled = GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api)
+    if disabled and (kind == "A" or kind == "Q") then return "ignored" end
     if kind == "A" then
         if recipient ~= "*" or professionID ~= 0 then return "ignored" end
         local seen, entries = {}, split(body, ";")
@@ -1240,6 +1242,7 @@ logical = function(sync, payload, rawSender, channel, responseDeadline)
     else initiator = bits[1] end
     local session = findSession(sync, initiator, id)
     if not session or session.finished or session.professionID ~= professionID or now(sync) - session.startedAt > TTL then return "ignored" end
+    if disabled and (session.initiator ~= sync.selfKey or not session.operation or not session.operation.fromButton) then return "ignored" end
     if kind == "C" then
         if recipient ~= session.initiator or #bits ~= 2 or not hash(bits[2]) or session.selected
             or (session.preferredPeer and session.preferredPeer ~= sender) then return "ignored" end
@@ -1756,6 +1759,10 @@ end
 
 function GGM.RequestProfessionSync(sync, professionID, reason, preferredPeer, onComplete, options)
     reason = reason or "manual"
+    if sync and GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api)
+        and (reason ~= "manual" or type(options) ~= "table" or options.fromButton ~= true) then
+        return false, "sync-disabled"
+    end
     if reason ~= "manual" then return startProfessionComparison(sync, professionID, reason, preferredPeer) end
     if not SUPPORTED[professionID] or not safe(sync) then
         if sync then notify(sync, professionID or 0, "Sync unavailable") end
@@ -1798,6 +1805,7 @@ function GGM.RequestProfessionSync(sync, professionID, reason, preferredPeer, on
         return false, "profession-sync-peer-unavailable"
     end
     local operation = {
+        fromButton = options.fromButton == true,
         professionID = professionID, candidates = candidates, moreCandidates = moreCandidates,
         overflowPeers = overflowPeers, onComplete = type(onComplete) == "function" and onComplete or nil,
         uncertainPeers = {}, comparedDigests = {},
@@ -1833,7 +1841,7 @@ function GGM.RequestProfessionSyncFromButton(sync, professionID)
     end
     if sync and sync.buttonRequest and sync.buttonRequest.professionID == professionID then return true end
     if sync and SUPPORTED[professionID] then sync.buttonRequest = nil end
-    local accepted, err = GGM.RequestProfessionSync(sync, professionID, "manual")
+    local accepted, err = GGM.RequestProfessionSync(sync, professionID, "manual", nil, nil, { fromButton = true })
     if accepted then
         if sync.manualOperation then sync.manualOperation.fromButton = true end
         return true
@@ -1850,7 +1858,7 @@ function GGM.RequestProfessionSyncFromButton(sync, professionID)
             drainPending(sync)
             return
         end
-        local ok, failure = GGM.RequestProfessionSync(sync, professionID, "manual")
+        local ok, failure = GGM.RequestProfessionSync(sync, professionID, "manual", nil, nil, { fromButton = true })
         if ok or (failure ~= "profession-sync-busy" and failure ~= "profession-sync-cooldown") then
             sync.buttonRequest = nil
             if ok then

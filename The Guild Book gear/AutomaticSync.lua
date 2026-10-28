@@ -17,6 +17,12 @@ local function readable(api, value)
 end
 
 -- Shared account preference; the gear addon also works without the main addon.
+function GGM.IsSyncDisabled(api)
+    local db = api.TheGuildBookDB
+    local settings = type(db) == "table" and db.uiSettings
+    return type(settings) == "table" and settings.syncMode == "disable"
+end
+
 function GGM.AutomaticSyncAllowed(api)
     local db = api.TheGuildBookDB
     local settings = type(db) == "table" and db.uiSettings

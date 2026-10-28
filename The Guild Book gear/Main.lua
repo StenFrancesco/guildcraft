@@ -363,6 +363,11 @@ frame:SetScript("OnEvent", function(_, event, ...)
 end)
 
 api.GuildBookGearSyncPreferenceChanged = function()
+    if GearMemory.IsSyncDisabled(api) and GearMemory.CancelGearSyncForDisabled then
+        GearMemory.CancelGearSyncForDisabled(GearMemory.guildSync)
+        GearMemory.gearReadyInFlight = nil
+        GearMemory.gearReadyPending = true
+    end
     if GearMemory.guildSync and GearMemory.guildSync.automaticController then
         GearMemory.WakeAutomaticSync(GearMemory.guildSync.automaticController)
     end
