@@ -300,6 +300,35 @@ resolveCharacterKey = function(db, characterKey)
     return found or characterKey
 end
 
+-- Keep cached gear while removing impossible freshness claims. Zero means the
+-- slot is stale and can be replaced by the next legitimate observation.
+function GGM.RecoverFutureGearTimestamps(db, now)
+    if not isIntegerInRange(now, 1, GGM.SYNC_MAX_TIMESTAMP) then return false end
+    if type(db) ~= "table" or type(db.characters) ~= "table" then return false end
+    local limit = now + 300
+    for _, record in pairs(db.characters) do
+        if type(record) == "table" and type(record.gear) == "table"
+            and GGM.ValidateStoredGear(record.gear, record.complete == true) then
+            local gear = record.gear
+            if gear.capturedAt > limit then
+                local times = GGM.CopyGearObservationTimes(gear)
+                local newest = 0
+                for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+                    local id = slot.inventorySlotID
+                    if times[id] > limit then times[id] = 0 end
+                    newest = math.max(newest, times[id])
+                end
+                gear.slotObservedAt, gear.capturedAt = times, newest
+                record.gearTimestampRecovery = true
+            end
+            if type(record.requiredBaselineObservedAt) == "number" and record.requiredBaselineObservedAt > limit then
+                record.requiredBaselineObservedAt = 0
+            end
+        end
+    end
+    return true
+end
+
 function GGM.GetCompleteCharacterRecord(db, characterKey)
     if type(db) ~= "table" or type(db.characters) ~= "table" then
         return nil, "database-invalid"
@@ -415,6 +444,9 @@ function GGM.UpdateConfirmedCharacterSlot(db, characterKey, slotKey, slotValue, 
     record.gear.capturedAt = math.max(record.gear.capturedAt, confirmedAt)
     local nextSequence = sequence + 1
     record.confirmedSequence = nextSequence
+    if record.gearTimestampRecovery and GGM.GetGearObservationFloor(record.gear) > 0 then
+        record.gearTimestampRecovery = nil
+    end
 
     return true, nil, nextSequence
 end
@@ -486,6 +518,9 @@ function GGM.ApplyReceivedCharacterSlot(db, characterKey, slotKey, slotValue, co
         record.gear.capturedAt = math.max(record.gear.capturedAt, confirmedAt)
     end
     record.confirmedSequence = math.max(existingSequence, confirmedSequence)
+    if record.gearTimestampRecovery and GGM.GetGearObservationFloor(record.gear) > 0 then
+        record.gearTimestampRecovery = nil
+    end
     return true, nil
 end
 
@@ -536,6 +571,7 @@ local function mergeCompleteObservation(db, identity, snapshot, confirmedSequenc
         identity = copyIdentity(identity),
         gear = candidate,
         confirmedSequence = math.max(knownSequence, incomingSequence),
+        gearTimestampRecovery = existing.gearTimestampRecovery and GGM.GetGearObservationFloor(candidate) == 0 or nil,
     }
     db.characters[identity.key].identity.classToken = db.characters[identity.key].identity.classToken
         or GGM.NormalizeClassicClassToken(existing.identity.classToken)

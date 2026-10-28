@@ -41,6 +41,7 @@ local function clientApi(who, results)
         GetRealmName = function() return who.realm end,
         UnitGUID = function() return who.guid end,
         GetTime = function() return now end,
+        GetServerTime = function() return 1700010000 end,
     }
     api.C_ChatInfo.RegisterAddonMessagePrefix = function() return 0 end
     api.C_ChatInfo.SendAddonMessage = function(prefix, message, channel, target)
@@ -1076,4 +1077,65 @@ T.test("malformed gear-ready messages do not mutate saved gear", function()
     T.assertNil(unknown)
     T.assertEqual(unknownErr, "sync-message-type-unknown")
     T.assertEqual(next(db.characters), before)
+end)
+
+T.test("future gear messages are rejected before they affect sync state", function()
+    local G = loadModules()
+    local alice, bob = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B")
+    local db = assert(T.initializeDatabase(G, nil))
+    assert(G.SaveCompleteCharacterRecord(db, alice, snapshot(G, 1000, 1700009000), 0))
+    local api = clientApi(bob)
+    local sync = assert(G.CreateGuildSync(api, db))
+    local payload = assert(G.EncodeSyncSlotUpdate(alice, 1, "HEAD",
+        { inventorySlotID = 1, itemID = 9999, itemLink = "|Hitem:9999|h[Gear]|h" }, 1700010301))
+    local result = G.HandleGuildSyncPayload(sync, alice.key, payload)
+    T.assertNil(result)
+    T.assertEqual(db.characters[alice.key].gear.slots[1], "item:1001")
+end)
+
+T.test("future claims readiness snapshots and unavailable clocks fail closed", function()
+    local G = loadModules()
+    local alice, bob, carol = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B"), identity("Carol", "Silvermoon", "C")
+    local db = assert(T.initializeDatabase(G, nil))
+    local api = clientApi(bob)
+    local sync = assert(G.CreateGuildSync(api, db))
+    assert(G.RequestCompleteSnapshot(sync, alice))
+    local id = sync.pendingSnapshotRequestTargets[alice.key]
+    local claim = assert(G.EncodeSyncSnapshotResponseClaim(alice, bob, carol, 1, id, 1700010301, 1700010301))
+    local result, err = G.HandleGuildSyncPayload(sync, carol.key, claim)
+    T.assertNil(result); T.assertEqual(err, "sync-timestamp-in-future")
+    T.assertNil(sync.pendingSnapshotRequests[id].selectedResponderKey)
+    local ready = assert(G.EncodeSyncGearReady(alice, 1, 1700010301, 1700010301))
+    result, err = G.HandleGuildSyncPayload(sync, alice.key, ready)
+    T.assertNil(result); T.assertEqual(err, "sync-timestamp-in-future")
+    local response = assert(G.EncodeSyncSnapshotResponse(alice, bob, carol, snapshot(G, 1000, 1700010301), 1, id))
+    result, err = G.HandleGuildSyncPayload(sync, carol.key, response)
+    T.assertNil(result); T.assertEqual(err, "sync-timestamp-in-future")
+    local validClaim = assert(G.EncodeSyncSnapshotResponseClaim(alice, bob, carol, 1, id, 1700010300, 1700010300))
+    T.assertEqual(G.HandleGuildSyncPayload(sync, carol.key, validClaim), "snapshot-response-claim-recorded")
+    api.GetServerTime = function() error("unavailable") end
+    result, err = G.HandleGuildSyncPayload(sync, carol.key, validClaim)
+    T.assertNil(result); T.assertEqual(err, "sync-server-time-unavailable")
+end)
+
+T.test("future cache slots recover without discarding valid slots and are not relayed", function()
+    local G = loadModules()
+    local alice, bob, carol = identity("Alice", "Silvermoon", "A"), identity("Bob", "Silvermoon", "B"), identity("Carol", "Silvermoon", "C")
+    local db = assert(T.initializeDatabase(G, nil))
+    assert(G.SaveCompleteCharacterRecord(db, alice, snapshot(G, 1000, 1700009000), 0))
+    local gear = db.characters[alice.key].gear
+    gear.slotObservedAt = G.CopyGearObservationTimes(gear)
+    gear.slotObservedAt[1], gear.capturedAt = 1700011000, 1700011000
+    local api = clientApi(carol)
+    local sync = assert(G.CreateGuildSync(api, db))
+    T.assertEqual(gear.slotObservedAt[1], 0)
+    T.assertEqual(gear.slotObservedAt[2], 1700009000)
+    T.assertEqual(gear.slots[1], "item:1001")
+    local request = assert(G.EncodeSyncSnapshotRequest(bob, alice, "000001"))
+    T.assertEqual(G.HandleGuildSyncPayload(sync, bob.key, request), "ignored")
+    assert(G.SaveObservedCharacterRecord(db, alice, snapshot(G, 2000, 1700008500)))
+    T.assertEqual(db.characters[alice.key].gear.slots[1], "item:2001")
+    T.assertEqual(db.characters[alice.key].gear.slots[2], "item:1002")
+    T.assertNil(db.characters[alice.key].gearTimestampRecovery)
+    T.assertEqual(G.HandleGuildSyncPayload(sync, bob.key, request), "snapshot-response-queued")
 end)
