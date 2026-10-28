@@ -82,6 +82,7 @@ local function createOptionsControls(api, frame, suffix)
         check:SetScript("OnClick", function(self)
             update(frame.settings, self:GetChecked() and true or false)
             refreshLauncher()
+            GGM.RefreshOtherGuildBookOptions(frame)
         end)
         return check
     end
@@ -96,15 +97,27 @@ local function createOptionsControls(api, frame, suffix)
     frame.resetPosition:SetScript("OnClick", function()
         frame.settings.angle = DEFAULT_ANGLE
         refreshLauncher()
+        GGM.RefreshOtherGuildBookOptions(frame)
     end)
     GGM.CreateWindowOptionsControls(api, frame, suffix)
 end
 
 local function refreshOptions(frame, db)
+    frame.optionsDB = db
     frame.settings = preferences(db)
     GGM.RefreshWindowOptionsControls(frame, db)
     frame.showIcon:SetChecked(not frame.settings.hide)
     frame.lockIcon:SetChecked(frame.settings.locked)
+end
+
+function GGM.RefreshOtherGuildBookOptions(frame)
+    local db = frame.optionsDB or frame.windowDB
+    if not db then return end
+    local other = frame == GGM.guildBookOptionsFrame
+        and GGM.guildBookSettingsPanel or GGM.guildBookOptionsFrame
+    if other and other ~= frame and other.IsShown and other:IsShown() then
+        refreshOptions(other, db)
+    end
 end
 
 function GGM.ShowGuildBookOptions(api, db)
@@ -258,3 +271,4 @@ function GGM.InitializeMinimapLauncher(api, db)
     refreshLauncher()
     return button
 end
+

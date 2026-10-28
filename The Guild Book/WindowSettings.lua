@@ -184,6 +184,7 @@ function GGM.CreateWindowOptionsControls(api, frame, suffix)
             frame.windowSettings[key] = math.floor(value + 0.5) / 100
             GGM.RefreshWindowOptionsControls(frame, frame.windowDB)
             apply()
+            GGM.RefreshOtherGuildBookOptions(frame)
         end)
         return control
     end
@@ -200,6 +201,7 @@ function GGM.CreateWindowOptionsControls(api, frame, suffix)
         check:SetScript("OnClick", function(self)
             frame.windowSettings[key] = self:GetChecked() and true or false
             apply()
+            GGM.RefreshOtherGuildBookOptions(frame)
         end)
         return check
     end
@@ -220,5 +222,7 @@ function GGM.CreateWindowOptionsControls(api, frame, suffix)
         frame.windowSettings.scale, frame.windowSettings.recipeScale, frame.windowSettings.opacity = 1, 1, 1
         GGM.RefreshWindowOptionsControls(frame, frame.windowDB)
         apply()
+        GGM.RefreshOtherGuildBookOptions(frame)
     end)
 end
+
