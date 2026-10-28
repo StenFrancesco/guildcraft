@@ -1561,6 +1561,36 @@ T.test("sequence gaps preserve values but require a full baseline before becomin
     T.assertNil(repaired.requiredBaselineSequence)
 end)
 
+T.test("future gap baseline time recovery preserves the required sequence floor", function()
+    local GGM = loadModules()
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local identity = makeIdentity()
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, makeSnapshot(GGM), 4))
+
+    local ok, err = GGM.ApplyReceivedCharacterSlot(
+        db, identity.key, "HEAD",
+        { inventorySlotID = 1, itemID = 9400, itemLink = "|Hitem:9400|h[Skipped]|h" },
+        1800000000, 6
+    )
+    T.assertFalse(ok)
+    T.assertEqual(err, "confirmed-sequence-gap")
+    T.assertEqual(db.characters[identity.key].requiredBaselineObservedAt, 1800000000)
+
+    T.assertTrue(GGM.RecoverFutureGearTimestamps(db, 1700000000))
+    T.assertNil(db.characters[identity.key].requiredBaselineObservedAt)
+
+    local staleBaseline = makeSnapshot(GGM)
+    staleBaseline.capturedAt = 1700001000
+    local repaired, repairErr = GGM.SaveReceivedCompleteCharacterRecord(db, identity, staleBaseline, 5)
+    T.assertFalse(repaired)
+    T.assertEqual(repairErr, "confirmed-sequence-before-required-baseline")
+    T.assertTrue(db.characters[identity.key].refreshNeeded)
+
+    staleBaseline.capturedAt = 1800000000
+    T.assertTrue(GGM.SaveReceivedCompleteCharacterRecord(db, identity, staleBaseline, 6))
+    T.assertNotNil(GGM.GetCompleteCharacterRecord(db, identity.key))
+end)
+
 T.test("sequence gap keeps the compact baseline stale until a full repair arrives", function()
     local GGM = loadModules()
     local db = assert(T.initializeDatabase(GGM, nil))

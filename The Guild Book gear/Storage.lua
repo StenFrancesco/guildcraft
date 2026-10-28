@@ -322,7 +322,9 @@ function GGM.RecoverFutureGearTimestamps(db, now)
                 record.gearTimestampRecovery = true
             end
             if type(record.requiredBaselineObservedAt) == "number" and record.requiredBaselineObservedAt > limit then
-                record.requiredBaselineObservedAt = 0
+                -- nil means no usable time bound, so sequence remains the
+                -- authority for clearing a sequence gap.
+                record.requiredBaselineObservedAt = nil
             end
         end
     end
