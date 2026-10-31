@@ -71,6 +71,77 @@ local function refreshLauncher()
     if button.settings.hide then button:Hide() else button:Show() end
 end
 
+local function createOptionsControls(api, frame, suffix)
+    local function checkbox(text, y, update)
+        local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+        check:SetSize(26, 26)
+        check:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, y)
+        local caption = check:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        caption:SetPoint("LEFT", check, "RIGHT", 4, 0)
+        caption:SetText(text)
+        check:SetScript("OnClick", function(self)
+            update(frame.settings, self:GetChecked() and true or false)
+            refreshLauncher()
+            GGM.RefreshOtherGuildBookOptions(frame)
+        end)
+        return check
+    end
+    frame.showIcon = checkbox("Show minimap icon", -52,
+        function(saved, checked) saved.hide = not checked end)
+    frame.lockIcon = checkbox("Lock icon position", -87,
+        function(saved, checked) saved.locked = checked end)
+    frame.resetPosition = api.CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    frame.resetPosition:SetSize(180, 24)
+    frame.resetPosition:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -128)
+    frame.resetPosition:SetText("Reset icon position")
+    frame.resetPosition:SetScript("OnClick", function()
+        frame.settings.angle = DEFAULT_ANGLE
+        refreshLauncher()
+        GGM.RefreshOtherGuildBookOptions(frame)
+    end)
+    label(frame, "Sync", 20, -600)
+    frame.syncModes = {}
+    for i, option in ipairs({ { "Auto", "auto" }, { "Disable", "disable" }, { "Only in town", "town" } }) do
+        local mode = option[2]
+        local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+        check:SetSize(24, 24)
+        check:SetPoint("TOPLEFT", frame, "TOPLEFT", 15 + (i - 1) * 102, -626)
+        local text = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        text:SetPoint("LEFT", check, "RIGHT", 0, 0)
+        text:SetText(option[1])
+        check:SetScript("OnClick", function()
+            frame.windowDB.uiSettings.syncMode = mode
+            for key, button in pairs(frame.syncModes) do button:SetChecked(key == mode) end
+            if GGM.SyncPreferenceChanged then GGM.SyncPreferenceChanged(api) end
+            if api.GuildBookGearSyncPreferenceChanged then api.GuildBookGearSyncPreferenceChanged() end
+            GGM.RefreshOtherGuildBookOptions(frame)
+        end)
+        frame.syncModes[mode] = check
+    end
+    GGM.CreateWindowOptionsControls(api, frame, suffix)
+end
+
+local function refreshOptions(frame, db)
+    frame.optionsDB = db
+    frame.settings = preferences(db)
+    GGM.RefreshWindowOptionsControls(frame, db)
+    local mode = db.uiSettings.syncMode
+    if mode ~= "disable" and mode ~= "town" then mode = "auto" end
+    for key, button in pairs(frame.syncModes) do button:SetChecked(key == mode) end
+    frame.showIcon:SetChecked(not frame.settings.hide)
+    frame.lockIcon:SetChecked(frame.settings.locked)
+end
+
+function GGM.RefreshOtherGuildBookOptions(frame)
+    local db = frame.optionsDB or frame.windowDB
+    if not db then return end
+    local other = frame == GGM.guildBookOptionsFrame
+        and GGM.guildBookSettingsPanel or GGM.guildBookOptionsFrame
+    if other and other ~= frame and other.IsShown and other:IsShown() then
+        refreshOptions(other, db)
+    end
+end
+
 function GGM.ShowGuildBookOptions(api, db)
     local settings = preferences(db)
     if not settings or type(api.CreateFrame) ~= "function" then return nil end
@@ -89,62 +160,34 @@ function GGM.ShowGuildBookOptions(api, db)
         close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
         close:SetScript("OnClick", function() frame:Hide() end)
 
-        local function checkbox(text, y, update)
-            local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-            check:SetSize(26, 26)
-            check:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, y)
-            local caption = check:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-            caption:SetPoint("LEFT", check, "RIGHT", 4, 0)
-            caption:SetText(text)
-            check:SetScript("OnClick", function(self)
-                update(frame.settings, self:GetChecked() and true or false)
-                refreshLauncher()
-            end)
-            return check
-        end
-        frame.showIcon = checkbox("Show minimap icon", -52,
-            function(saved, checked) saved.hide = not checked end)
-        frame.lockIcon = checkbox("Lock icon position", -87,
-            function(saved, checked) saved.locked = checked end)
-        frame.resetPosition = api.CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        frame.resetPosition:SetSize(180, 24)
-        frame.resetPosition:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -128)
-        frame.resetPosition:SetText("Reset icon position")
-        frame.resetPosition:SetScript("OnClick", function()
-            frame.settings.angle = DEFAULT_ANGLE
-            refreshLauncher()
-        end)
-        label(frame, "Sync", 20, -600)
-        frame.syncModes = {}
-        for i, option in ipairs({ { "Auto", "auto" }, { "Disable", "disable" }, { "Only in town", "town" } }) do
-            local mode = option[2]
-            local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-            check:SetSize(24, 24)
-            check:SetPoint("TOPLEFT", frame, "TOPLEFT", 15 + (i - 1) * 102, -626)
-            local text = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-            text:SetPoint("LEFT", check, "RIGHT", 0, 0)
-            text:SetText(option[1])
-            check:SetScript("OnClick", function()
-                frame.windowDB.uiSettings.syncMode = mode
-                for key, button in pairs(frame.syncModes) do button:SetChecked(key == mode) end
-                if GGM.SyncPreferenceChanged then GGM.SyncPreferenceChanged(api) end
-                if api.GuildBookGearSyncPreferenceChanged then api.GuildBookGearSyncPreferenceChanged() end
-            end)
-            frame.syncModes[mode] = check
-        end
-        GGM.CreateWindowOptionsControls(api, frame)
+        createOptionsControls(api, frame)
         local hint = label(frame, "/ggm options opens this window.", 20, -660)
         hint:SetFontObject("GameFontHighlightSmall")
     end
-    frame.settings = settings
-    GGM.RefreshWindowOptionsControls(frame, db)
-    local mode = db.uiSettings.syncMode
-    if mode ~= "disable" and mode ~= "town" then mode = "auto" end
-    for key, button in pairs(frame.syncModes) do button:SetChecked(key == mode) end
-    frame.showIcon:SetChecked(not settings.hide)
-    frame.lockIcon:SetChecked(settings.locked)
+    refreshOptions(frame, db)
     frame:Show()
     if frame.Raise then frame:Raise() end
+    return frame
+end
+
+function GGM.RegisterGuildBookSettings(api, db)
+    if GGM.guildBookSettingsPanel or type(db) ~= "table" or type(api.CreateFrame) ~= "function" then return end
+    local modern = type(api.Settings) == "table"
+        and type(api.Settings.RegisterCanvasLayoutCategory) == "function"
+        and type(api.Settings.RegisterAddOnCategory) == "function"
+    if not modern and type(api.InterfaceOptions_AddCategory) ~= "function" then return end
+    local frame = api.CreateFrame("Frame", nil, api.UIParent)
+    frame.name = "The Guild Book"
+    label(frame, "The Guild Book", 20, -18)
+    createOptionsControls(api, frame, "Settings")
+    frame:SetScript("OnShow", function() refreshOptions(frame, db) end)
+    if modern then
+        local category = api.Settings.RegisterCanvasLayoutCategory(frame, frame.name)
+        api.Settings.RegisterAddOnCategory(category)
+    else
+        api.InterfaceOptions_AddCategory(frame)
+    end
+    GGM.guildBookSettingsPanel = frame
     return frame
 end
 
@@ -250,3 +293,4 @@ function GGM.InitializeMinimapLauncher(api, db)
     refreshLauncher()
     return button
 end
+

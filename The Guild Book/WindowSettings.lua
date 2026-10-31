@@ -166,12 +166,13 @@ function GGM.RefreshWindowOptionsControls(frame, db)
     frame.updatingWindowControls = nil
 end
 
-function GGM.CreateWindowOptionsControls(api, frame)
+function GGM.CreateWindowOptionsControls(api, frame, suffix)
     caption(frame, "Window", 20, -173)
     local function apply()
         GGM.ApplyBrowserWindowSettings(GGM.guildGearBrowserFrame, frame.windowDB)
     end
     local function slider(name, text, y, low, high, key)
+        name = name .. (suffix or "")
         local control = api.CreateFrame("Slider", name, frame, "OptionsSliderTemplate")
         control:SetSize(270, 16)
         control:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, y)
@@ -189,6 +190,7 @@ function GGM.CreateWindowOptionsControls(api, frame)
             frame.windowSettings[key] = math.floor(value + 0.5) / 100
             GGM.RefreshWindowOptionsControls(frame, frame.windowDB)
             apply()
+            GGM.RefreshOtherGuildBookOptions(frame)
         end)
         return control
     end
@@ -205,6 +207,7 @@ function GGM.CreateWindowOptionsControls(api, frame)
         check:SetScript("OnClick", function(self)
             frame.windowSettings[key] = self:GetChecked() and true or false
             apply()
+            GGM.RefreshOtherGuildBookOptions(frame)
         end)
         return check
     end
@@ -227,5 +230,7 @@ function GGM.CreateWindowOptionsControls(api, frame)
         frame.windowSettings.scale, frame.windowSettings.recipeScale, frame.windowSettings.opacity = 1, 1, 1
         GGM.RefreshWindowOptionsControls(frame, frame.windowDB)
         apply()
+        GGM.RefreshOtherGuildBookOptions(frame)
     end)
 end
+

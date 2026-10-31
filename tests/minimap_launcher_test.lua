@@ -287,6 +287,46 @@ T.test("separate size sliders retain legacy size independently and reset both si
     T.assertFalse(db.uiSettings.window.autoAlignRecipe)
 end)
 
+T.test("Blizzard settings registers existing controls and refreshes saved preferences", function()
+    for _, modern in ipairs({ true, false }) do
+        local db = {}
+        local G, api = fixture(db)
+        local registered
+        if modern then
+            api.Settings = {
+                RegisterCanvasLayoutCategory = function(panel, name)
+                    T.assertEqual(name, "The Guild Book")
+                    return { panel = panel }
+                end,
+                RegisterAddOnCategory = function(category) registered = category.panel end,
+            }
+        else
+            api.InterfaceOptions_AddCategory = function(panel) registered = panel end
+        end
+        local panel = G.RegisterGuildBookSettings(api, db)
+        T.assertEqual(registered, panel)
+        panel.scripts.OnShow(panel)
+        panel.showIcon:SetChecked(false)
+        panel.showIcon.scripts.OnClick(panel.showIcon)
+        T.assertTrue(db.uiSettings.minimap.hide)
+        local floating = G.ShowGuildBookOptions(api, db)
+        T.assertFalse(floating.showIcon:GetChecked())
+        floating.lockIcon:SetChecked(true)
+        floating.lockIcon.scripts.OnClick(floating.lockIcon)
+        panel.scripts.OnShow(panel)
+        T.assertTrue(panel.lockIcon:GetChecked())
+        floating.syncModes.town.scripts.OnClick()
+        T.assertTrue(panel.syncModes.town.checked)
+        panel.syncModes.disable.scripts.OnClick()
+        T.assertTrue(floating.syncModes.disable.checked)
+        T.assertEqual(db.uiSettings.syncMode, "disable")
+        T.assertNotNil(api.TheGuildBookWindowScaleSliderSettings)
+        T.assertNotNil(api.TheGuildBookWindowScaleSlider)
+        G.RegisterGuildBookSettings(api, db)
+        T.assertEqual(G.guildBookSettingsPanel, panel)
+    end
+end)
+
 T.test("sync options are exclusive and persist across reopening", function()
     local db = {}
     local G, api = fixture(db)
