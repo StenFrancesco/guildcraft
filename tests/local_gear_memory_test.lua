@@ -448,6 +448,35 @@ T.test("tracking startup refreshes saved model identity without changing saved g
     T.assertTrue(record.gear.complete)
 end)
 
+T.test("local tracking refreshes every recovered slot before sharing unchanged gear", function()
+    local GGM = loadModules()
+    local db = assert(T.initializeDatabase(GGM, nil))
+    local api = makeApi(GGM)
+    local identity = assert(GGM.BuildPlayerIdentity(api))
+    local staleSnapshot = assert(GGM.CapturePlayerGearSnapshot(api))
+    staleSnapshot.capturedAt = 1700010000
+    assert(GGM.SaveCompleteCharacterRecord(db, identity, staleSnapshot, 9))
+
+    T.assertTrue(GGM.RecoverFutureGearTimestamps(db, 1700000100))
+    local recovered = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertTrue(recovered.gearTimestampRecovery)
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        T.assertEqual(recovered.gear.slotObservedAt[slot.inventorySlotID], 0)
+    end
+
+    local tracker, err = GGM.StartLocalPlayerGearTracking(api, db, 5)
+
+    T.assertNil(err)
+    T.assertNotNil(tracker)
+    local refreshed = assert(GGM.GetCompleteCharacterRecord(db, identity.key))
+    T.assertNil(refreshed.gearTimestampRecovery)
+    T.assertEqual(refreshed.confirmedSequence, 9)
+    T.assertEqual(GGM.GetGearObservationFloor(refreshed.gear), 1700000100)
+    for _, slot in ipairs(GGM.TRACKED_SLOTS) do
+        T.assertEqual(refreshed.gear.slotObservedAt[slot.inventorySlotID], 1700000100)
+    end
+end)
+
 T.test("tracking startup preserves saved model identity when current observations are unavailable", function()
     local GGM = loadModules()
     local db = assert(T.initializeDatabase(GGM, nil))

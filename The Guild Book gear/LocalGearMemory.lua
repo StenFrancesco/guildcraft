@@ -90,6 +90,19 @@ function GGM.StartLocalPlayerGearTracking(api, db, stabilityDelaySeconds, onConf
         if not identityUpdated then
             return nil, updateErr
         end
+
+        if record.gearTimestampRecovery == true then
+            -- A recovered local cache can contain zero observation times for
+            -- slots that have not changed since login. Refresh the full local
+            -- snapshot before sharing so those unchanged slots get a real
+            -- observation time too.
+            local snapshot, snapshotErr = GGM.CapturePlayerGearSnapshot(api)
+            if not snapshot then return nil, snapshotErr end
+            local observed, observeErr = GGM.SaveObservedCharacterRecord(db, identity, snapshot)
+            if not observed then return nil, observeErr end
+            record, recordErr = GGM.GetCompleteCharacterRecord(db, identity.key)
+            if not record then return nil, recordErr end
+        end
     end
 
     identity = record.identity

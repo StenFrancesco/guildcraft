@@ -38,6 +38,17 @@ position are saved across reloads for the account. Reset restores the lower-left
 position without changing visibility or locking. Use `/ggm options` to reopen
 settings when the icon is hidden. Escape closes the menu and settings window.
 
+The **Sync** setting applies to profession, gear, and guild-bank automatic
+sync. **Auto** (the default) keeps the existing behavior. **Disable** stops
+starting automatic sync; use **Sync profession**, **Sync gear**, or **Sync bank**
+to request it manually. **Only in town** allows automatic sync while the
+character is resting in a town, city, or inn. Manual buttons remain available
+in every mode. Bank manual sync still requires an open, accessible guild bank.
+The choice is saved for the account. In Disable mode, the addon ignores other
+players' sync requests and unsolicited updates; it exchanges data only for a
+manual operation you start. Switching to Disable cancels queued automatic work.
+A frame already handed to ChatThrottleLib can still be sent.
+
 The options window offers separate **Main window size** and **Recipe details
 size** sliders (75-125%), plus a shared **Opacity** slider (60-100%). Changes
 apply immediately and are saved across reloads. Both sizes default to 100%.
@@ -48,6 +59,13 @@ the main window. Its dragged position is saved across reloads. **Center window**
 restores its center position and clears the saved position, and **Reset
 appearance** restores both sizes and opacity to 100% without changing the
 other settings.
+
+**Show manual profession sync** is disabled by default. Enable it to show a
+**Sync profession** button beside Filters for the selected profession. The
+preference is saved across reloads; selecting a profession still requests sync.
+**Show manual gear sync** is a separate, default-off option that shows **Sync
+gear** on the Characters page. It is also saved across reloads; automatic gear
+synchronization continues when the button is hidden.
 
 **Auto-align recipe details** is enabled by default. The first time you open a
 recipe, its details line up with the top of the main browser, with a small gap on
@@ -77,7 +95,7 @@ When Own has no captured professions, the recipe panel is hidden and no
 profession is selected. Switching from All to Own selects a listed profession
 or clears the previous selection when the list is empty.
 
-In Own or All, open **Filters** beside **Sync profession** to filter recipes using the
+In Own or All, open **Filters** to filter recipes using the
 selected character's live profession data. All keeps the guild recipe catalog as
 its candidate list; learned state, materials, categories and slots are evaluated
 for the selected character. A guild recipe with unavailable live metadata can
@@ -223,7 +241,7 @@ locally and is not added to the bank browser or synchronization messages.
 - Profession, gear, and bank information is saved locally and may represent an offline character's last-known state.
 - Personal bank details are shown only for characters whose GUIDs are recorded as belonging to this account. The guild bank remains shared with addon users in the current guild.
 - Profession browsing and sharing support Alchemy, Blacksmithing, Cooking, Enchanting, Engineering, First Aid, Fishing, Leatherworking, and Tailoring. First Aid is mainly relevant to the legacy client. Profession sharing uses protocol P5 (`GC_PROF5`); participating clients need compatible versions.
-- Profession comparisons are bounded and request/event driven. The **Sync profession** action checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
+- Profession comparisons are bounded and request/event driven. Selecting a profession checks up to four eligible peers sequentially and uses a 60-second cooldown. A peer match does not mean every guild member has been checked.
 - Login schedules bounded gear and recipe synchronization after a random zero-to-five-minute delay; only unfinished work receives bounded city retries. Gear and profession messages use the embedded ChatThrottleLib; no separate library addon folder is needed.
 - Automatic guild-bank synchronization starts after opening a guild bank and establishing the tabs this client can currently view. It also starts when entering a major city, using complete guild-tab snapshots already saved locally; this city trigger does not reopen the bank or read bank APIs. On the Bank page, the guild-only **Sync bank** action still requires an access-known bank session, and repeated clicks coalesce into the active or queued manual run. Compatible online clients exchange bounded, timestamp-only manifest pages and session-end notices over GUILD, then send needed complete tab snapshots directly over WHISPER through throttled addon messages. Before returning contents, the responder checks its current guild roster and requires the requester to have the same guild rank. Live-bank sessions also restrict requests and responses to tabs currently viewable by that client. City sessions read only previously saved complete snapshots. Each peer, tab, and manifest is requested at most twice per sync pass, and work is limited to four peers per window. Inbound frames are accepted only from eligible senders and their partial-transfer buffers are bounded. A strictly newer capture timestamp replaces the saved tab; equal timestamps retain the local snapshot. Missing item icons are looked up locally from item IDs. Saved bank data remains last-known and available offline, and synchronization preserves its existing SavedVariables format. The Bank page reports missing or unsupported companion, no active sync trigger, and no compatible responder or timeout states.
 - Leaving a guild or switching guilds cancels work for the previous guild. Once current membership and roster state are confirmed, a fresh bounded synchronization run is scheduled for the new guild.
@@ -236,7 +254,7 @@ finishes and refreshes the Characters page. The member does not need the addon.
 Incomplete or cancelled inspections leave existing saved gear intact.
 
 Inspection snapshots and owner snapshots use the same gear cache and can be
-shared through **Sync gear**. Each slot retains the server time when it was
+shared through automatic synchronization or **Sync gear**. Each slot retains the server time when it was
 observed, including empty slots, so delayed updates and older cached snapshots
 cannot overwrite newer observations. Receiving or forwarding a snapshot keeps
 its original times. Conflicting network observations within the same server
@@ -261,7 +279,7 @@ gear. If all startup attempts fail, a later valid request for this character can
 retry capture, at most once every five seconds. Cached and shared equipment
 remains last-known data, not proof of the character's current state.
 
-On the Characters page, select a saved character and click **Sync gear** to
+Enable **Show manual gear sync** in Options, then on the Characters page select a saved character and click **Sync gear** to
 request the freshest complete snapshot available from responding online guild
 addon users. The character can be offline if another participant has their
 snapshot cached. The panel keeps its saved equipment visible while waiting and
@@ -285,12 +303,11 @@ The Professions tab shares complete last-known recipe snapshots with guild
 members using the same protocol version. A first profession selection can start
 a comparison, and a meaningful local snapshot save can announce that change.
 Gear and recipes synchronize automatically after a random login delay of zero
-to five minutes. Neither requires opening the character browser. The
-**Sync profession** button starts immediately when the sync slot is available.
+to five minutes. Neither requires opening the character browser. Clicking a profession starts synchronization immediately when the sync slot is available.
 If a comparison or the existing 60-second cooldown is in progress, the click is
 retained and the status shows that it is queued. Repeated clicks for the same
 profession share one request; clicking a different profession replaces the queued
-choice. Automatic work yields after its current transfer so the button request
+choice. Automatic work yields after its current transfer so the selected profession request
 can run next, and unfinished automatic work remains eligible for city recovery.
 Queued requests are bounded and are cancelled when guild synchronization resets.
 Each manual operation checks up to four
@@ -350,8 +367,7 @@ expires, including when the player stays in the city. Outside a city, zone and
 resting events can resume eligible work. Inns outside city maps do not qualify;
 unavailable or unreadable city APIs leave recovery pending. There are at most
 three recovery attempts per login and a one-hour deadline per automatic attempt.
-Finished work creates no idle polling or broadcasts. Manual synchronization
-remains available after automatic retries are exhausted.
+Finished work creates no idle polling or broadcasts. Selecting a profession can still request synchronization after automatic retries are exhausted.
 
 Gear uses the existing snapshot request, responder election and confirmed
 sequence rules. Automatic target batches include offline guild characters whose
@@ -437,6 +453,13 @@ same fixture to measure the prior implementation. Results and limitations are in
 `tests/bench_catalog_browsing_results.txt`. In-game visual, scrolling, tooltip and
 frame-time checks remain necessary; standalone timings do not establish FPS gains.
 
+Gear sync rejects observations more than five minutes ahead of server time and
+pauses when server time is unavailable. On startup, future-dated cached slot
+observations are marked stale while their gear remains visible; unaffected slot
+timestamps are retained. Affected snapshots are not offered to peers until fresh
+observations replace the stale slots. Inspecting the character or receiving a
+valid complete snapshot can restore them.
+
 ## Development
 
 Run the regression suite with Lua 5.1:
@@ -491,3 +514,16 @@ Status checked 14 October 2026. GitHub currently marks all three open PRs as dra
 - [#52 Synchronize guild profession caches through bounded whispers](https://github.com/StenFrancesco/guildcraft/pull/52) â€” Draft; GitHub reports it as mergeable. Live in-game delivery and throttling checks are still outstanding.
 - [#51 Store recipe crafters by GUID instead of local IDs](https://github.com/StenFrancesco/guildcraft/pull/51) â€” Draft; depends on #50 and is based on its rename branch. Retarget it after #50 is integrated.
 - [#50 Rename Guild Gear Memory addons to The Guild Book](https://github.com/StenFrancesco/guildcraft/pull/50) â€” Draft; GitHub currently reports a merge conflict. Its description reports static checks only; tests and packaging were not run.
+
+## Update notifications
+
+Participating guild members exchange the main addon's version on login and when
+joining a guild. If a peer reports a newer numeric release version, the **Update**
+button below the title becomes clickable and opens a dialog with the GitHub link
+to copy. Otherwise it stays grey. This is a peer notice, not an online release
+check: it requires a guild member running this feature and a newer version to be
+online. Clients predating this feature cannot receive notices until they update.
+Release versions must increase the numeric `major.minor.patch` in the main
+addon TOC; suffixes are ignored when comparing releases. Update all three addon
+folders together. The notice lasts for the current session and does not change
+saved variables or existing synchronization protocols.
