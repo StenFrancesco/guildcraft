@@ -92,3 +92,42 @@ T.test("city eligibility rejects inns unknown maps secret values and unavailable
     api.issecretvalue = nil
     T.assertFalse(G.IsAutomaticSyncMajorCity(api))
 end)
+
+T.test("sync preference defaults to auto and town accepts resting inns", function()
+    local G, api = fixture()
+    T.assertTrue(G.AutomaticSyncAllowed(api))
+    api.TheGuildBookDB = { uiSettings = { syncMode = "disable" } }
+    T.assertFalse(G.AutomaticSyncAllowed(api))
+    api.TheGuildBookDB.uiSettings.syncMode = "town"
+    api.C_Map.GetBestMapForUnit = function() return 37 end
+    T.assertTrue(G.AutomaticSyncAllowed(api))
+    api.IsResting = function() return false end
+    T.assertFalse(G.AutomaticSyncAllowed(api))
+    api.issecretvalue = function() return true end
+    api.IsResting = function() return true end
+    T.assertFalse(G.AutomaticSyncAllowed(api))
+end)
+
+T.test("disabled and town modes hold login work until eligible", function()
+    local G, api, c, advance, runs, done = fixture()
+    api.TheGuildBookDB = { uiSettings = { syncMode = "disable" } }
+    assert(G.StartAutomaticSync(c)); advance(300); T.assertEqual(runs(), 0)
+    api.TheGuildBookDB.uiSettings.syncMode = "town"
+    api.IsResting = function() return false end
+    G.WakeAutomaticSync(c); T.assertEqual(runs(), 0)
+    api.IsResting = function() return true end
+    G.WakeAutomaticSync(c); T.assertEqual(runs(), 1)
+    done(false)
+end)
+
+T.test("leaving town interrupts automatic work and allows it to resume", function()
+    local G, api, c, advance, runs = fixture()
+    api.TheGuildBookDB = { uiSettings = { syncMode = "town" } }
+    local interrupts = 0
+    c.interrupt = function() interrupts = interrupts + 1 end
+    assert(G.StartAutomaticSync(c)); advance(300); T.assertEqual(runs(), 1)
+    api.IsResting = function() return false end
+    G.WakeAutomaticSync(c); T.assertEqual(interrupts, 1); T.assertFalse(c.running)
+    api.IsResting = function() return true end
+    G.WakeAutomaticSync(c); T.assertEqual(runs(), 2)
+end)

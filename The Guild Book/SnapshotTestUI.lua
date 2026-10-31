@@ -683,7 +683,7 @@ function GGM.SyncSelectedGear(frame)
     if not entry or frame.activeTab ~= "Character" then return false end
     local ok, err = false, "sync-unavailable"
     if GGM.guildSync and type(GGM.RequestCompleteSnapshot) == "function" then
-        ok, err = GGM.RequestCompleteSnapshot(GGM.guildSync, entry.record.identity)
+        ok, err = GGM.RequestCompleteSnapshot(GGM.guildSync, entry.record.identity, nil, nil, nil, true)
     end
     frame.gearSyncError = not ok and { targetKey = entry.key, error = err } or nil
     GGM.lastSyncError = err
@@ -1235,7 +1235,7 @@ function GGM.SyncSelectedProfession(frame, manual)
     end
     if not professionID then return false end
     frame.professionSyncSelections = frame.professionSyncSelections or {}
-    if not manual and frame.professionSyncSelections[professionID] then return false end
+    if not manual and ((GGM.AutomaticSyncAllowed and not GGM.AutomaticSyncAllowed(frame.api or _G)) or frame.professionSyncSelections[professionID]) then return false end
     local ok, err = false, "profession-sync-unavailable"
     if GGM.professionSync and type(GGM.RequestProfessionSync) == "function" then
         if manual and type(GGM.RequestProfessionSyncFromButton) == "function" then

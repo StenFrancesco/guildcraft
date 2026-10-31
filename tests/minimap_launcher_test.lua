@@ -286,3 +286,26 @@ T.test("separate size sliders retain legacy size independently and reset both si
     T.assertTrue(db.uiSettings.window.locked)
     T.assertFalse(db.uiSettings.window.autoAlignRecipe)
 end)
+
+T.test("sync options are exclusive and persist across reopening", function()
+    local db = {}
+    local G, api = fixture(db)
+    local changes, gearChanges = 0, 0
+    G.SyncPreferenceChanged = function() changes = changes + 1 end
+    api.GuildBookGearSyncPreferenceChanged = function() gearChanges = gearChanges + 1 end
+    local options = G.ShowGuildBookOptions(api, db)
+    T.assertTrue(options.syncModes.auto.checked)
+    options.syncModes.town.scripts.OnClick()
+    T.assertEqual(db.uiSettings.syncMode, "town")
+    T.assertTrue(options.syncModes.town.checked)
+    T.assertFalse(options.syncModes.auto.checked)
+    T.assertFalse(options.syncModes.disable.checked)
+    options.syncModes.disable.scripts.OnClick()
+    T.assertEqual(db.uiSettings.syncMode, "disable")
+    T.assertFalse(options.syncModes.town.checked)
+    T.assertTrue(options.syncModes.disable.checked)
+    G.ShowGuildBookOptions(api, db)
+    T.assertTrue(options.syncModes.disable.checked)
+    T.assertEqual(changes, 2)
+    T.assertEqual(gearChanges, 2)
+end)

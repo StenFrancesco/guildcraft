@@ -160,6 +160,7 @@ end
 
 function GGM.WakeGearSync(sync)
     if not sync or not sync.automaticController then return end
+    if not GGM.AutomaticSyncAllowed(sync.api) then GGM.WakeAutomaticSync(sync.automaticController); return end
     local guildOK, inGuild = pcall(sync.api.IsInGuild)
     if guildOK and public(sync.api, inGuild) and inGuild == false then
         GGM.StopAutomaticSync(sync.automaticController)
