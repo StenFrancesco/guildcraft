@@ -435,6 +435,13 @@ same fixture to measure the prior implementation. Results and limitations are in
 `tests/bench_catalog_browsing_results.txt`. In-game visual, scrolling, tooltip and
 frame-time checks remain necessary; standalone timings do not establish FPS gains.
 
+Gear sync rejects observations more than five minutes ahead of server time and
+pauses when server time is unavailable. On startup, future-dated cached slot
+observations are marked stale while their gear remains visible; unaffected slot
+timestamps are retained. Affected snapshots are not offered to peers until fresh
+observations replace the stale slots. Inspecting the character or receiving a
+valid complete snapshot can restore them.
+
 ## Development
 
 Run the regression suite with Lua 5.1:
