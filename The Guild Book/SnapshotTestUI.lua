@@ -649,7 +649,7 @@ local function createEmptyStateCard(api, parent, iconPath, title, body)
 end
 
 local function refreshGearSyncControls(frame)
-    if not frame.gearSyncButton then return end
+    if not frame or not frame.gearSyncButton then return end
     local entry = frame.selectedEntry
     local visible = frame.activeTab == "Character" and entry ~= nil
     if not visible then
@@ -657,7 +657,11 @@ local function refreshGearSyncControls(frame)
         if frame.activeTab == "Character" then GGM.SetSharedStatus(frame, "") end
         return
     end
-    frame.gearSyncButton:Show()
+    if GGM.ReadBrowserWindowSettings(frame.db).manualGearSync then
+        frame.gearSyncButton:Show()
+    else
+        frame.gearSyncButton:Hide()
+    end
     local status, busy, err = "", false, nil
     if type(GGM.GetGearSyncStatus) == "function" then
         status, busy, err = GGM.GetGearSyncStatus(GGM.guildSync, entry.key)
@@ -671,6 +675,8 @@ local function refreshGearSyncControls(frame)
     GGM.SetSharedStatus(frame, status)
     if frame.gearSyncButton.SetEnabled then frame.gearSyncButton:SetEnabled(not busy) end
 end
+
+GGM.RefreshGearSyncControls = refreshGearSyncControls
 
 function GGM.SyncSelectedGear(frame)
     local entry = frame and frame.selectedEntry
@@ -1066,7 +1072,7 @@ local function queueBrowserRefresh(frame)
     return true
 end
 
-function GGM.SelectProfession(frame, selectedKey)
+function GGM.SelectProfession(frame, selectedKey, skipSelectionSync)
     if selectedKey == nil then
         if GGM.HideRecipeDetailsWindow then GGM.HideRecipeDetailsWindow(frame) end
         frame.selectedProfession = nil
@@ -1127,7 +1133,7 @@ function GGM.SelectProfession(frame, selectedKey)
         openSelectedProfessionContext(frame, selectedProfession.professionID, frame.professionLibraryMode == "All")
         if refreshProfessionRecipeFilterModel then refreshProfessionRecipeFilterModel(frame) end
     end
-    if browserVisible(frame) and frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
+    if not skipSelectionSync and browserVisible(frame) and frame.activeTab == "Professions" then GGM.SyncSelectedProfession(frame, false) end
     return true
 end
 
@@ -1299,7 +1305,11 @@ local function createProfessionButton(api, content, profession)
     button.label:SetPoint("RIGHT", button, "RIGHT", -10, 0)
     button.label:SetJustifyH("LEFT")
     button.key = profession.key
-    button:SetScript("OnClick", function() GGM.SelectProfession(content.owner, profession.key) end)
+    button:SetScript("OnClick", function()
+        if GGM.SelectProfession(content.owner, profession.key, true) then
+            GGM.SyncSelectedProfession(content.owner, true)
+        end
+    end)
     button:RegisterForClicks("LeftButtonUp")
     professionButtonColor(button, false)
     button.professionID = profession.professionID
@@ -1522,6 +1532,7 @@ local function createProfessionsPage(api, frame)
     frame.professionSyncButton:SetText("Sync profession")
     frame.professionSyncButton:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
     frame.professionSyncButton:SetScript("OnClick", function() GGM.SyncSelectedProfession(frame, true) end)
+    frame.professionSyncButton:Hide()
     frame.professionSyncStatus = frame.sharedStatus
     if createProfessionRecipeFilterUI then createProfessionRecipeFilterUI(api, panel, frame) end
 
@@ -2024,7 +2035,7 @@ createProfessionRecipeFilterUI = function(api, panel, frame)
     local trigger = api.CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
     trigger:SetSize(104, 27)
     trigger:SetText("Filters")
-    trigger:SetPoint("RIGHT", frame.professionSyncButton, "LEFT", -8, 0)
+    trigger:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -177)
     frame.professionFiltersButton = trigger
     local menu = createSurface(api, panel, THEME.panelAlt, THEME.border, true)
     menu:SetSize(324, 414)
@@ -2123,7 +2134,23 @@ refreshProfessionFilterVisibility = function(frame)
         frame.professionFiltersButton:Hide()
         if frame.professionFiltersMenu then frame.professionFiltersMenu:Hide() end
     end
+    if GGM.RefreshManualProfessionSync then GGM.RefreshManualProfessionSync(frame, shown) end
     return shown == true
+end
+
+function GGM.RefreshManualProfessionSync(frame, shown)
+    if not frame or not frame.professionSyncButton or not frame.professionFiltersButton then return end
+    if shown == nil then
+        shown = frame.professionFiltersButton:IsShown()
+    end
+    local enabled = GGM.ReadBrowserWindowSettings(frame.db).manualProfessionSync
+    frame.professionFiltersButton:ClearAllPoints()
+    if enabled then
+        frame.professionFiltersButton:SetPoint("RIGHT", frame.professionSyncButton, "LEFT", -8, 0)
+    else
+        frame.professionFiltersButton:SetPoint("TOPRIGHT", frame.professionDetailPanel, "TOPRIGHT", -24, -177)
+    end
+    if enabled and shown then frame.professionSyncButton:Show() else frame.professionSyncButton:Hide() end
 end
 
 refreshProfessionRecipeFilterModel = function(frame, force)
@@ -2854,7 +2881,7 @@ function GGM.CreateGuildGearBrowserWindow(api)
     frame.gearSyncStatus = frame.sharedStatus
     frame.gearSyncButton:Hide()
     GGM.SetSharedStatus(frame, "")
-    frame.gearSyncButton:SetScript("OnUpdate", function(_, elapsed)
+    frame.gearPanel:SetScript("OnUpdate", function(_, elapsed)
         frame.gearSyncElapsed = (frame.gearSyncElapsed or 0) + elapsed
         if frame.gearSyncElapsed < 1 then return end
         frame.gearSyncElapsed = 0

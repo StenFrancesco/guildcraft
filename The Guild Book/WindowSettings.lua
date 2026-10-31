@@ -27,6 +27,8 @@ function GGM.ReadBrowserWindowSettings(db)
         opacity = bounded(saved.opacity, 0.6, 1, 1),
         locked = saved.locked == true,
         autoAlignRecipe = saved.autoAlignRecipe ~= false,
+        manualProfessionSync = saved.manualProfessionSync == true,
+        manualGearSync = saved.manualGearSync == true,
         positionX = positionX,
         positionY = positionY,
     }
@@ -67,6 +69,8 @@ function GGM.ApplyBrowserWindowSettings(browser, db)
     end
     if saved.locked and browser.StopMovingOrSizing then browser:StopMovingOrSizing() end
     GGM.ApplyRecipeDetailsWindowSettings(browser, db)
+    if GGM.RefreshManualProfessionSync then GGM.RefreshManualProfessionSync(browser) end
+    if GGM.RefreshGearSyncControls then GGM.RefreshGearSyncControls(browser) end
 end
 
 function GGM.ApplyRecipeDetailsWindowSettings(browser, db)
@@ -154,6 +158,8 @@ function GGM.RefreshWindowOptionsControls(frame, db)
     frame.windowOpacity:SetValue(saved.opacity * 100)
     frame.lockWindow:SetChecked(saved.locked)
     frame.alignRecipe:SetChecked(saved.autoAlignRecipe)
+    frame.manualProfessionSync:SetChecked(saved.manualProfessionSync)
+    frame.manualGearSync:SetChecked(saved.manualGearSync)
     frame.windowScale.caption:SetText("Main window size: " .. math.floor(saved.scale * 100 + 0.5) .. "%")
     frame.recipeScale.caption:SetText("Recipe details size: " .. math.floor(saved.recipeScale * 100 + 0.5) .. "%")
     frame.windowOpacity.caption:SetText("Opacity: " .. math.floor(saved.opacity * 100 + 0.5) .. "%")
@@ -204,6 +210,8 @@ function GGM.CreateWindowOptionsControls(api, frame)
     end
     frame.lockWindow = checkbox("Lock window position", -382, "locked")
     frame.alignRecipe = checkbox("Auto-align recipe details", -416, "autoAlignRecipe")
+    frame.manualProfessionSync = checkbox("Show manual profession sync", -450, "manualProfessionSync")
+    frame.manualGearSync = checkbox("Show manual gear sync", -484, "manualGearSync")
     local function button(text, y, action)
         local control = api.CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         control:SetSize(180, 24)
@@ -212,10 +220,10 @@ function GGM.CreateWindowOptionsControls(api, frame)
         control:SetScript("OnClick", action)
         return control
     end
-    frame.centerWindow = button("Center window", -460, function()
+    frame.centerWindow = button("Center window", -528, function()
         GGM.CenterGuildBookWindow(GGM.guildGearBrowserFrame)
     end)
-    frame.resetAppearance = button("Reset appearance", -495, function()
+    frame.resetAppearance = button("Reset appearance", -563, function()
         frame.windowSettings.scale, frame.windowSettings.recipeScale, frame.windowSettings.opacity = 1, 1, 1
         GGM.RefreshWindowOptionsControls(frame, frame.windowDB)
         apply()
