@@ -76,7 +76,7 @@ function GGM.ShowGuildBookOptions(api, db)
     if not settings or type(api.CreateFrame) ~= "function" then return nil end
     local frame = GGM.guildBookOptionsFrame
     if not frame then
-        frame = panel(api, "TheGuildBookOptionsFrame", 340, 660, true)
+        frame = panel(api, "TheGuildBookOptionsFrame", 340, 690, true)
         GGM.guildBookOptionsFrame = frame
         frame:SetPoint("CENTER", api.UIParent, "CENTER", 0, 0)
         frame:SetMovable(true)
@@ -114,13 +114,13 @@ function GGM.ShowGuildBookOptions(api, db)
             frame.settings.angle = DEFAULT_ANGLE
             refreshLauncher()
         end)
-        label(frame, "Sync", 20, -536)
+        label(frame, "Sync", 20, -600)
         frame.syncModes = {}
         for i, option in ipairs({ { "Auto", "auto" }, { "Disable", "disable" }, { "Only in town", "town" } }) do
             local mode = option[2]
             local check = api.CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
             check:SetSize(24, 24)
-            check:SetPoint("TOPLEFT", frame, "TOPLEFT", 15 + (i - 1) * 102, -562)
+            check:SetPoint("TOPLEFT", frame, "TOPLEFT", 15 + (i - 1) * 102, -626)
             local text = check:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             text:SetPoint("LEFT", check, "RIGHT", 0, 0)
             text:SetText(option[1])
@@ -133,7 +133,7 @@ function GGM.ShowGuildBookOptions(api, db)
             frame.syncModes[mode] = check
         end
         GGM.CreateWindowOptionsControls(api, frame)
-        local hint = label(frame, "/ggm options opens this window.", 20, -631)
+        local hint = label(frame, "/ggm options opens this window.", 20, -660)
         hint:SetFontObject("GameFontHighlightSmall")
     end
     frame.settings = settings

@@ -1,5 +1,18 @@
 local _, GGM = ...
 
+local function serverClock(sync)
+    if type(sync.api.GetServerTime) ~= "function" then return nil end
+    local ok, now = pcall(sync.api.GetServerTime)
+    if not ok then return nil end
+    local valid, result = pcall(function()
+        return type(now) == "number" and now == math.floor(now)
+            and now >= 1 and now <= GGM.SYNC_MAX_TIMESTAMP
+            and (type(issecretvalue) ~= "function" or not issecretvalue(now))
+    end)
+    if not valid or not result then return nil end
+    return now
+end
+
 local function identitiesCompatible(left, right)
     if type(left) ~= "table" or type(right) ~= "table" then return false end
     if left.name ~= right.name or left.realm:gsub("%s", ""):lower() ~= right.realm:gsub("%s", ""):lower() then return false end
@@ -478,6 +491,7 @@ local function handleSnapshotRequest(sync, sender, message)
         if recordErr == "record-missing" then return "ignored", nil end
         return nil, recordErr
     end
+    if record.gearTimestampRecovery then return "ignored", nil end
     if not identitiesCompatible(record.identity, message.target) then return "ignored", nil end
     local sequence, sequenceErr = GGM.GetConfirmedSequence(record)
     if sequence == nil then return nil, sequenceErr end
@@ -696,6 +710,9 @@ local function handleSnapshotResponse(sync, sender, message)
 end
 
 function GGM.AnnounceLocalGearReady(sync, onFinished)
+    local now = type(sync) == "table" and serverClock(sync)
+    if not now then return false, "sync-server-time-unavailable" end
+    if not sync.timestampsRecovered then sync.timestampsRecovered = GGM.RecoverFutureGearTimestamps(sync.db, now) end
     if type(sync) ~= "table" or type(sync.localGearTracker) ~= "table" then
         return false, "local-gear-tracker-unavailable"
     end
@@ -703,6 +720,7 @@ function GGM.AnnounceLocalGearReady(sync, onFinished)
     if type(trackerKey) ~= "string" or trackerKey == "" then return false, "local-gear-tracker-invalid" end
     local record, recordErr = GGM.GetCompleteCharacterRecord(sync.db, trackerKey)
     if not record then return false, recordErr end
+    if record.gearTimestampRecovery then return false, "gear-timestamp-recovery-needed" end
     local identity, identityErr = GGM.BuildPlayerIdentity(sync.api)
     if not identity then return false, identityErr end
     if not identitiesCompatible(record.identity, identity)
@@ -730,6 +748,8 @@ function GGM.CreateGuildSync(api, db)
     end)
     if not transport then return nil, transportErr end
     sync.transport = transport
+    local now = serverClock(sync)
+    if now then sync.timestampsRecovered = GGM.RecoverFutureGearTimestamps(db, now) end
     transport.onIdle = function()
         for _, pending in pairs(sync.pendingSnapshotResponses) do
             if #transport.outboundFrames > 0 then break end
@@ -744,6 +764,10 @@ function GGM.RegisterGuildSync(sync)
 end
 
 function GGM.PublishConfirmedSlot(sync, characterKey, slotKey, slotValue, confirmedAt, confirmedSequence)
+    local now = serverClock(sync)
+    if not now then return false, "sync-server-time-unavailable" end
+    if confirmedAt > now + 300 then return false, "sync-timestamp-in-future" end
+    if not sync.timestampsRecovered then sync.timestampsRecovered = GGM.RecoverFutureGearTimestamps(sync.db, now) end
     local record, recordErr = GGM.GetCompleteCharacterRecord(sync.db, characterKey)
     if not record then return false, recordErr end
     local persistedSequence, sequenceErr = GGM.GetConfirmedSequence(record)
@@ -759,6 +783,9 @@ end
 
 function GGM.RequestCompleteSnapshot(sync, targetIdentity, minimumSequence, minimumObservedAt, onFinished, fromButton)
     if GGM.IsSyncDisabled and GGM.IsSyncDisabled(sync.api) and not fromButton then return false, "sync-disabled" end
+    local serverNow = serverClock(sync)
+    if not serverNow then return false, "sync-server-time-unavailable" end
+    if not sync.timestampsRecovered then sync.timestampsRecovered = GGM.RecoverFutureGearTimestamps(sync.db, serverNow) end
     local requester, requesterErr = GGM.BuildPlayerIdentity(sync.api)
     if not requester then return false, requesterErr end
     local targetValid, targetErr = GGM.ValidateSyncIdentity(targetIdentity)
@@ -830,6 +857,12 @@ function GGM.HandleGuildSyncPayload(sync, sender, payload)
         local pending = allowed and sync.pendingSnapshotRequests[message.requestID]
         if not pending or not pending.fromButton then return "ignored", nil end
     end
+    local now = serverClock(sync)
+    if not now then return nil, "sync-server-time-unavailable" end
+    local timestamp = message.confirmedAt or message.capturedAt or message.observedAt
+        or (message.snapshot and message.snapshot.capturedAt)
+    if timestamp and timestamp > now + 300 then return nil, "sync-timestamp-in-future" end
+    if not sync.timestampsRecovered then sync.timestampsRecovered = GGM.RecoverFutureGearTimestamps(sync.db, now) end
     if message.type == "SLOT_UPDATE" then return handleSlotUpdate(sync, sender, message) end
     if message.type == "SNAPSHOT_REQUEST" then return handleSnapshotRequest(sync, sender, message) end
     if message.type == "GEAR_READY" then return handleGearReady(sync, sender, message) end
